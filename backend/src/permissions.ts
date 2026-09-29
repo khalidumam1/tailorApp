@@ -1,0 +1,23 @@
+export const businessPermissions = [
+  ['customers:read', 'View customers'],
+  ['customers:write', 'Create and update customers'],
+  ['measurements:read', 'View measurements'],
+  ['measurements:write', 'Create measurement revisions'],
+  ['orders:read', 'View orders'],
+  ['orders:write', 'Create orders'],
+  ['orders:transition', 'Advance order workflow'],
+  ['payments:read', 'View payments'],
+  ['payments:write', 'Record payments'],
+  ['reports:read', 'View business reports'],
+  ['audit:read', 'View business audit history'],
+  ['staff:manage', 'Manage business staff'],
+  ['settings:manage', 'Manage business settings'],
+] as const;
+
+export const platformPermissions = [
+  ['platform:businesses:read', 'View all businesses'],
+  ['platform:businesses:manage', 'Create, activate and suspend businesses'],
+  ['platform:staff:manage', 'Manage platform staff and their explicit grants'],
+  ['platform:audit:read', 'View platform-wide audit history'],
+  ['platform:system:health', 'View platform system health'],
+] as const;

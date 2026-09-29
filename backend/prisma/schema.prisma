@@ -1,0 +1,371 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum BusinessStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum PlatformRole {
+  SUPER_ADMIN
+  PLATFORM_STAFF
+}
+
+enum OrderStatus {
+  NEW
+  MEASUREMENT_CONFIRMED
+  CUTTING
+  STITCHING
+  FINISHING
+  READY_FOR_PICKUP
+  COLLECTED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  BANK
+  DIGITAL
+}
+
+enum PaymentKind {
+  PAYMENT
+  REVERSAL
+}
+
+enum SyncOperationStatus {
+  APPLIED
+  CONFLICT
+}
+
+model Business {
+  id          String       @id @default(uuid()) @db.Uuid
+  name        String       @db.VarChar(160)
+  slug        String       @unique @db.VarChar(80)
+  status      BusinessStatus @default(PENDING)
+  timezone    String       @default("Asia/Karachi")
+  currency    String       @default("PKR") @db.Char(3)
+  orderSequence Int        @default(0)
+  receiptSequence Int      @default(0)
+  createdAt   DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime     @updatedAt @db.Timestamptz(3)
+  memberships Membership[]
+  customers   Customer[]
+  roles       Role[]
+  templates   GarmentTemplate[]
+  profiles    MeasurementProfile[]
+  orders      Order[]
+  payments    Payment[]
+  auditEvents AuditEvent[]
+  settings    BusinessSetting[]
+  syncOperations SyncOperation[]
+}
+
+model User {
+  id                   String       @id @default(uuid()) @db.Uuid
+  email                String       @unique @db.VarChar(254)
+  name                 String       @db.VarChar(160)
+  passwordHash         String       @db.VarChar(100)
+  platformRole         PlatformRole?
+  active               Boolean      @default(true)
+  createdAt            DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime     @updatedAt @db.Timestamptz(3)
+  memberships          Membership[]
+  refreshTokens        RefreshToken[]
+  passwordResetTokens  PasswordResetToken[]
+  platformPermissions  PlatformPermissionGrant[]
+  createdOrders        Order[]      @relation("OrderCreator")
+  changedOrderStatuses OrderStatusHistory[]
+  recordedPayments     Payment[]    @relation("PaymentRecorder")
+  auditEvents          AuditEvent[]
+  syncOperations       SyncOperation[]
+}
+
+model Membership {
+  id         String   @id @default(uuid()) @db.Uuid
+  businessId String   @db.Uuid
+  userId     String   @db.Uuid
+  roleId     String   @db.Uuid
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [roleId, businessId], references: [id, businessId], onDelete: Restrict)
+  refreshTokens RefreshToken[]
+  syncOperations SyncOperation[]
+
+  @@unique([businessId, userId])
+  @@unique([id, userId])
+  @@index([userId, active])
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  businessId  String?          @db.Uuid
+  name        String           @db.VarChar(80)
+  isSystem    Boolean          @default(false)
+  business    Business?        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  memberships Membership[]
+  grants      RolePermissionGrant[]
+
+  @@unique([id, businessId])
+  @@unique([businessId, name])
+}
+
+model Permission {
+  id          String                 @id @default(uuid()) @db.Uuid
+  key         String                 @unique @db.VarChar(100)
+  description String                 @db.VarChar(200)
+  roleGrants  RolePermissionGrant[]
+  platformGrants PlatformPermissionGrant[]
+}
+
+model RolePermissionGrant {
+  roleId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model PlatformPermissionGrant {
+  userId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, permissionId])
+}
+
+model RefreshToken {
+  id           String      @id @default(uuid()) @db.Uuid
+  userId       String      @db.Uuid
+  membershipId String?     @db.Uuid
+  tokenHash    String      @unique @db.VarChar(64)
+  expiresAt    DateTime    @db.Timestamptz(3)
+  revokedAt    DateTime?   @db.Timestamptz(3)
+  createdAt    DateTime    @default(now()) @db.Timestamptz(3)
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  membership   Membership? @relation(fields: [membershipId, userId], references: [id, userId], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([membershipId, revokedAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique @db.VarChar(64)
+  expiresAt DateTime  @db.Timestamptz(3)
+  usedAt    DateTime? @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model Customer {
+  id         String    @id @default(uuid()) @db.Uuid
+  businessId String    @db.Uuid
+  name       String    @db.VarChar(120)
+  phone      String    @db.VarChar(24)
+  phoneNormalized String @db.VarChar(24)
+  notes      String?   @db.VarChar(2000)
+  deletedAt  DateTime? @db.Timestamptz(3)
+  version    Int       @default(1)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @db.Timestamptz(3)
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  profiles   MeasurementProfile[]
+  orders     Order[]
+
+  @@unique([businessId, phoneNormalized])
+  @@unique([id, businessId])
+  @@index([businessId, name])
+  @@index([businessId, deletedAt])
+}
+
+model GarmentTemplate {
+  id         String   @id @default(uuid()) @db.Uuid
+  businessId String?  @db.Uuid
+  name       String   @db.VarChar(120)
+  fields     Json
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  business   Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  profiles   MeasurementProfile[]
+
+  @@unique([businessId, name])
+}
+
+model MeasurementProfile {
+  id              String                @id @default(uuid()) @db.Uuid
+  businessId      String                @db.Uuid
+  customerId      String                @db.Uuid
+  garmentTemplateId String               @db.Uuid
+  createdAt       DateTime              @default(now()) @db.Timestamptz(3)
+  business        Business              @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  customer        Customer              @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  garmentTemplate GarmentTemplate       @relation(fields: [garmentTemplateId], references: [id], onDelete: Restrict)
+  revisions       MeasurementRevision[]
+
+  @@index([businessId, customerId])
+  @@unique([businessId, customerId, garmentTemplateId])
+}
+
+model MeasurementRevision {
+  id        String            @id @default(uuid()) @db.Uuid
+  profileId String            @db.Uuid
+  version   Int
+  values    Json
+  notes     String?           @db.VarChar(2000)
+  measuredAt DateTime         @db.Timestamptz(3)
+  createdAt DateTime           @default(now()) @db.Timestamptz(3)
+  profile   MeasurementProfile @relation(fields: [profileId], references: [id], onDelete: Restrict)
+
+  @@unique([profileId, version])
+}
+
+model Order {
+  id          String              @id @default(uuid()) @db.Uuid
+  businessId  String              @db.Uuid
+  customerId  String              @db.Uuid
+  createdById String              @db.Uuid
+  orderNumber String              @db.VarChar(40)
+  status      OrderStatus         @default(NEW)
+  promisedAt  DateTime            @db.Timestamptz(3)
+  notes       String?             @db.VarChar(4000)
+  total       Decimal             @db.Decimal(12, 2)
+  version     Int                 @default(1)
+  deletedAt   DateTime?           @db.Timestamptz(3)
+  createdAt   DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime            @updatedAt @db.Timestamptz(3)
+  business    Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  customer    Customer            @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  createdBy   User                @relation("OrderCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  items       OrderItem[]
+  statusHistory OrderStatusHistory[]
+  alterations AlterationTask[]
+  payments    Payment[]
+
+  @@unique([businessId, orderNumber])
+  @@unique([id, businessId])
+  @@index([businessId, status, promisedAt])
+  @@index([businessId, customerId, createdAt])
+}
+
+model OrderItem {
+  id                   String   @id @default(uuid()) @db.Uuid
+  orderId              String   @db.Uuid
+  garmentName          String   @db.VarChar(120)
+  quantity             Int
+  unitPrice            Decimal  @db.Decimal(12, 2)
+  measurementSnapshot  Json
+  order                Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+}
+
+model OrderStatusHistory {
+  id          String      @id @default(uuid()) @db.Uuid
+  orderId     String      @db.Uuid
+  fromStatus  OrderStatus?
+  toStatus    OrderStatus
+  changedById String      @db.Uuid
+  note        String?     @db.VarChar(500)
+  createdAt   DateTime    @default(now()) @db.Timestamptz(3)
+  order       Order       @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  changedBy   User        @relation(fields: [changedById], references: [id], onDelete: Restrict)
+
+  @@index([orderId, createdAt])
+}
+
+model AlterationTask {
+  id          String   @id @default(uuid()) @db.Uuid
+  orderId     String   @db.Uuid
+  description String   @db.VarChar(1000)
+  status      String   @default("OPEN") @db.VarChar(24)
+  dueAt       DateTime? @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+}
+
+model Payment {
+  id          String        @id @default(uuid()) @db.Uuid
+  businessId  String        @db.Uuid
+  orderId     String        @db.Uuid
+  recordedById String       @db.Uuid
+  amount      Decimal       @db.Decimal(12, 2)
+  kind        PaymentKind   @default(PAYMENT)
+  method      PaymentMethod
+  receiptNumber String      @db.VarChar(40)
+  idempotencyKey String     @db.VarChar(100)
+  correctionOfId String?    @db.Uuid
+  correctionReason String?  @db.VarChar(500)
+  createdAt   DateTime      @default(now()) @db.Timestamptz(3)
+  business    Business      @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  order       Order         @relation(fields: [orderId, businessId], references: [id, businessId], onDelete: Restrict)
+  recordedBy  User          @relation("PaymentRecorder", fields: [recordedById], references: [id], onDelete: Restrict)
+  correctionOf Payment?     @relation("PaymentCorrections", fields: [correctionOfId, businessId, orderId], references: [id, businessId, orderId], onDelete: Restrict)
+  corrections Payment[]     @relation("PaymentCorrections")
+
+  @@unique([businessId, idempotencyKey])
+  @@unique([businessId, receiptNumber])
+  @@unique([id, businessId, orderId])
+  @@index([businessId, createdAt])
+  @@index([orderId, createdAt])
+}
+
+model AuditEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  businessId  String?  @db.Uuid
+  actorId     String?  @db.Uuid
+  action      String   @db.VarChar(100)
+  entityType  String   @db.VarChar(80)
+  entityId    String?  @db.Uuid
+  metadata    Json
+  requestId   String   @db.VarChar(64)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  business    Business? @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  actor       User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+model BusinessSetting {
+  id         String   @id @default(uuid()) @db.Uuid
+  businessId String   @db.Uuid
+  key        String   @db.VarChar(100)
+  value      Json
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, key])
+}
+
+model SyncOperation {
+  id               String              @id @default(uuid()) @db.Uuid
+  businessId       String              @db.Uuid
+  userId           String              @db.Uuid
+  clientOperationId String             @db.VarChar(100)
+  entityType       String              @db.VarChar(40)
+  entityId         String              @db.Uuid
+  baseVersion      Int?
+  status           SyncOperationStatus
+  request          Json
+  response         Json?
+  createdAt        DateTime            @default(now()) @db.Timestamptz(3)
+  business         Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  user             User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  membership       Membership          @relation(fields: [businessId, userId], references: [businessId, userId], onDelete: Restrict)
+
+  @@unique([businessId, clientOperationId])
+  @@index([businessId, createdAt])
+}

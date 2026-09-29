@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.15-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_DB: tailor
+          POSTGRES_USER: tailor
+          POSTGRES_PASSWORD: ci-test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tailor -d tailor"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://tailor:ci-test-password@localhost:5432/tailor?schema=public
+      RUN_DB_TESTS: "true"
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run db:migrate
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm audit

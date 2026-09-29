@@ -1,20 +1,26 @@
 {
-  "name": "tailorapp-mobile",
+  "name": "@tailor/mobile",
   "version": "1.0.0",
   "private": true,
+  "main": "expo/AppEntry",
   "scripts": {
-    "start": "react-native start",
-    "android": "react-native run-android",
-    "ios": "react-native run-ios"
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "react": "18.2.0",
-    "react-native": "0.74.5"
+    "@tailor/shared": "1.0.0",
+    "expo": "57.0.26",
+    "expo-network": "57.0.2",
+    "expo-secure-store": "57.0.4",
+    "expo-sqlite": "57.0.3",
+    "expo-status-bar": "57.0.1",
+    "react": "19.2.3",
+    "react-native": "0.86.3"
   },
   "devDependencies": {
-    "@babel/core": "^7.28.0",
-    "@babel/preset-env": "^7.28.0",
-    "@babel/runtime": "^7.0.0",
-    "metro-react-native-babel-preset": "0.74.1"
+    "@types/react": "19.2.7",
+    "typescript": "6.0.3"
   }
 }

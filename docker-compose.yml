@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16.15-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tailor
+      POSTGRES_USER: ${POSTGRES_USER:-tailor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your local .env}
+    ports:
+      - "5432:5432"
+    volumes:
+      - tailor-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d tailor"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  tailor-postgres:

@@ -1,15 +1,40 @@
 {
-  "name": "tailorapp-monorepo",
+  "name": "tailor-management-system",
   "private": true,
   "version": "1.0.0",
   "workspaces": [
     "backend",
     "web",
-    "mobile"
+    "mobile",
+    "packages/shared"
   ],
   "scripts": {
-    "backend": "npm --prefix backend run dev",
-    "web": "npm --prefix web run dev",
-    "mobile": "npm --prefix mobile start"
+    "dev:api": "npm run dev --workspace @tailor/api",
+    "dev:web": "npm run dev --workspace @tailor/web",
+    "dev:mobile": "npm run start --workspace @tailor/mobile",
+    "db:generate": "npm run db:generate --workspace @tailor/api",
+    "db:migrate": "npm run db:migrate --workspace @tailor/api",
+    "db:seed": "npm run db:seed --workspace @tailor/api",
+    "typecheck": "npm run build --workspace @tailor/shared && npm run typecheck --workspace @tailor/shared && npm run typecheck --workspace @tailor/api && npm run typecheck --workspace @tailor/web && npm run typecheck --workspace @tailor/mobile",
+    "test": "npm run test --workspace @tailor/api",
+    "build": "npm run build --workspace @tailor/shared && npm run build --workspace @tailor/api && npm run build --workspace @tailor/web"
+  },
+  "overrides": {
+    "body-parser": "1.20.8",
+    "path-to-regexp": "0.1.13",
+    "qs": "6.16.0",
+    "@prisma/config": {
+      "deepmerge-ts": "8.0.2"
+    },
+    "xcode": {
+      "uuid": "11.1.1"
+    }
+  },
+  "allowScripts": {
+    "@prisma/client@6.19.3": true,
+    "prisma@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "esbuild@0.28.2": true,
+    "esbuild@0.25.12": true
   }
 }

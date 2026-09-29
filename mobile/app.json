@@ -1,4 +1,26 @@
 {
-  "name": "TailorApp",
-  "displayName": "TailorApp"
+  "expo": {
+    "name": "TailorApp",
+    "slug": "tailor-management",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "tailorapp",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tailorapp.mobile"
+    },
+    "android": {
+      "package": "com.tailorapp.mobile"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-sqlite",
+        {
+          "useSQLCipher": true
+        }
+      ]
+    ]
+  }
 }

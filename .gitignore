@@ -1,11 +1,14 @@
 node_modules/
 .env
 .env.*
+!.env.example
 .DS_Store
 npm-debug.log*
-/dist/
-/build/
+**/dist/
+**/build/
 android/app/build/
 android/build/
 ios/build/
 coverage/
+.expo/
+*.tsbuildinfo

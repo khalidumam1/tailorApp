@@ -1,16 +1,42 @@
 {
-  "name": "tailorapp-backend",
+  "name": "@tailor/api",
   "version": "1.0.0",
-  "description": "Tailor app backend API",
-  "main": "src/server.js",
+  "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "node --watch src/server.js",
-    "start": "node src/server.js"
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.seed.json",
+    "test": "tsx --test test/*.test.ts",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:seed": "tsx prisma/seed.ts",
+    "bootstrap:platform-admin": "tsx scripts/bootstrap-platform-admin.ts"
   },
   "dependencies": {
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.21.2",
-    "morgan": "^1.10.0"
+    "@tailor/shared": "1.0.0",
+    "@prisma/client": "6.19.3",
+    "bcryptjs": "2.4.3",
+    "cors": "2.8.5",
+    "dotenv": "16.5.0",
+    "express": "4.22.3",
+    "express-rate-limit": "7.5.0",
+    "helmet": "8.1.0",
+    "jsonwebtoken": "9.0.2",
+    "pino": "9.6.0",
+    "pino-http": "10.4.0",
+    "zod": "3.24.2"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "2.4.6",
+    "@types/cors": "2.8.17",
+    "@types/express": "4.17.21",
+    "@types/jsonwebtoken": "9.0.9",
+    "@types/node": "22.14.0",
+    "prisma": "6.19.3",
+    "tsx": "4.19.3",
+    "typescript": "6.0.3"
   }
 }
