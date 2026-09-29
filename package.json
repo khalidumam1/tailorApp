@@ -1,0 +1,15 @@
+{
+  "name": "tailorapp-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "backend",
+    "web",
+    "mobile"
+  ],
+  "scripts": {
+    "backend": "npm --prefix backend run dev",
+    "web": "npm --prefix web run dev",
+    "mobile": "npm --prefix mobile start"
+  }
+}
