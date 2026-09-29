@@ -1,0 +1,16 @@
+.git
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+node_modules
+**/node_modules
+mobile/android
+mobile/ios
+**/dist
+**/build
+coverage
+.expo
+npm-debug.log*

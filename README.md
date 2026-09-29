@@ -227,6 +227,31 @@ web host. Use managed PostgreSQL with private networking, encryption and
 point-in-time recovery; never expose the database port publicly. Expo release
 builds and signing are not configured.
 
+### Backend container deployment
+
+Build the backend image from the repository root; configure the deployment
+platform to run its default image target and provide `DATABASE_URL`,
+`ACCESS_TOKEN_SECRET`, and `CORS_ORIGINS` through its secret/environment
+settings. Set `NODE_ENV=production` and set `PORT` to the port assigned by the
+platform (the image defaults to `5000`). Do not copy `.env` into the image.
+
+```sh
+docker build -t tailor-api .
+```
+
+Run migrations once as a release step before switching traffic to the new
+application version. The migration target includes Prisma CLI and runs
+`prisma migrate deploy`:
+
+```sh
+docker build --target migrate -t tailor-api-migrate .
+docker run --rm --env-file .env tailor-api-migrate
+```
+
+Configure the platform's health check to use `GET /api/v1/ready` so it checks
+database connectivity; the image's Docker health check uses the liveness path
+`GET /api/v1/health`. The container runs as the unprivileged `node` user.
+
 To provision the first production platform super admin, apply migrations
 first, then run the one-time bootstrap command from a protected environment
 with `NODE_ENV=production`, `BOOTSTRAP_SUPER_ADMIN=true`,
