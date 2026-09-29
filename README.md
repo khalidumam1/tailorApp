@@ -233,7 +233,7 @@ Build the backend image from the repository root; configure the deployment
 platform to run its default image target and provide `DATABASE_URL`,
 `ACCESS_TOKEN_SECRET`, and `CORS_ORIGINS` through its secret/environment
 settings. Set `NODE_ENV=production` and set `PORT` to the port assigned by the
-platform (the image defaults to `5000`). Do not copy `.env` into the image.
+platform (the image defaults to `3000`). Do not copy `.env` into the image.
 
 ```sh
 docker build -t tailor-api .
