@@ -71,7 +71,7 @@ Requirements: Node.js 24 (Node 22.12+ is supported), npm 11, and Docker Compose.
    The API is on `http://localhost:5000`, the admin on `http://localhost:5173`,
    and Expo shows the local mobile runtime. API liveness is
    `GET /api/v1/health`; readiness (including the database) is
-   `GET /api/v1/ready`. Set `VITE_API_BASE_URL` in the web environment when
+   `GET /api/v1/ready`. Set `API_BASE_URL` in the web environment when
    the API is hosted elsewhere.
 
 ## Android APK
@@ -190,7 +190,7 @@ reverse-proxy hops.
 | `TRUST_PROXY_HOPS` | Number of trusted ingress proxy hops; keep `0` when directly exposed |
 | `PORT`, `LOG_LEVEL`, `NODE_ENV` | API runtime configuration |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD` | Local Compose database only |
-| `VITE_API_BASE_URL` | Web admin API origin; defaults to `http://localhost:5000` |
+| `API_BASE_URL` | Web admin API origin; defaults to `http://localhost:5000` (`VITE_API_BASE_URL` remains supported for compatibility) |
 | `SEED_OWNER_*`, `SEED_STAFF_*`, `SEED_PLATFORM_ADMIN_*` | Required development-only demo identities; passwords are not checked in |
 | `BOOTSTRAP_SUPER_ADMIN*` | One-time production bootstrap only; provide through a protected secret manager, then remove |
 
@@ -240,7 +240,7 @@ platform (the image defaults to `3000`). Do not copy `.env` into the image.
 This service supports both `/api/v1/...` and `/backend/api/v1/...` paths; use
 the latter when Shiper routes the service under the `/backend` prefix.
 For the admin frontend in that setup, build with
-`VITE_API_BASE_URL=https://<backend-host>/backend`; the frontend appends
+`API_BASE_URL=https://<backend-host>/backend`; the frontend appends
 `/api/v1` to this value. Set backend `CORS_ORIGINS` to the exact Vercel
 frontend origin.
 
