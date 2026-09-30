@@ -34,6 +34,14 @@ test('health endpoint reports service status without database access', async () 
   assert.equal(body.data.service, 'tailor-api');
 });
 
+test('health endpoint supports the /backend deployment prefix', async () => {
+  const response = await fetch(`${baseUrl}/backend/api/v1/health`);
+  assert.equal(response.status, 200);
+  const body = await response.json() as { data: { status: string; service: string } };
+  assert.equal(body.data.status, 'ok');
+  assert.equal(body.data.service, 'tailor-api');
+});
+
 test('unknown routes use the standard versioned error shape', async () => {
   const response = await fetch(`${baseUrl}/api/v1/not-a-route`);
   assert.equal(response.status, 404);

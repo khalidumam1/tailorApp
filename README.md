@@ -229,14 +229,23 @@ builds and signing are not configured.
 
 ### Backend container deployment
 
-Build the backend image from the repository root; configure the deployment
-platform to run its default image target and provide `DATABASE_URL`,
+For a separate Shiper backend service, use the repository root as the build
+context and `backend/Dockerfile` as the Dockerfile path. The Dockerfile lives
+under `backend/`, but it needs the monorepo root context to install the shared
+workspace dependencies. Configure Shiper to run the default `runtime` target
+and provide `DATABASE_URL`,
 `ACCESS_TOKEN_SECRET`, and `CORS_ORIGINS` through its secret/environment
 settings. Set `NODE_ENV=production` and set `PORT` to the port assigned by the
 platform (the image defaults to `3000`). Do not copy `.env` into the image.
+This service supports both `/api/v1/...` and `/backend/api/v1/...` paths; use
+the latter when Shiper routes the service under the `/backend` prefix.
+For the admin frontend in that setup, build with
+`VITE_API_BASE_URL=https://<backend-host>/backend`; the frontend appends
+`/api/v1` to this value. Set backend `CORS_ORIGINS` to the exact Vercel
+frontend origin.
 
 ```sh
-docker build -t tailor-api .
+docker build -f backend/Dockerfile -t tailor-api .
 ```
 
 Run migrations once as a release step before switching traffic to the new
@@ -244,13 +253,13 @@ application version. The migration target includes Prisma CLI and runs
 `prisma migrate deploy`:
 
 ```sh
-docker build --target migrate -t tailor-api-migrate .
+docker build -f backend/Dockerfile --target migrate -t tailor-api-migrate .
 docker run --rm --env-file .env tailor-api-migrate
 ```
 
-Configure the platform's health check to use `GET /api/v1/ready` so it checks
+Configure the platform's health check to use `GET /backend/api/v1/ready` so it checks
 database connectivity; the image's Docker health check uses the liveness path
-`GET /api/v1/health`. The container runs as the unprivileged `node` user.
+`GET /backend/api/v1/health`. The container runs as the unprivileged `node` user.
 
 To provision the first production platform super admin, apply migrations
 first, then run the one-time bootstrap command from a protected environment

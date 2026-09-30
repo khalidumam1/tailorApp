@@ -59,6 +59,13 @@ app.use(cors({
   },
 }));
 app.use(express.json({ limit: '256kb', strict: true }));
+app.use((req, _res, next) => {
+  if (req.url === '/backend' || req.url.startsWith('/backend/') || req.url.startsWith('/backend?')) {
+    req.url = req.url.slice('/backend'.length) || '/';
+    if (req.url.startsWith('?')) req.url = `/${req.url}`;
+  }
+  next();
+});
 app.use('/api', rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: env.NODE_ENV === 'test' ? 1000 : 300,
