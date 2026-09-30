@@ -17,6 +17,7 @@ let orderBId = '';
 let userAId = '';
 let userBId = '';
 let platformStaffId = '';
+let assignedOwnerId = '';
 let roleAId = '';
 let roleBId = '';
 let platformReadPermissionId = '';
@@ -154,6 +155,7 @@ after(async () => {
   await prisma.rolePermissionGrant.deleteMany({ where: { roleId: { in: [roleAId, roleBId] } } });
   await prisma.role.deleteMany({ where: { id: { in: [roleAId, roleBId] } } });
   await prisma.user.deleteMany({ where: { id: { in: [userAId, userBId] } } });
+  if (assignedOwnerId) await prisma.user.delete({ where: { id: assignedOwnerId } });
   await prisma.user.delete({ where: { id: platformStaffId } });
   await prisma.business.deleteMany({ where: { id: { in: [businessAId, businessBId] } } });
   await prisma.$disconnect();
@@ -227,4 +229,35 @@ test('platform role alone is insufficient; an explicit platform permission is re
   assert.equal(withGrant.status, 200);
   const result = await withGrant.json() as { data: { items: Array<{ id: string }> } };
   assert.ok(result.data.items.some((business) => business.id === businessAId));
+});
+
+test('platform owner assignment creates its role permissions within a transaction', { skip: !enabled }, async () => {
+  const token = process.env.TENANT_TEST_PLATFORM_TOKEN;
+  if (!token) throw new Error('Platform staff test token was not initialized');
+  const managePermission = await prisma.permission.upsert({
+    where: { key: 'platform:businesses:manage' },
+    update: {},
+    create: { key: 'platform:businesses:manage', description: 'Manage businesses in owner assignment test' },
+  });
+  await prisma.platformPermissionGrant.create({
+    data: { userId: platformStaffId, permissionId: managePermission.id },
+  });
+  const suffix = randomUUID();
+  const response = await fetch(`${baseUrl}/api/v1/platform/businesses/${businessAId}/owners`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Assigned Owner',
+      email: `assigned-owner-${suffix}@example.test`,
+      initialPassword: 'test-owner-password-12345',
+    }),
+  });
+  assert.equal(response.status, 201);
+  const body = await response.json() as { data: { owner: { id: string }; membershipId: string } };
+  assignedOwnerId = body.data.owner.id;
+  const membership = await prisma.membership.findUnique({
+    where: { id: body.data.membershipId },
+    include: { role: { include: { grants: true } } },
+  });
+  assert.equal(membership?.role.grants.length, 14);
 });

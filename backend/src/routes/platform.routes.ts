@@ -114,62 +114,64 @@ router.post('/businesses/:businessId/owners', requirePlatformPermission('platfor
   const actorId = getActorId(req);
   const businessId = idSchema.parse(req.params.businessId);
   const input = ownerSchema.parse(req.body);
+  const passwordHash = await bcrypt.hash(input.initialPassword, 12);
   try {
     const result = await prisma.$transaction(async (tx) => {
-    const business = await tx.business.findUnique({ where: { id: businessId }, select: { id: true, name: true } });
-    if (!business) throw new HttpError(404, 'Business not found', 'BUSINESS_NOT_FOUND');
-    const role = await tx.role.upsert({
-      where: { businessId_name: { businessId, name: 'Owner' } },
-      update: {},
-      create: { businessId, name: 'Owner', isSystem: true },
-    });
-    for (const [key, description] of businessPermissions) {
-      const permission = await tx.permission.upsert({
-        where: { key },
+      const business = await tx.business.findUnique({ where: { id: businessId }, select: { id: true, name: true } });
+      if (!business) throw new HttpError(404, 'Business not found', 'BUSINESS_NOT_FOUND');
+      const role = await tx.role.upsert({
+        where: { businessId_name: { businessId, name: 'Owner' } },
         update: {},
-        create: { key, description },
+        create: { businessId, name: 'Owner', isSystem: true },
       });
-      await tx.rolePermissionGrant.upsert({
-        where: { roleId_permissionId: { roleId: role.id, permissionId: permission.id } },
-        update: {},
-        create: { roleId: role.id, permissionId: permission.id },
+      const permissionKeys = businessPermissions.map(([key]) => key);
+      await tx.permission.createMany({
+        data: businessPermissions.map(([key, description]) => ({ key, description })),
+        skipDuplicates: true,
       });
-    }
+      const permissions = await tx.permission.findMany({
+        where: { key: { in: permissionKeys } },
+        select: { id: true },
+      });
+      await tx.rolePermissionGrant.createMany({
+        data: permissions.map((permission) => ({ roleId: role.id, permissionId: permission.id })),
+        skipDuplicates: true,
+      });
 
-    const existingUser = await tx.user.findUnique({
-      where: { email: input.email },
-      include: { memberships: { where: { businessId }, include: { role: true } } },
-    });
-    if (existingUser?.platformRole) {
-      throw new HttpError(409, 'A platform account cannot be assigned as a business owner', 'PLATFORM_USER_BUSINESS_ROLE_CONFLICT');
-    }
-    if (existingUser?.memberships[0] && existingUser.memberships[0].role.name !== 'Owner') {
-      throw new HttpError(409, 'This account already has a different role in the business', 'BUSINESS_ROLE_CONFLICT');
-    }
-    const user = existingUser ?? await tx.user.create({
-      data: {
-        email: input.email,
-        name: input.name,
-        passwordHash: await bcrypt.hash(input.initialPassword, 12),
-      },
-    });
-    if (!user.active) throw new HttpError(409, 'The account is inactive', 'ACCOUNT_UNAVAILABLE');
-    const membership = await tx.membership.upsert({
-      where: { businessId_userId: { businessId, userId: user.id } },
-      update: { active: true, roleId: role.id },
-      create: { businessId, userId: user.id, roleId: role.id },
-    });
-    await writePlatformAudit(tx, actorId, 'platform.business_owner_assigned', 'membership', membership.id, req.requestId, {
-      businessId,
-      userId: user.id,
-    });
+      const existingUser = await tx.user.findUnique({
+        where: { email: input.email },
+        include: { memberships: { where: { businessId }, include: { role: true } } },
+      });
+      if (existingUser?.platformRole) {
+        throw new HttpError(409, 'A platform account cannot be assigned as a business owner', 'PLATFORM_USER_BUSINESS_ROLE_CONFLICT');
+      }
+      if (existingUser?.memberships[0] && existingUser.memberships[0].role.name !== 'Owner') {
+        throw new HttpError(409, 'This account already has a different role in the business', 'BUSINESS_ROLE_CONFLICT');
+      }
+      const user = existingUser ?? await tx.user.create({
+        data: {
+          email: input.email,
+          name: input.name,
+          passwordHash,
+        },
+      });
+      if (!user.active) throw new HttpError(409, 'The account is inactive', 'ACCOUNT_UNAVAILABLE');
+      const membership = await tx.membership.upsert({
+        where: { businessId_userId: { businessId, userId: user.id } },
+        update: { active: true, roleId: role.id },
+        create: { businessId, userId: user.id, roleId: role.id },
+      });
+      await writePlatformAudit(tx, actorId, 'platform.business_owner_assigned', 'membership', membership.id, req.requestId, {
+        businessId,
+        userId: user.id,
+      });
       return {
         business,
         owner: { id: user.id, name: user.name, email: user.email },
         membershipId: membership.id,
         accountCreated: !existingUser,
       };
-    });
+    }, { maxWait: 10_000, timeout: 30_000 });
     res.status(201).json({ data: result });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
