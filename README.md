@@ -1,12 +1,12 @@
 # Tailor Management System
 
-TypeScript monorepo for tailoring businesses in Karachi. PostgreSQL is authoritative; the business admin is React/Vite, the mobile application uses Expo, and shared Zod contracts live in `packages/shared`. The MVP has no customer portal and no delivery/rider features.
+TypeScript project for tailoring businesses in Karachi. PostgreSQL is authoritative; the business admin is React/Vite, the mobile application uses Expo, and shared Zod contracts are copied into the standalone backend and web projects. The MVP has no customer portal and no delivery/rider features.
 
 ## Implementation status
 
 The migration from the starter prototype now includes a versioned Express API with authentication, membership-derived tenant authorization, customer/measurement/order/payment/report routes, append-only audit and payment records, a business admin flow, and platform APIs/screens for business onboarding/status, explicitly permissioned platform staff, audit and health. The Prisma schema and initial PostgreSQL migration are checked in. CI and focused tests are present.
 
-**This is not production-ready.** Business employee/role administration, password-reset delivery, alteration-management UI, mobile sign-in and tailor workflows, SQLite outbox synchronization/conflict resolution, operational monitoring and recovery automation still need implementation and live deployment verification. The Expo app currently initializes local SQLite and shows network state; it does not yet sync queued business work. See [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md).
+**This is not production-ready.** Business employee/role administration, password-reset delivery, alteration-management UI, mobile sign-in and tailor workflows, mobile SQLite outbox/retry/conflict-resolution integration, operational monitoring and recovery automation still need implementation and live deployment verification. The backend now exposes tenant-scoped sync push/pull endpoints; the Expo app does not yet sync queued work. See [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md).
 
 ## Workspace
 
@@ -17,6 +17,16 @@ mobile/           Expo application shell and SQLite foundation
 packages/shared/  TypeScript/Zod request contracts and helpers
 docker-compose.yml
 ```
+
+Each application folder is independently installable and has its own
+`package-lock.json`, environment example, README, ignore rules, and CI workflow.
+Backend and web carry a local copy of the shared contracts so a repository can
+be split without depending on a fourth package repository. To create each
+repository, create an empty remote and publish the contents of exactly one app
+folder (`backend/`, `web/`, or `mobile/`) as that repository's root; do not
+include the other application folders. For example, from each folder run
+`git init`, add its files, and push to its matching empty remote. The top-level
+npm workspace remains available for local cross-app development.
 
 ## Local setup
 

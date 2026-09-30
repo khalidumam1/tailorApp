@@ -1,0 +1,14 @@
+node_modules/
+.expo/
+.env
+.env.*
+!.env.example
+npm-debug.log*
+*.tsbuildinfo
+android/.gradle/
+android/build/
+android/app/build/
+android/app/debug.keystore
+ios/build/
+coverage/
+dist/

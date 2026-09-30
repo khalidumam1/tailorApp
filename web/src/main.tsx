@@ -615,29 +615,63 @@ function App() {
       { view: 'health', label: 'System health', permission: 'platform:system:health' },
     ];
     const visiblePlatformNavigation = platformNavigation.filter((item) => grants.has(item.permission));
+    const activeBusinesses = platformBusinesses.filter((business) => business.status === 'ACTIVE').length;
+    const pendingBusinesses = platformBusinesses.filter((business) => business.status === 'PENDING').length;
+    const suspendedBusinesses = platformBusinesses.filter((business) => business.status === 'SUSPENDED').length;
     return (
       <main className="page platform-state">
-        <header className="topbar">
-          <div><p className="eyebrow">Platform administration</p><h1>TailorApp</h1></div>
-          <div className="user-menu"><span className="user-name">{currentUser.user.name}</span><button className="button button-secondary" onClick={() => void signOut()}>Sign out</button></div>
+        <header className="platform-header">
+          <div className="platform-brand" aria-label="TailorApp platform">
+            <span className="platform-brand-mark" aria-hidden="true">T</span>
+            <span><strong>TailorApp</strong><small>Platform console</small></span>
+          </div>
+          <div className="platform-header-actions">
+            <span className="platform-access-badge"><span aria-hidden="true">●</span> Platform administrator</span>
+            <div className="platform-identity">
+              <span className="user-avatar" aria-hidden="true">{currentUser.user.name.trim().charAt(0).toUpperCase()}</span>
+              <span className="platform-identity-name">{currentUser.user.name}<small>Super admin</small></span>
+            </div>
+            <button className="button button-secondary" onClick={() => void signOut()}>Sign out</button>
+          </div>
         </header>
         {error && <div className="alert alert-error" role="alert">{error}</div>}
         {notice && <div className="alert alert-success" role="status">{notice}<button aria-label="Dismiss" onClick={() => setNotice(null)}>×</button></div>}
+        <section className="platform-welcome">
+          <div><p className="eyebrow">Administration</p><h1>Platform control center</h1><p>Manage businesses, access, and service health from one place.</p></div>
+          <span className="platform-scope-label"><span aria-hidden="true">✓</span> Secure platform scope</span>
+        </section>
         <nav className="platform-nav" aria-label="Platform navigation">
-          {visiblePlatformNavigation.map((item) => <button key={item.view} className={platformView === item.view ? 'button button-primary' : 'button button-secondary'} onClick={() => { setPlatformView(item.view); setError(null); }}>{item.label}</button>)}
+          {visiblePlatformNavigation.map((item) => (
+            <button
+              key={item.view}
+              type="button"
+              className={platformView === item.view ? 'platform-nav-item is-active' : 'platform-nav-item'}
+              aria-current={platformView === item.view ? 'page' : undefined}
+              onClick={() => { setPlatformView(item.view); setError(null); }}
+            >
+              <span className={`platform-nav-icon icon-${item.view}`} aria-hidden="true" />
+              {item.label}
+            </button>
+          ))}
         </nav>
         {visiblePlatformNavigation.length === 0 && <section className="panel"><h2>No platform tools assigned</h2><p className="muted">A platform administrator must explicitly grant access.</p></section>}
         {platformView === 'businesses' && grants.has('platform:businesses:read') && (
           <section className="content-stack">
-            <div className="section-heading"><div><h2>Business directory</h2><p className="muted">Create businesses, provision an owner and control activation.</p></div></div>
+            <div className="section-heading"><div><p className="eyebrow">Workspace management</p><h2>Business directory</h2><p className="muted">Onboard businesses, assign owners, and manage account status.</p></div></div>
+            <div className="platform-metrics" aria-label="Business account summary">
+              <article className="platform-metric"><span className="platform-metric-icon">▦</span><span className="platform-metric-label">Registered businesses</span><strong>{loading ? '—' : platformBusinesses.length}</strong></article>
+              <article className="platform-metric"><span className="platform-metric-icon is-green">✓</span><span className="platform-metric-label">Active</span><strong>{loading ? '—' : activeBusinesses}</strong></article>
+              <article className="platform-metric"><span className="platform-metric-icon is-amber">◷</span><span className="platform-metric-label">Pending review</span><strong>{loading ? '—' : pendingBusinesses}</strong></article>
+              <article className="platform-metric"><span className="platform-metric-icon is-rose">!</span><span className="platform-metric-label">Suspended</span><strong>{loading ? '—' : suspendedBusinesses}</strong></article>
+            </div>
             {grants.has('platform:businesses:manage') && (
-              <form className="panel form-panel" onSubmit={createBusiness}>
-                <div className="panel-heading"><h3>Register a business</h3><p className="muted">New businesses start pending until an active owner is assigned.</p></div>
+              <form className="panel form-panel platform-create-panel" onSubmit={createBusiness}>
+                <div className="panel-heading"><span className="panel-kicker">New workspace</span><h3>Register a business</h3><p className="muted">New accounts start pending until an owner is assigned and access is reviewed.</p></div>
                 <div className="form-grid">
                   <label>Business name<input value={businessName} onChange={(event) => setBusinessName(event.target.value)} maxLength={160} required /></label>
                   <label>Unique URL slug<input value={businessSlug} onChange={(event) => setBusinessSlug(event.target.value)} pattern="[a-z0-9]+(-[a-z0-9]+)*" maxLength={80} required /></label>
                 </div>
-                <button className="button button-primary" disabled={working || !online}>{working ? 'Creating…' : 'Create pending business'}</button>
+                <div className="platform-form-footer"><p className="fine-print">The slug is used as a stable identifier and can’t be changed here.</p><button className="button button-primary" disabled={working || !online}>{working ? 'Creating…' : 'Create pending business'}</button></div>
               </form>
             )}
             {loading ? <LoadingState /> : platformBusinesses.length ? (

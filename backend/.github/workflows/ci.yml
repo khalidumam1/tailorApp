@@ -1,0 +1,26 @@
+name: Backend CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://build:build@localhost:5432/tailor_test
+      ACCESS_TOKEN_SECRET: test-only-secret-long-enough-for-ci-validation
+      CORS_ORIGINS: http://localhost:5173
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run db:generate
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm audit

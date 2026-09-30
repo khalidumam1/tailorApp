@@ -42,6 +42,17 @@ test('health endpoint supports the /backend deployment prefix', async () => {
   assert.equal(body.data.service, 'tailor-api');
 });
 
+test('offline sync endpoints require a valid authenticated session', async () => {
+  const response = await fetch(`${baseUrl}/backend/api/v1/sync/operations`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ operations: [] }),
+  });
+  assert.equal(response.status, 401);
+  const body = await response.json() as { error: { code: string } };
+  assert.equal(body.error.code, 'UNAUTHENTICATED');
+});
+
 test('unknown routes use the standard versioned error shape', async () => {
   const response = await fetch(`${baseUrl}/api/v1/not-a-route`);
   assert.equal(response.status, 404);

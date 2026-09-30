@@ -3,20 +3,24 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "build": "tsc -p tsconfig.json",
+    "dev": "npm run build:shared && tsx watch src/server.ts",
+    "build": "npm run build:shared && tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.seed.json",
+    "typecheck": "npm run build:shared && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.seed.json",
     "test": "tsx --test test/*.test.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
-    "bootstrap:platform-admin": "tsx scripts/bootstrap-platform-admin.ts"
+    "bootstrap:platform-admin": "tsx scripts/bootstrap-platform-admin.ts",
+    "build:shared": "npm run build --prefix shared"
   },
   "dependencies": {
-    "@tailor/shared": "1.0.0",
+    "@tailor/shared": "file:./shared",
     "@prisma/client": "6.19.3",
     "bcryptjs": "2.4.3",
     "cors": "2.8.5",
@@ -38,5 +42,12 @@
     "prisma": "6.19.3",
     "tsx": "4.19.3",
     "typescript": "6.0.3"
+  },
+  "allowScripts": {
+    "@prisma/client@6.19.3": true,
+    "prisma@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true
   }
 }
