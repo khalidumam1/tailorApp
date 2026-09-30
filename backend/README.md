@@ -23,15 +23,29 @@ The API listens on `PORT` (default `5000`) and accepts both `/api/v1/...` and
 
 ## Docker / Shiper
 
-When this folder is the repository root, use `Dockerfile` as the Dockerfile
-path and `.` as build context. Set `PORT` to the platform-assigned internal
-port (Shiper service configuration here uses `3000`). Configure
-`DATABASE_URL`, `ACCESS_TOKEN_SECRET`, and `CORS_ORIGINS` as platform secrets.
-Set its health probe to `/backend/api/v1/ready`.
+This folder is a standalone backend project and can be deployed separately
+without the web or mobile apps. If deploying from the existing monorepo, set
+Shiper's **Root Directory** to `backend`. Shiper should then use this folder as
+both the build context and project root, with `Dockerfile` as the Dockerfile
+path. Do not use the monorepo-root Dockerfile for this setup. If this folder is
+instead the root of its own Git repository, use `.` as its Root Directory.
+
+Configure the service to listen on Shiper's assigned internal port (commonly
+`3000`) and set `PORT` to that value if required. Add these service environment
+variables in Shiper; do not put production values in the repository:
+
+- `DATABASE_URL`: PostgreSQL connection URL reachable by the service.
+- `ACCESS_TOKEN_SECRET`: unique random secret, at least 32 characters.
+- `CORS_ORIGINS`: exact browser origins, comma-separated (for example,
+  `https://tailorapp-omega.vercel.app`).
+- `NODE_ENV`: `production`.
+
+Set the health probe to `/backend/api/v1/ready`. The `/backend` path prefix is
+supported by this API; it is separate from Shiper's **Root Directory** setting.
 
 ```sh
-docker build -t tailor-api .
-docker build --target migrate -t tailor-api-migrate .
+docker build -f backend/Dockerfile -t tailor-api .
+docker build -f backend/Dockerfile --target migrate -t tailor-api-migrate .
 ```
 
 Run the migration image once per release before routing traffic to a schema

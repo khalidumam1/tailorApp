@@ -16,6 +16,7 @@ const environmentSchema = z.object({
     .transform((value) => value.split(',').map((origin) => origin.trim()).filter(Boolean))
     .pipe(z.array(z.string().url()).min(1))
     .refine((origins) => origins.every((origin) => {
+      if (!URL.canParse(origin)) return false;
       const parsed = new URL(origin);
       return parsed.origin === origin && (parsed.protocol === 'http:' || parsed.protocol === 'https:');
     }), 'CORS_ORIGINS must contain only HTTP(S) origins'),
