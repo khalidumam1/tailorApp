@@ -1,30 +1,42 @@
 # Tailor Mobile
 
-Standalone Expo/React Native application. This folder can be used as its own
-repository root. It currently initializes encrypted SQLite tables and reports
-network status. Although the backend provides tenant-scoped sync endpoints,
-mobile sign-in, business workflows, and the outbox/retry/conflict-resolution
-client are not implemented yet.
+Expo / React Native app for the TailorApp backend in this repository. The
+production API base is configured in `src/api.ts` as
+`https://tailorapp.on.shiper.app/backend`; users do not need to enter a server
+address.
 
-## Local development
+## Included workflows
+
+- Business sign-in, business selection, secure refresh-token storage, and
+  permission-filtered navigation.
+- English, Urdu, and Urdu Roman interface language selection.
+- Encrypted SQLite local storage, visible online/offline and sync status, and
+  a durable, idempotent outbox for customer, order, and measurement creation.
+- Customer search, order creation, garment measurement templates/revisions,
+  dashboard metrics, order status updates, and online-only payment posting.
+- Payment attempts retain the same idempotency key and payment details after
+  an uncertain network result. Payments are not queued while offline.
+
+Conflict records are retained and indicated for review; a full conflict
+resolution screen, customer editing, customer-wide ledger, and receipt printing
+remain future work. Order status changes and payments require connectivity.
+
+## Development and validation
+
+From the repository root:
 
 ```sh
-npm ci
-npm start
+npm install
+npm run typecheck --workspace @tailor/mobile
+npm run start --workspace @tailor/mobile
 ```
 
-Use `npm run android` or `npm run ios` with the matching native toolchain.
-For distributable Android builds, configure EAS and run:
+For a local Android debug APK, configure the Android SDK and run from
+`mobile/android`:
 
-```sh
-npx eas-cli login
-npx eas-cli project:init
-npx eas-cli build --platform android --profile preview
+```powershell
+.\gradlew.bat assembleDebug
 ```
 
-The `EXPO_PUBLIC_API_BASE_URL` example documents the future API setting; the
-current shell does not yet make API requests.
-
-```sh
-npm run typecheck
-```
+The APK is written to `mobile/android/app/build/outputs/apk/debug/app-debug.apk`.
+For internal distribution, configure EAS and use the preview profile.
