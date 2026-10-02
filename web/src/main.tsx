@@ -1017,27 +1017,33 @@ function App() {
             <button className="button button-secondary" onClick={() => void signOut()}>Sign out</button>
           </div>
         </header>
-        {error && <div className="alert alert-error" role="alert">{error}</div>}
-        {notice && <div className="alert alert-success" role="status">{notice}<button aria-label="Dismiss" onClick={() => setNotice(null)}>×</button></div>}
         <section className="platform-welcome">
           <div><p className="eyebrow">Administration</p><h1>Platform control center</h1><p>Manage businesses, access, and service health from one place.</p></div>
           <span className="platform-scope-label"><span aria-hidden="true">✓</span> Secure platform scope</span>
         </section>
-        <nav className="platform-nav" aria-label="Platform navigation">
-          {visiblePlatformNavigation.map((item) => (
-            <button
-              key={item.view}
-              type="button"
-              className={platformView === item.view ? 'platform-nav-item is-active' : 'platform-nav-item'}
-              aria-current={platformView === item.view ? 'page' : undefined}
-              onClick={() => { setPlatformView(item.view); setError(null); }}
-            >
-              <span className={`platform-nav-icon icon-${item.view}`} aria-hidden="true" />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        {visiblePlatformNavigation.length === 0 && <section className="panel"><h2>No platform tools assigned</h2><p className="muted">A platform administrator must explicitly grant access.</p></section>}
+        <div className="platform-layout">
+          <aside className="platform-sidebar" aria-label="Platform workspace">
+            <p className="platform-sidebar-label">WORKSPACE</p>
+            <nav className="platform-nav" aria-label="Platform navigation">
+              {visiblePlatformNavigation.map((item) => (
+                <button
+                  key={item.view}
+                  type="button"
+                  className={platformView === item.view ? 'platform-nav-item is-active' : 'platform-nav-item'}
+                  aria-current={platformView === item.view ? 'page' : undefined}
+                  onClick={() => { setPlatformView(item.view); setError(null); }}
+                >
+                  <span className={`platform-nav-icon icon-${item.view}`} aria-hidden="true" />
+                  {item.label}
+                </button>
+              ))}
+            </nav>
+            <div className="platform-sidebar-footer"><span className="connection-dot is-online" />Secure platform scope</div>
+          </aside>
+          <section className="platform-content-window" aria-label="Platform content">
+            {error && <div className="alert alert-error" role="alert">{error}</div>}
+            {notice && <div className="alert alert-success" role="status">{notice}<button aria-label="Dismiss" onClick={() => setNotice(null)}>×</button></div>}
+            {visiblePlatformNavigation.length === 0 && <section className="panel"><h2>No platform tools assigned</h2><p className="muted">A platform administrator must explicitly grant access.</p></section>}
         {platformView === 'businesses' && grants.has('platform:businesses:read') && (
           <section className="content-stack">
             <div className="section-heading"><div><p className="eyebrow">Workspace management</p><h2>Business directory</h2><p className="muted">Onboard businesses, assign owners, and manage account status.</p></div></div>
@@ -1274,6 +1280,8 @@ function App() {
             </form>
           </div>
         )}
+          </section>
+        </div>
       </main>
     );
   }

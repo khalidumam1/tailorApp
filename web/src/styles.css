@@ -149,6 +149,11 @@ h3 { margin-bottom: 5px; color: #17332c; font-size: 1rem; }
 .icon-staff::before { content: "♙"; }
 .icon-audit::before { content: "≋"; }
 .icon-health::before { content: "⌁"; }
+.icon-billing::before { content: "◷"; }
+.icon-plans::before { content: "◇"; }
+.icon-paymentQueue::before { content: "₨"; }
+.icon-billingSettings::before { content: "⚙"; }
+.icon-reports::before { content: "▤"; }
 .platform-state .panel { margin-top: 0; }
 .platform-state h2 { margin-bottom: 5px; }
 .platform-state .section-heading { align-items: flex-end; }
@@ -291,9 +296,31 @@ td strong { color: #234238; }
 .health-card h3 { margin: 0; text-transform: capitalize; }
 .health-card .muted { margin-top: 4px; }
 
-.platform-state { padding-bottom: 36px; }
-.platform-welcome { padding: 22px 0 18px; }
-.platform-nav { position: sticky; z-index: 4; top: 0; margin-bottom: 20px; background: #f5f7f5; }
+.platform-state {
+  display: flex;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  max-width: none;
+  flex-direction: column;
+  overflow: hidden;
+  margin: 0;
+  padding: 0 22px 18px;
+}
+.platform-header { min-height: 72px; flex: 0 0 72px; padding: 0; }
+.platform-welcome { display: none; }
+.platform-layout { display: grid; min-height: 0; flex: 1; grid-template-columns: 218px minmax(0, 1fr); gap: 18px; padding-top: 14px; }
+.platform-sidebar { display: flex; min-height: 0; flex-direction: column; border: 1px solid #e1e9e4; border-radius: 14px; padding: 13px 10px 10px; background: #fff; }
+.platform-sidebar-label { margin: 0 8px 10px; color: #91a098; font-size: .64rem; font-weight: 750; letter-spacing: .11em; }
+.platform-nav { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 4px; overflow-y: auto; margin: 0; border: 0; padding: 0; }
+.platform-nav-item { min-height: 42px; flex: 0 0 auto; border-radius: 9px; padding: 0 10px; font-size: .79rem; }
+.platform-nav-item.is-active { font-weight: 700; }
+.platform-nav-item.is-active::after { top: 8px; right: auto; bottom: 8px; left: 0; width: 3px; height: auto; border-radius: 0 3px 3px 0; }
+.platform-sidebar-footer { display: flex; align-items: center; gap: 8px; margin-top: 10px; border-top: 1px solid #edf1ee; padding: 12px 8px 2px; color: #718078; font-size: .7rem; }
+.platform-content-window { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 1px 5px 16px 0; scrollbar-gutter: stable; }
+.platform-content-window > .alert { margin-bottom: 11px; }
+.platform-content-window .table-wrap thead { position: sticky; z-index: 1; top: 0; }
 .platform-state .content-stack { gap: 13px; }
 .billing-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .billing-metrics .platform-metric { min-height: 88px; grid-template-columns: 1fr; grid-template-rows: auto auto; gap: 8px; padding: 13px 15px; }
@@ -359,6 +386,16 @@ td strong { color: #234238; }
   .auth-brand > p:last-child { margin-inline: auto; font-size: .95rem; }
 }
 @media (max-width: 760px) {
+  .platform-state { display: block; width: min(100% - 32px, 1320px); height: auto; min-height: 100vh; overflow: visible; margin-inline: auto; padding: 15px 0 30px; }
+  .platform-header { min-height: 0; }
+  .platform-welcome { display: flex; }
+  .platform-layout { display: block; padding-top: 0; }
+  .platform-sidebar { display: block; margin-bottom: 14px; border: 0; padding: 0; background: transparent; }
+  .platform-sidebar-label, .platform-sidebar-footer { display: none; }
+  .platform-nav { flex-direction: row; overflow-x: auto; margin-bottom: 14px; border-bottom: 1px solid #e3eae5; padding-bottom: 1px; }
+  .platform-nav-item { min-height: 43px; flex: 0 0 auto; padding-inline: 11px; font-size: .75rem; }
+  .platform-nav-item.is-active::after { top: auto; right: 11px; bottom: -2px; left: 11px; width: auto; height: 3px; border-radius: 3px 3px 0 0; }
+  .platform-content-window { overflow: visible; padding: 0; }
   .platform-welcome { padding: 20px 0 16px; }
   .billing-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .shop-billing-summary { grid-template-columns: 1fr; }
@@ -368,13 +405,10 @@ td strong { color: #234238; }
   .billing-filter-bar { grid-template-columns: 1fr; }
   .billing-filter-status { justify-content: space-between; }
   .billing-filter-status select { flex: 1; }
-  .platform-state { width: min(100% - 32px, 1320px); padding-top: 15px; }
   .platform-header { align-items: flex-start; }
   .platform-header-actions { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
   .platform-access-badge { display: none; }
   .platform-welcome { align-items: flex-start; flex-direction: column; padding: 28px 0 21px; }
-  .platform-nav { margin-bottom: 22px; }
-  .platform-nav-item { min-height: 43px; padding-inline: 11px; font-size: .75rem; }
   .platform-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .app-shell { grid-template-columns: 1fr; padding-bottom: 64px; }
   .sidebar { position: fixed; z-index: 5; inset: auto 0 0; width: 100%; height: 62px; flex-direction: row; align-items: center; padding: 5px 8px; border-top: 1px solid #ffffff1c; }
