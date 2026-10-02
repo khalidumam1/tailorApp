@@ -45,6 +45,22 @@ enum SyncOperationStatus {
   CONFLICT
 }
 
+enum WhatsAppNotificationKind {
+  ORDER_CREATED
+  PAYMENT_RECEIVED
+  ORDER_READY
+}
+
+enum WhatsAppNotificationStatus {
+  QUEUED
+  PROCESSING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  NOT_SENT
+}
+
 model Business {
   id          String       @id @default(uuid()) @db.Uuid
   name        String       @db.VarChar(160)
@@ -63,6 +79,7 @@ model Business {
   profiles    MeasurementProfile[]
   orders      Order[]
   payments    Payment[]
+  whatsappNotifications WhatsAppNotification[]
   auditEvents AuditEvent[]
   settings    BusinessSetting[]
   syncOperations SyncOperation[]
@@ -178,6 +195,9 @@ model Customer {
   name       String    @db.VarChar(120)
   phone      String    @db.VarChar(24)
   phoneNormalized String @db.VarChar(24)
+  whatsappConsent Boolean @default(false)
+  whatsappConsentAt DateTime? @db.Timestamptz(3)
+  whatsappOptedOutAt DateTime? @db.Timestamptz(3)
   notes      String?   @db.VarChar(2000)
   deletedAt  DateTime? @db.Timestamptz(3)
   version    Int       @default(1)
@@ -186,6 +206,7 @@ model Customer {
   business   Business  @relation(fields: [businessId], references: [id], onDelete: Restrict)
   profiles   MeasurementProfile[]
   orders     Order[]
+  whatsappNotifications WhatsAppNotification[]
 
   @@unique([businessId, phoneNormalized])
   @@unique([id, businessId])
@@ -255,6 +276,7 @@ model Order {
   statusHistory OrderStatusHistory[]
   alterations AlterationTask[]
   payments    Payment[]
+  whatsappNotifications WhatsAppNotification[]
 
   @@unique([businessId, orderNumber])
   @@unique([id, businessId])
@@ -314,12 +336,45 @@ model Payment {
   recordedBy  User          @relation("PaymentRecorder", fields: [recordedById], references: [id], onDelete: Restrict)
   correctionOf Payment?     @relation("PaymentCorrections", fields: [correctionOfId, businessId, orderId], references: [id, businessId, orderId], onDelete: Restrict)
   corrections Payment[]     @relation("PaymentCorrections")
+  whatsappNotifications WhatsAppNotification[]
 
   @@unique([businessId, idempotencyKey])
   @@unique([businessId, receiptNumber])
   @@unique([id, businessId, orderId])
   @@index([businessId, createdAt])
   @@index([orderId, createdAt])
+}
+
+model WhatsAppNotification {
+  id                String                    @id @default(uuid()) @db.Uuid
+  businessId        String                    @db.Uuid
+  customerId        String                    @db.Uuid
+  orderId           String                    @db.Uuid
+  paymentId         String?                   @db.Uuid
+  kind              WhatsAppNotificationKind
+  status            WhatsAppNotificationStatus @default(QUEUED)
+  idempotencyKey    String                    @unique @db.VarChar(160)
+  recipientPhone    String                    @db.VarChar(16)
+  templateName      String                    @db.VarChar(128)
+  payload           Json
+  metaMessageId     String?                   @unique @db.VarChar(128)
+  attemptCount      Int                       @default(0)
+  nextAttemptAt     DateTime                  @default(now()) @db.Timestamptz(3)
+  lastError         String?                   @db.VarChar(500)
+  sentAt            DateTime?                 @db.Timestamptz(3)
+  deliveredAt       DateTime?                 @db.Timestamptz(3)
+  readAt            DateTime?                 @db.Timestamptz(3)
+  failedAt          DateTime?                 @db.Timestamptz(3)
+  createdAt         DateTime                  @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime                  @updatedAt @db.Timestamptz(3)
+  business          Business                  @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  customer          Customer                  @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  order             Order                    @relation(fields: [orderId, businessId], references: [id, businessId], onDelete: Restrict)
+  payment           Payment?                 @relation(fields: [paymentId, businessId, orderId], references: [id, businessId, orderId], onDelete: Restrict)
+
+  @@index([businessId, createdAt])
+  @@index([businessId, customerId, createdAt])
+  @@index([status, nextAttemptAt])
 }
 
 model AuditEvent {

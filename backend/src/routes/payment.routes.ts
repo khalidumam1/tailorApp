@@ -7,10 +7,11 @@ import {
 } from '@tailor/shared';
 import { z } from 'zod';
 import { prisma } from '../db.js';
-import { calculateNetPaid } from '../domain/finance.js';
+import { calculateNetPaid, calculateOutstanding } from '../domain/finance.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
+import { generateReceiptPdf, queuePaymentReceived } from '../whatsapp.js';
 
 const router = express.Router();
 const idSchema = z.string().uuid();
@@ -112,6 +113,7 @@ router.get('/', requireBusinessPermission('payments:read'), asyncHandler(async (
           customer: { select: { id: true, name: true, phone: true } },
         },
       },
+      correctionOf: { select: { receiptNumber: true } },
     },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
@@ -191,6 +193,7 @@ router.post('/orders/:orderId', requireBusinessPermission('payments:write'), asy
           requestId: req.requestId,
         },
       });
+      await queuePaymentReceived(tx, created.id);
       return created;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     res.status(201).json({ data: payment });
@@ -281,6 +284,56 @@ router.get('/:paymentId/receipt', requireBusinessPermission('payments:read'), as
   });
   if (!payment) throw new HttpError(404, 'Payment not found', 'PAYMENT_NOT_FOUND');
   res.json({ data: payment });
+}));
+
+router.get('/:paymentId/receipt.pdf', requireBusinessPermission('payments:read'), asyncHandler(async (req, res) => {
+  const { businessId } = getContext(req);
+  const paymentId = idSchema.parse(req.params.paymentId);
+  const payment = await prisma.payment.findFirst({
+    where: { id: paymentId, businessId },
+    include: {
+      business: { select: { name: true } },
+      order: {
+        include: {
+          customer: { select: { name: true } },
+          items: { select: { garmentName: true, quantity: true } },
+        },
+      },
+      correctionOf: { select: { receiptNumber: true } },
+    },
+  });
+  if (!payment) throw new HttpError(404, 'Payment not found', 'PAYMENT_NOT_FOUND');
+  const totals = await prisma.payment.groupBy({
+    by: ['kind'],
+    where: { businessId, orderId: payment.orderId },
+    _sum: { amount: true },
+  });
+  const totalPaid = calculateNetPaid(totals.map((row) => ({
+    kind: row.kind,
+    amount: row._sum.amount ?? new Prisma.Decimal(0),
+  })));
+  const pdf = await generateReceiptPdf({
+    businessName: payment.business.name,
+    customerName: payment.order.customer.name,
+    orderNumber: payment.order.orderNumber,
+    garments: payment.order.items.map((item) => `${item.quantity} x ${item.garmentName}`).join(', '),
+    amount: `PKR ${payment.amount.toFixed(2)}`,
+    paymentMethod: payment.method,
+    paymentKind: payment.kind,
+    receiptReference: payment.receiptNumber,
+    ...(payment.correctionOf ? { correctionOfReceipt: payment.correctionOf.receiptNumber } : {}),
+    paidAt: payment.createdAt.toLocaleDateString('en-PK', { timeZone: 'Asia/Karachi' }),
+    total: `PKR ${payment.order.total.toFixed(2)}`,
+    totalPaid: `PKR ${totalPaid.toFixed(2)}`,
+    remaining: `PKR ${calculateOutstanding(payment.order.total, totals.map((row) => ({
+      kind: row.kind,
+      amount: row._sum.amount ?? new Prisma.Decimal(0),
+    }))).toFixed(2)}`,
+  }, 'PAYMENT_RECEIVED');
+  res.status(200)
+    .type('application/pdf')
+    .setHeader('Content-Disposition', `attachment; filename="${payment.receiptNumber}.pdf"`)
+    .send(pdf);
 }));
 
 export default router;

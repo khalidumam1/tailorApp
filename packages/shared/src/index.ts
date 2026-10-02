@@ -1,5 +1,6 @@
 import { z } from 'zod';
-export { normalizePakistanPhone } from './phone.js';
+import { toE164Phone } from './phone.js';
+export { normalizePakistanPhone, toE164Phone } from './phone.js';
 
 export const orderStatuses = [
   'NEW',
@@ -14,7 +15,15 @@ export const orderStatuses = [
 
 export const createCustomerSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  phone: z.string().trim().min(7).max(24).regex(/^\+?[0-9][0-9\s().-]*$/),
+  phone: z.string().trim().min(7).max(24).regex(/^\+?[0-9][0-9\s().-]*$/)
+    .refine((phone) => {
+      try {
+        toE164Phone(phone);
+        return true;
+      } catch {
+        return false;
+      }
+    }, 'Phone number must be valid in international format'),
   notes: z.string().trim().max(2000).optional(),
 });
 

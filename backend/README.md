@@ -94,6 +94,56 @@ Example queued customer operation:
 All sync writes use the authenticated membership's tenant; clients cannot
 choose a business ID. Payments are intentionally excluded from offline sync.
 
+## Central WhatsApp notifications
+
+The API uses one platform-wide Meta WhatsApp Business Cloud API sender. Shops do
+not configure or receive WhatsApp credentials. Configure the following only in
+the backend's secret manager/environment; they are never sent to web or mobile:
+
+- `WHATSAPP_ENABLED=true` enables the worker and webhook verification.
+- `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `META_APP_SECRET`, and
+  `WHATSAPP_VERIFY_TOKEN` are the Meta access token, registered sender ID, app
+  secret for webhook signatures, and callback verification token.
+- `WHATSAPP_ORDER_TEMPLATE`, `WHATSAPP_PAYMENT_TEMPLATE`,
+  `WHATSAPP_READY_TEMPLATE`, `WHATSAPP_TEMPLATE_LANGUAGE`, and
+  `META_GRAPH_API_VERSION` select the approved templates and API version.
+
+Apply the database migration before enabling the worker. In Meta Business
+Manager, verify the business, register/verify its sender number, grant the
+system-user token the WhatsApp messaging permission, and approve the templates.
+Configure the HTTPS webhook callback as
+`https://<api-host>/backend/api/v1/webhooks/whatsapp`, enter the verify token,
+and subscribe the WhatsApp Business Account to `messages` so delivery statuses
+and inbound opt-outs are received.
+
+The configured templates must match the following positional body parameters
+and language. The order-created template takes order number, garments, total,
+advance paid, outstanding, and promised date. Payment confirmation takes order
+number, payment amount, total paid, remaining balance, and receipt reference.
+Pickup-ready takes order number and ready date. Configure document headers on
+the first two templates to receive the authoritative backend-generated PDF
+receipt; the ready template is text-only.
+
+The transactional outbox is written in the same database transaction as an
+online order, payment, ready transition, or successfully applied offline order
+sync. Workers only see committed queue records. Unique event idempotency keys
+prevent duplicate queue rows on API/sync retries. Delivery retries use persisted
+attempts and exponential backoff; Meta API acceptance is shown as **Sent**,
+while **Delivered** and **Read** require a verified Meta webhook. Network
+timeouts are inherently at-least-once because the Cloud API does not provide a
+send idempotency key; a timeout after Meta accepts a message can therefore be
+ambiguous until the status webhook arrives.
+
+Customer numbers are stored as E.164 (Pakistan local inputs are normalized to
+`+92`). Consent is opt-in and defaults off. Online authorized staff can record
+or revoke consent at `POST /api/v1/customers/:id/whatsapp-consent`; inbound
+`STOP`, `UNSUBSCRIBE`, `CANCEL`, `END`, and `QUIT` messages also opt the matching
+number out across the platform. Opt-outs cancel queued messages. Notification
+history is business-scoped at `GET /api/v1/notifications`; the web and mobile
+workspaces show Queued, Sent, Delivered, Read, Failed, and Not Sent distinctly.
+The authorized PDF endpoint is
+`GET /api/v1/payments/:paymentId/receipt.pdf`.
+
 ## Checks
 
 ```sh

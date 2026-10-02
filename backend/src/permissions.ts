@@ -8,6 +8,7 @@ export const businessPermissions = [
   ['orders:transition', 'Advance order workflow'],
   ['payments:read', 'View payments'],
   ['payments:write', 'Record payments'],
+  ['notifications:read', 'View customer notification delivery history'],
   ['reports:read', 'View business reports'],
   ['audit:read', 'View business audit history'],
   ['staff:manage', 'Manage business staff'],

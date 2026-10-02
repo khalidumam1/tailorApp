@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
 
@@ -21,6 +21,7 @@ let assignedOwnerId = '';
 let roleAId = '';
 let roleBId = '';
 let platformReadPermissionId = '';
+let offlineOrderId = '';
 
 before(async () => {
   if (!enabled) return;
@@ -28,6 +29,11 @@ before(async () => {
   process.env.ACCESS_TOKEN_SECRET ??= 'test-only-secret-that-is-long-enough-to-pass';
   process.env.CORS_ORIGINS ??= 'http://localhost:5173';
   process.env.LOG_LEVEL = 'silent';
+  process.env.WHATSAPP_ENABLED = 'true';
+  process.env.WHATSAPP_ACCESS_TOKEN = 'test-only-whatsapp-token';
+  process.env.WHATSAPP_PHONE_NUMBER_ID = 'test-only-phone-id';
+  process.env.WHATSAPP_VERIFY_TOKEN = 'test-only-verify-token';
+  process.env.META_APP_SECRET = 'test-only-meta-app-secret';
   if (!process.env.DATABASE_URL) throw new Error('RUN_DB_TESTS=true requires DATABASE_URL');
 
   const suffix = randomUUID();
@@ -57,6 +63,21 @@ before(async () => {
       where: { key: 'orders:write' },
       update: {},
       create: { key: 'orders:write', description: 'Create orders in tenant isolation test' },
+    }),
+    prisma.permission.upsert({
+      where: { key: 'orders:transition' },
+      update: {},
+      create: { key: 'orders:transition', description: 'Transition orders in tenant isolation test' },
+    }),
+    prisma.permission.upsert({
+      where: { key: 'payments:write' },
+      update: {},
+      create: { key: 'payments:write', description: 'Post payments in tenant isolation test' },
+    }),
+    prisma.permission.upsert({
+      where: { key: 'notifications:read' },
+      update: {},
+      create: { key: 'notifications:read', description: 'Read notifications in tenant isolation test' },
     }),
   ]);
   const [userA, userB] = await Promise.all([
@@ -95,10 +116,17 @@ before(async () => {
   ]);
   const [customerA, customerB] = await Promise.all([
     prisma.customer.create({
-      data: { businessId: businessA.id, name: 'A Customer', phone: '03001234567', phoneNormalized: `92${suffix.slice(0, 10)}` },
+      data: {
+        businessId: businessA.id,
+        name: 'A Customer',
+        phone: '+923001234567',
+        phoneNormalized: '923001234567',
+        whatsappConsent: true,
+        whatsappConsentAt: new Date(),
+      },
     }),
     prisma.customer.create({
-      data: { businessId: businessB.id, name: 'B Customer', phone: '03007654321', phoneNormalized: `92${suffix.slice(10, 20)}` },
+      data: { businessId: businessB.id, name: 'B Customer', phone: '+923007654321', phoneNormalized: '923007654321' },
     }),
   ]);
   customerAId = customerA.id;
@@ -148,6 +176,8 @@ after(async () => {
     return;
   }
   await closeServer?.();
+  await prisma.whatsAppNotification.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
+  await prisma.payment.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.order.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.auditEvent.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.customer.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
@@ -260,4 +290,149 @@ test('platform owner assignment creates its role permissions within a transactio
     include: { role: { include: { grants: true } } },
   });
   assert.equal(membership?.role.grants.length, 14);
+});
+
+test('offline order retries and duplicate payment requests create one notification per committed event', { skip: !enabled }, async () => {
+  const operationId = randomUUID();
+  offlineOrderId = randomUUID();
+  const promisedAt = new Date(Date.now() + 86_400_000).toISOString();
+  const request = {
+    operations: [{
+      clientOperationId: operationId,
+      entityType: 'order',
+      entityId: offlineOrderId,
+      payload: {
+        action: 'order.create',
+        order: {
+          customerId: customerAId,
+          promisedAt,
+          items: [{ garmentName: 'Shalwar Kameez', quantity: 1, unitPrice: '1000.00' }],
+        },
+      },
+    }],
+  };
+  const sync = () => fetch(`${baseUrl}/api/v1/sync/operations`, {
+    method: 'POST',
+    headers: { authorization: authHeader, 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  const firstSync = await sync();
+  assert.equal(firstSync.status, 200);
+  const replaySync = await sync();
+  assert.equal(replaySync.status, 200);
+  const replay = await replaySync.json() as { data: { results: Array<{ duplicate?: boolean }> } };
+  assert.equal(replay.data.results[0]?.duplicate, true);
+  assert.equal(await prisma.whatsAppNotification.count({
+    where: { businessId: businessAId, orderId: offlineOrderId, kind: 'ORDER_CREATED' },
+  }), 1);
+
+  const paymentKey = randomUUID();
+  const postPayment = () => fetch(`${baseUrl}/api/v1/payments/orders/${offlineOrderId}`, {
+    method: 'POST',
+    headers: {
+      authorization: authHeader,
+      'content-type': 'application/json',
+      'Idempotency-Key': paymentKey,
+    },
+    body: JSON.stringify({ amount: '250.00', method: 'CASH' }),
+  });
+  const paymentResponse = await postPayment();
+  assert.equal(paymentResponse.status, 201);
+  const paymentBody = await paymentResponse.json() as { data: { id: string } };
+  const duplicatePaymentResponse = await postPayment();
+  assert.equal(duplicatePaymentResponse.status, 200);
+  const duplicateBody = await duplicatePaymentResponse.json() as { replayed: boolean };
+  assert.equal(duplicateBody.replayed, true);
+  assert.equal(await prisma.payment.count({ where: { businessId: businessAId, orderId: offlineOrderId } }), 1);
+  assert.equal(await prisma.whatsAppNotification.count({
+    where: { businessId: businessAId, paymentId: paymentBody.data.id, kind: 'PAYMENT_RECEIVED' },
+  }), 1);
+
+  const workflow = ['MEASUREMENT_CONFIRMED', 'CUTTING', 'STITCHING', 'FINISHING', 'READY_FOR_PICKUP'];
+  let orderVersion = (await prisma.order.findFirstOrThrow({
+    where: { id: offlineOrderId, businessId: businessAId },
+    select: { version: true },
+  })).version;
+  for (const toStatus of workflow) {
+    const transition = await fetch(`${baseUrl}/api/v1/orders/${offlineOrderId}/status`, {
+      method: 'POST',
+      headers: { authorization: authHeader, 'content-type': 'application/json' },
+      body: JSON.stringify({ toStatus, version: orderVersion }),
+    });
+    assert.equal(transition.status, 200);
+    const transitionBody = await transition.json() as { data: { version: number } };
+    orderVersion = transitionBody.data.version;
+  }
+  assert.equal(await prisma.whatsAppNotification.count({
+    where: { businessId: businessAId, orderId: offlineOrderId, kind: 'ORDER_READY' },
+  }), 1);
+
+  const foreignNotification = await prisma.whatsAppNotification.create({
+    data: {
+      businessId: businessBId,
+      customerId: customerBId,
+      orderId: orderBId,
+      kind: 'ORDER_CREATED',
+      status: 'NOT_SENT',
+      idempotencyKey: `tenant-test:${randomUUID()}`,
+      recipientPhone: '+923007654321',
+      templateName: 'test_template',
+      payload: {},
+    },
+  });
+  const scopedHistory = await fetch(`${baseUrl}/api/v1/notifications?orderId=${orderBId}`, {
+    headers: { authorization: authHeader },
+  });
+  assert.equal(scopedHistory.status, 200);
+  const history = await scopedHistory.json() as { data: { items: Array<{ id: string }> } };
+  assert.equal(history.data.items.some((item) => item.id === foreignNotification.id), false);
+});
+
+test('Meta send failures persist as Failed and verified webhooks alone confirm delivery', { skip: !enabled }, async () => {
+  const { processNextWhatsAppNotification } = await import('../src/whatsapp.js');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('provider response must not be stored', { status: 400 });
+  try {
+    assert.equal(await processNextWhatsAppNotification(), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  const failed = await prisma.whatsAppNotification.findFirstOrThrow({
+    where: { businessId: businessAId, orderId: offlineOrderId, kind: 'ORDER_CREATED', status: 'FAILED' },
+  });
+  assert.match(failed.lastError ?? '', /HTTP 400/);
+  assert.equal(failed.lastError?.includes('provider response'), false);
+
+  const webhookBody = JSON.stringify({
+    object: 'whatsapp_business_account',
+    entry: [{
+      changes: [{
+        value: {
+          metadata: { phone_number_id: 'test-only-phone-id' },
+          statuses: [{
+            id: 'wamid.test-only-message-id',
+            status: 'delivered',
+            timestamp: String(Math.floor(Date.now() / 1000)),
+            biz_opaque_callback_data: failed.id,
+          }],
+        },
+      }],
+    }],
+  });
+  const signature = `sha256=${createHmac('sha256', 'test-only-meta-app-secret').update(webhookBody).digest('hex')}`;
+  const forged = await fetch(`${baseUrl}/api/v1/webhooks/whatsapp`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-hub-signature-256': `sha256=${'0'.repeat(64)}` },
+    body: webhookBody,
+  });
+  assert.equal(forged.status, 401);
+  const verified = await fetch(`${baseUrl}/api/v1/webhooks/whatsapp`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-hub-signature-256': signature },
+    body: webhookBody,
+  });
+  assert.equal(verified.status, 200);
+  const delivered = await prisma.whatsAppNotification.findUniqueOrThrow({ where: { id: failed.id } });
+  assert.equal(delivered.status, 'DELIVERED');
+  assert.equal(delivered.lastError, null);
 });

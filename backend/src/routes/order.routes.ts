@@ -13,6 +13,7 @@ import { calculateNetPaid, calculateOutstanding } from '../domain/finance.js';
 import { isAllowedOrderTransition } from '../domain/orders.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
+import { queueOrderCreated, queueOrderReady } from '../whatsapp.js';
 
 const router = express.Router();
 const idSchema = z.string().uuid();
@@ -177,6 +178,7 @@ router.post('/', requireBusinessPermission('orders:write'), asyncHandler(async (
           requestId: req.requestId,
         },
       });
+      await queueOrderCreated(tx, created.id);
       return created;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     res.status(201).json({ data: order });
@@ -229,6 +231,7 @@ router.post('/:orderId/status', requireBusinessPermission('orders:transition'), 
           requestId: req.requestId,
         },
       });
+      if (input.toStatus === 'READY_FOR_PICKUP') await queueOrderReady(tx, order.id);
       return next;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     res.json({ data: updated });

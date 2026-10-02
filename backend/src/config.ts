@@ -3,6 +3,11 @@ import { loadEnvironmentFile } from './environment.js';
 
 loadEnvironmentFile();
 
+const optionalSecret = z.preprocess(
+  (value) => typeof value === 'string' && !value.trim() ? undefined : value,
+  z.string().trim().min(1).optional(),
+);
+
 const environmentSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(5000),
@@ -22,6 +27,21 @@ const environmentSchema = z.object({
     }), 'CORS_ORIGINS must contain only HTTP(S) origins'),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  WHATSAPP_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  WHATSAPP_ACCESS_TOKEN: optionalSecret,
+  WHATSAPP_PHONE_NUMBER_ID: optionalSecret,
+  WHATSAPP_VERIFY_TOKEN: optionalSecret,
+  META_APP_SECRET: optionalSecret,
+  META_GRAPH_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v26.0'),
+  WHATSAPP_ORDER_TEMPLATE: z.string().trim().min(1).default('tailor_order_created'),
+  WHATSAPP_PAYMENT_TEMPLATE: z.string().trim().min(1).default('tailor_payment_received'),
+  WHATSAPP_READY_TEMPLATE: z.string().trim().min(1).default('tailor_order_ready'),
+  WHATSAPP_TEMPLATE_LANGUAGE: z.string().regex(/^[a-z]{2}(?:_[A-Z]{2})?$/).default('en'),
+}).superRefine((value, context) => {
+  if (!value.WHATSAPP_ENABLED) return;
+  for (const key of ['WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_VERIFY_TOKEN', 'META_APP_SECRET'] as const) {
+    if (!value[key]) context.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} is required when WhatsApp is enabled` });
+  }
 });
 
 export const env = environmentSchema.parse(process.env);

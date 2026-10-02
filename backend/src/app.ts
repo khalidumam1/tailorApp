@@ -18,11 +18,14 @@ import reportRoutes from './routes/report.routes.js';
 import auditRoutes from './routes/audit.routes.js';
 import platformRoutes from './routes/platform.routes.js';
 import syncRoutes from './routes/sync.routes.js';
+import notificationRoutes from './routes/notification.routes.js';
+import whatsappWebhookRoutes from './routes/whatsapp-webhook.routes.js';
 
 declare global {
   namespace Express {
     interface Request {
       requestId: string;
+      rawBody?: Buffer;
     }
   }
 }
@@ -59,7 +62,13 @@ app.use(cors({
     callback(new HttpError(403, 'Origin is not allowed by CORS', 'CORS_ORIGIN_DENIED'));
   },
 }));
-app.use(express.json({ limit: '256kb', strict: true }));
+app.use(express.json({
+  limit: '256kb',
+  strict: true,
+  verify: (req, _res, buffer) => {
+    (req as express.Request).rawBody = Buffer.from(buffer);
+  },
+}));
 app.use((req, _res, next) => {
   if (req.url === '/backend' || req.url.startsWith('/backend/') || req.url.startsWith('/backend?')) {
     req.url = req.url.slice('/backend'.length) || '/';
@@ -101,6 +110,8 @@ app.use('/api/v1/reports', reportRoutes);
 app.use('/api/v1/audit', auditRoutes);
 app.use('/api/v1/platform', platformRoutes);
 app.use('/api/v1/sync', syncRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1/webhooks/whatsapp', whatsappWebhookRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Route not found' } });

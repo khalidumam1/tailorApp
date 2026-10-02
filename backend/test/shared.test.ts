@@ -6,6 +6,7 @@ import {
   normalizePakistanPhone,
   orderStatuses,
   syncOperationSchema,
+  toE164Phone,
 } from '../shared/src/index.ts';
 
 test('customer phone validation accepts common Pakistan formats and rejects letters', () => {
@@ -25,6 +26,13 @@ test('common local and international Pakistan phone formats normalize to the sam
   assert.equal(normalizePakistanPhone('0300 1234567'), '923001234567');
   assert.equal(normalizePakistanPhone('+92 (300) 123-4567'), '923001234567');
   assert.equal(normalizePakistanPhone('0092 300 1234567'), '923001234567');
+});
+
+test('saved customer phones are canonical E.164 numbers and malformed numbers are rejected', () => {
+  assert.equal(toE164Phone('0300 1234567'), '+923001234567');
+  assert.equal(toE164Phone('+44 20 7946 0958'), '+442079460958');
+  assert.equal(createCustomerSchema.safeParse({ name: 'Test Customer', phone: '0300abc4567' }).success, false);
+  assert.equal(createCustomerSchema.safeParse({ name: 'Test Customer', phone: '1234567' }).success, false);
 });
 
 test('order workflow includes terminal collected and cancelled statuses', () => {

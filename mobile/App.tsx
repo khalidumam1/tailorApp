@@ -5,7 +5,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,6 +14,7 @@ import {
 import * as Network from 'expo-network';
 import * as SecureStore from 'expo-secure-store';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import {
   ApiError,
   apiRequest,
@@ -41,13 +41,28 @@ import {
   loadOrders,
   loadSyncState,
   loadTemplates,
+  createPaymentAttempt,
+  findPendingPaymentAttempt,
   saveCustomerOffline,
   saveMeasurementOffline,
   saveOrderOffline,
   synchronize,
+  updatePaymentAttempt,
 } from './src/sync';
 
-type Page = 'home' | 'orders' | 'customers' | 'measurements' | 'settings';
+type Page = 'home' | 'orders' | 'customers' | 'measurements' | 'notifications' | 'settings';
+type WhatsAppNotification = {
+  id: string;
+  kind: string;
+  status: 'QUEUED' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'NOT_SENT';
+  recipientPhone: string;
+  lastError: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  deliveredAt: string | null;
+  readAt: string | null;
+  failedAt: string | null;
+};
 type ShopOption = { id: string; name: string };
 type SyncState = Awaited<ReturnType<typeof loadSyncState>>;
 
@@ -125,6 +140,14 @@ function Field({
 }
 
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppContent />
+    </SafeAreaProvider>
+  );
+}
+
+function AppContent() {
   const [language, setLanguage] = useState<Language>('en');
   const copy = useMemo(() => getCopy(language), [language]);
   const rtl = language === 'ur';
@@ -152,6 +175,7 @@ export default function App() {
   const [syncing, setSyncing] = useState(false);
   const syncLock = useRef(false);
   const [dashboard, setDashboard] = useState<Record<string, unknown>>({});
+  const [notificationHistory, setNotificationHistory] = useState<WhatsAppNotification[]>([]);
 
   const [customerForm, setCustomerForm] = useState(false);
   const [customerName, setCustomerName] = useState('');
@@ -183,6 +207,25 @@ export default function App() {
     });
   }, [copy.error]);
 
+  const refreshNotificationHistory = useCallback(async () => {
+    if (!session || online !== true || !session.permissions.includes('notifications:read')) return;
+    try {
+      const response = await apiRequest<{ data?: { items?: WhatsAppNotification[] } }>(
+        session,
+        '/api/v1/notifications?limit=50',
+        {},
+        updateSession,
+      );
+      setNotificationHistory(response.data?.items ?? []);
+    } catch (historyError) {
+      setError(historyError instanceof Error ? historyError.message : copy.error);
+    }
+  }, [copy.error, online, session, updateSession]);
+
+  useEffect(() => {
+    if (page === 'notifications') void refreshNotificationHistory();
+  }, [page, refreshNotificationHistory]);
+
   const refreshLocal = useCallback(async (businessId: string) => {
     const [nextCustomers, nextOrders, nextTemplates, nextMeasurements, nextSyncState] = await Promise.all([
       loadCustomers(businessId),
@@ -202,6 +245,12 @@ export default function App() {
     let mounted = true;
     setBooting(true);
     setBootError('');
+    const timeout = setTimeout(() => {
+      if (mounted) {
+        setBootError(copy.startupTimeout);
+        setBooting(false);
+      }
+    }, 15_000);
     Promise.all([
       openLocalDatabase(),
       readSession(),
@@ -216,10 +265,14 @@ export default function App() {
     }).catch((bootError: unknown) => {
       if (mounted) setBootError(bootError instanceof Error ? bootError.message : copy.error);
     }).finally(() => {
+      clearTimeout(timeout);
       if (mounted) setBooting(false);
     });
-    return () => { mounted = false; };
-  }, [bootAttempt, copy.error]);
+    return () => {
+      mounted = false;
+      clearTimeout(timeout);
+    };
+  }, [bootAttempt, copy.error, copy.startupTimeout]);
 
   useEffect(() => {
     let mounted = true;
@@ -283,6 +336,7 @@ export default function App() {
     ...(can('orders:read') ? [{ id: 'orders' as const, label: copy.orders }] : []),
     ...(can('customers:read') ? [{ id: 'customers' as const, label: copy.customers }] : []),
     ...(can('measurements:read') ? [{ id: 'measurements' as const, label: copy.measurements }] : []),
+    ...(can('notifications:read') ? [{ id: 'notifications' as const, label: copy.notifications }] : []),
     { id: 'settings', label: copy.settings },
   ];
 
@@ -301,6 +355,7 @@ export default function App() {
         throw new Error('This account needs a business membership before it can use the tailor app.');
       }
       const nextSession = await createSession(result);
+      setNotificationHistory([]);
       setSession(nextSession);
       setPassword('');
       setShopChoices([]);
@@ -319,6 +374,7 @@ export default function App() {
     try {
       const result = await signIn(pendingCredentials.email, pendingCredentials.password, shop.id);
       const nextSession = await createSession(result);
+      setNotificationHistory([]);
       setSession(nextSession);
       setPassword('');
       setShopChoices([]);
@@ -342,6 +398,7 @@ export default function App() {
       }
     }
     await clearSession();
+    setNotificationHistory([]);
     setSession(null);
     setPage('home');
   };
@@ -463,14 +520,7 @@ export default function App() {
       setError(copy.paymentOnline);
       return;
     }
-    const database = await openLocalDatabase();
-    const existing = await database.getFirstAsync<{ idempotency_key: string; amount: string; method: string }>(
-      `SELECT idempotency_key, amount, method FROM app_payment_attempts
-       WHERE business_id = ? AND order_id = ? AND status = 'pending'
-       ORDER BY created_at DESC LIMIT 1`,
-      session.business.id,
-      order.id,
-    );
+    const existing = await findPendingPaymentAttempt(session.business.id, order.id);
     setPaymentOrder(order);
     setPaymentAttempt(existing ?? null);
     setPaymentAmount(existing?.amount ?? '');
@@ -496,22 +546,17 @@ export default function App() {
       return;
     }
     setSaving(true);
-    let database: Awaited<ReturnType<typeof openLocalDatabase>> | null = null;
     const key = paymentAttempt?.idempotency_key ?? createClientId();
     const method = paymentAttempt?.method ?? paymentMethod;
     try {
-      database = await openLocalDatabase();
       if (!paymentAttempt) {
-        await database.runAsync(
-          `INSERT INTO app_payment_attempts (idempotency_key, business_id, order_id, amount, method, status, created_at)
-           VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
-          key,
-          session.business.id,
-          paymentOrder.id,
+        await createPaymentAttempt({
+          idempotencyKey: key,
+          businessId: session.business.id,
+          orderId: paymentOrder.id,
           amount,
           method,
-          new Date().toISOString(),
-        );
+        });
         setPaymentAttempt({ idempotency_key: key, amount, method });
       }
       await apiRequest(session, `/api/v1/payments/orders/${paymentOrder.id}`, {
@@ -519,10 +564,7 @@ export default function App() {
         headers: { 'Idempotency-Key': key },
         body: { amount, method },
       }, updateSession);
-      await database.runAsync(
-        `UPDATE app_payment_attempts SET status = 'confirmed' WHERE idempotency_key = ?`,
-        key,
-      );
+      await updatePaymentAttempt(key, 'confirmed', null);
       Alert.alert(copy.orders, copy.saved);
       setPaymentOrder(null);
       setPaymentAttempt(null);
@@ -532,18 +574,10 @@ export default function App() {
       const message = paymentError instanceof Error ? paymentError.message : copy.error;
       if (paymentError instanceof ApiError && paymentError.status >= 400
         && paymentError.status < 500 && paymentError.status !== 401) {
-        await database?.runAsync(
-          `UPDATE app_payment_attempts SET status = 'rejected', last_error = ? WHERE idempotency_key = ?`,
-          message,
-          key,
-        );
+        await updatePaymentAttempt(key, 'rejected', message);
         setPaymentAttempt(null);
       } else {
-        await database?.runAsync(
-          `UPDATE app_payment_attempts SET last_error = ? WHERE idempotency_key = ?`,
-          message,
-          key,
-        );
+        await updatePaymentAttempt(key, 'pending', message);
       }
       setError(message);
     } finally {
@@ -642,7 +676,12 @@ export default function App() {
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <View style={styles.workspace}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
         <View style={styles.syncCard}>
           <View style={styles.syncCopy}>
             <Text style={styles.syncTitle}>{syncing ? copy.syncing : syncState.pending ? `${syncState.pending} ${copy.pending}` : copy.lastSync}</Text>
@@ -849,6 +888,7 @@ export default function App() {
                 <ActionButton title={saving ? '…' : copy.saveMeasurement} onPress={() => void saveMeasurements()} disabled={saving || !selectedTemplate} />
               </View>
             ) : null}
+
             {measurements.length ? measurements.map((record) => {
               const customer = customers.find((item) => item.id === record.customer_id);
               return (
@@ -861,6 +901,38 @@ export default function App() {
                 </View>
               );
             }) : <View style={styles.emptyCard}><Text style={styles.emptyText}>{copy.emptyMeasurements}</Text></View>}
+          </>
+        ) : null}
+
+        {page === 'notifications' ? (
+          <>
+            <Text style={styles.pageTitle}>{copy.notificationHistory}</Text>
+            {online !== true ? (
+              <View style={styles.emptyCard}><Text style={styles.emptyText}>{copy.notificationsOnline}</Text></View>
+            ) : notificationHistory.length ? notificationHistory.map((notification) => {
+              const statusLabel = {
+                QUEUED: copy.queued,
+                SENT: copy.sent,
+                DELIVERED: copy.delivered,
+                READ: copy.read,
+                FAILED: copy.failed,
+                NOT_SENT: copy.notSent,
+              }[notification.status];
+              return (
+                <View key={notification.id} style={styles.listCard}>
+                  <View style={styles.listMain}>
+                    <Text style={styles.listTitle}>{notification.kind.replaceAll('_', ' ').toLowerCase()}</Text>
+                    <Text style={styles.listMeta}>{notification.recipientPhone || '—'} · {new Date(notification.createdAt).toLocaleString()}</Text>
+                    {notification.lastError ? <Text style={styles.syncError}>{notification.lastError}</Text> : null}
+                  </View>
+                  <Text style={styles.syncBadge}>{statusLabel}</Text>
+                </View>
+              );
+            }) : (
+              <View style={styles.emptyCard}><Text style={styles.emptyText}>{copy.emptyNotifications}</Text></View>
+            )}
+            {online === true ? <ActionButton title={copy.retry} onPress={() => void refreshNotificationHistory()} secondary /> : null}
+            <Text style={styles.offlineHint}>{copy.sent} confirms Meta accepted the message. {copy.delivered} and {copy.read.toLowerCase()} require verified status callbacks.</Text>
           </>
         ) : null}
 
@@ -889,21 +961,22 @@ export default function App() {
             </View>
           </>
         ) : null}
-      </ScrollView>
+        </ScrollView>
 
-      <View style={styles.tabBar}>
-        {pages.map((item) => (
-          <Pressable
-            accessibilityRole="tab"
-            accessibilityState={{ selected: page === item.id }}
-            key={item.id}
-            onPress={() => { setPage(item.id); setError(''); }}
-            style={styles.tab}
-          >
-            <View style={[styles.tabMark, page === item.id && styles.tabMarkActive]} />
-            <Text style={[styles.tabLabel, page === item.id && styles.tabLabelActive]}>{item.label}</Text>
-          </Pressable>
-        ))}
+        <View style={styles.tabBar}>
+          {pages.map((item) => (
+            <Pressable
+              accessibilityRole="tab"
+              accessibilityState={{ selected: page === item.id }}
+              key={item.id}
+              onPress={() => { setPage(item.id); setError(''); }}
+              style={styles.tab}
+            >
+              <View style={[styles.tabMark, page === item.id && styles.tabMarkActive]} />
+              <Text numberOfLines={1} style={[styles.tabLabel, page === item.id && styles.tabLabelActive]}>{item.label}</Text>
+            </Pressable>
+          ))}
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -911,11 +984,12 @@ export default function App() {
 
 const styles = StyleSheet.create({
   grow: { flex: 1 },
-  safe: { flex: 1, backgroundColor: '#F4F7F5' },
+  safe: { flex: 1, backgroundColor: '#FFFFFF' },
+  workspace: { flex: 1, minHeight: 0, backgroundColor: '#F4F7F5' },
   rtlLayout: { direction: 'rtl' },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F4F7F5' },
   authContent: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24, paddingTop: 18, paddingBottom: 30 },
-  header: { minHeight: 66, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#E9EFEB' },
+  header: { minHeight: 68, paddingHorizontal: 18, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#E9EFEB' },
   headerCopy: { flex: 1 },
   brandMark: { width: 50, height: 50, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: '#116B55', marginBottom: 13 },
   brandLetter: { color: '#FFFFFF', fontSize: 25, fontWeight: '900' },
@@ -927,7 +1001,7 @@ const styles = StyleSheet.create({
   onlineDot: { backgroundColor: '#27A56D' },
   offlineDot: { backgroundColor: '#D28B38' },
   connectionText: { color: '#52665C', fontSize: 11, fontWeight: '700' },
-  content: { padding: 18, paddingBottom: 28 },
+  content: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 20 },
   syncCard: { backgroundColor: '#EAF3EE', borderRadius: 15, padding: 13, flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
   syncCopy: { flex: 1, paddingRight: 8 },
   syncTitle: { color: '#245A45', fontSize: 12, fontWeight: '800' },
@@ -990,7 +1064,7 @@ const styles = StyleSheet.create({
   languageChipSelected: { backgroundColor: '#E7F2EB', borderColor: '#9ABFA9' },
   languageChipText: { color: '#456155', fontSize: 10, fontWeight: '700' },
   radio: { color: '#176B54', fontSize: 17 },
-  tabBar: { minHeight: 62, paddingBottom: 5, paddingHorizontal: 5, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#E7EDE9' },
+  tabBar: { minHeight: 62, paddingTop: 4, paddingBottom: 4, paddingHorizontal: 4, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#E7EDE9' },
   tab: { flex: 1, minHeight: 50, alignItems: 'center', justifyContent: 'center', gap: 4 },
   tabMark: { width: 18, height: 3, borderRadius: 2, backgroundColor: 'transparent' },
   tabMarkActive: { backgroundColor: '#176B54' },

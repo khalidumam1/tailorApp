@@ -13,16 +13,21 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@morrowdigital/watermelondb-expo-plugin": "2.3.3",
+    "@nozbe/watermelondb": "0.28.0",
     "expo": "57.0.26",
+    "expo-build-properties": "~57.0.22",
     "expo-crypto": "57.0.3",
     "expo-network": "57.0.2",
     "expo-secure-store": "57.0.4",
     "expo-sqlite": "57.0.3",
     "expo-status-bar": "57.0.1",
     "react": "19.2.3",
-    "react-native": "0.86.3"
+    "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0"
   },
   "devDependencies": {
+    "@babel/plugin-proposal-decorators": "7.25.9",
     "@types/react": "19.2.7",
     "typescript": "6.0.3"
   },

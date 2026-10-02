@@ -203,6 +203,15 @@ reverse-proxy hops.
 | `API_BASE_URL` | Web admin API origin; defaults to `http://localhost:5000` (`VITE_API_BASE_URL` remains supported for compatibility) |
 | `SEED_OWNER_*`, `SEED_STAFF_*`, `SEED_PLATFORM_ADMIN_*` | Required development-only demo identities; passwords are not checked in |
 | `BOOTSTRAP_SUPER_ADMIN*` | One-time production bootstrap only; provide through a protected secret manager, then remove |
+| `WHATSAPP_*`, `META_APP_SECRET`, `META_GRAPH_API_VERSION` | Backend-only central Meta Cloud API sender, approved templates, and verified webhooks; disabled until Meta setup is complete |
+
+WhatsApp uses one platform-managed sender for all businesses. Notification jobs
+are persisted transactionally after online order/payment/status changes or
+successful offline order synchronization. Messages require recorded customer
+consent; phone numbers are stored in E.164 format, and customer opt-outs are
+honored. The business web/mobile workspaces provide tenant-scoped delivery
+history. Configure the Meta sender, approved templates, document headers, and
+webhook exactly as described in [backend/README.md](./backend/README.md).
 
 Passwords are bcrypt-hashed. Access JWTs expire after 15 minutes. Refresh
 tokens are high-entropy opaque values stored only as SHA-256 hashes, rotated

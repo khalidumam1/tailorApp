@@ -11,6 +11,9 @@ const customerSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
   phone: z.string(),
+  whatsappConsent: z.boolean(),
+  whatsappConsentAt: z.string().nullable(),
+  whatsappOptedOutAt: z.string().nullable(),
   notes: z.string().nullable().optional(),
   version: z.number().int(),
   createdAt: z.string(),
@@ -115,6 +118,25 @@ const paymentSchema = z.object({
   }),
 });
 
+const notificationSchema = z.object({
+  id: z.string().uuid(),
+  customerId: z.string().uuid(),
+  orderId: z.string().uuid(),
+  paymentId: z.string().uuid().nullable(),
+  kind: z.enum(['ORDER_CREATED', 'PAYMENT_RECEIVED', 'ORDER_READY']),
+  status: z.enum(['QUEUED', 'SENT', 'DELIVERED', 'READ', 'FAILED', 'NOT_SENT']),
+  recipientPhone: z.string(),
+  templateName: z.string(),
+  attemptCount: z.number().int(),
+  lastError: z.string().nullable(),
+  sentAt: z.string().nullable(),
+  deliveredAt: z.string().nullable(),
+  readAt: z.string().nullable(),
+  failedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
 const receiptSchema = z.object({
   id: z.string().uuid(),
   receiptNumber: z.string(),
@@ -172,6 +194,7 @@ export type Dashboard = z.infer<typeof dashboardSchema>;
 export type GarmentTemplate = z.infer<typeof templateSchema>;
 export type MeasurementProfile = z.infer<typeof profileSchema>;
 export type Payment = z.infer<typeof paymentSchema>;
+export type WhatsAppNotification = z.infer<typeof notificationSchema>;
 export type Receipt = z.infer<typeof receiptSchema>;
 export type PlatformBusiness = z.infer<typeof platformBusinessSchema>;
 export type PlatformStaff = z.infer<typeof platformStaffSchema>;
@@ -248,6 +271,19 @@ export const api = {
   },
   createCustomer(token: string, input: CustomerInput) {
     return request('/customers', customerSchema, { token, method: 'POST', body: input });
+  },
+  setWhatsAppConsent(token: string, customer: Customer, consented: boolean) {
+    return request(`/customers/${customer.id}/whatsapp-consent`, customerSchema, {
+      token,
+      method: 'POST',
+      body: { consented, version: customer.version },
+    });
+  },
+  notifications(token: string) {
+    return request('/notifications?limit=100', z.object({
+      items: z.array(notificationSchema),
+      nextCursor: z.string().nullable(),
+    }), { token });
   },
   orders(token: string, query = '') {
     const params = new URLSearchParams({ limit: '100' });

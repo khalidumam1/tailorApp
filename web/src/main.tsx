@@ -21,10 +21,11 @@ import {
   type Payment,
   type Receipt,
   type Session,
+  type WhatsAppNotification,
 } from './api';
 import './styles.css';
 
-type View = 'dashboard' | 'orders' | 'customers' | 'measurements' | 'payments';
+type View = 'dashboard' | 'orders' | 'customers' | 'measurements' | 'payments' | 'notifications';
 type PlatformView = 'businesses' | 'staff' | 'audit' | 'health';
 type Selection = Exclude<LoginResult, { accessToken: string }>;
 
@@ -34,6 +35,7 @@ const navigation: Array<{ view: View; label: string; permission?: string }> = [
   { view: 'customers', label: 'Customers', permission: 'customers:read' },
   { view: 'measurements', label: 'Measurements', permission: 'measurements:read' },
   { view: 'payments', label: 'Payments', permission: 'payments:read' },
+  { view: 'notifications', label: 'WhatsApp notifications', permission: 'notifications:read' },
 ];
 
 function money(value: string | undefined): string {
@@ -82,6 +84,7 @@ function App() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [notifications, setNotifications] = useState<WhatsAppNotification[]>([]);
   const [templates, setTemplates] = useState<GarmentTemplate[]>([]);
   const [profiles, setProfiles] = useState<MeasurementProfile[]>([]);
   const [search, setSearch] = useState('');
@@ -158,8 +161,10 @@ function App() {
         setCustomers(customerResult.items);
         if (!measurementTemplateId && templateResult.items[0]) setMeasurementTemplateId(templateResult.items[0].id);
         if (!measurementCustomerId && customerResult.items[0]) setMeasurementCustomerId(customerResult.items[0].id);
-      } else {
+      } else if (view === 'payments') {
         setPayments((await withSession(api.payments)).items);
+      } else {
+        setNotifications((await withSession(api.notifications)).items);
       }
     } catch (cause) {
       setError(messageFor(cause));
@@ -318,6 +323,7 @@ function App() {
     setOrders([]);
     setCustomers([]);
     setPayments([]);
+    setNotifications([]);
     setReceipt(null);
   }
 
@@ -337,6 +343,28 @@ function App() {
       setCustomerPhone('');
       setCustomerNotes('');
       setNotice('Customer saved.');
+      await reloadCurrent();
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function toggleWhatsAppConsent(customer: Customer) {
+    if (!session) return;
+    const consented = !customer.whatsappConsent;
+    const confirmed = window.confirm(consented
+      ? `Confirm that ${customer.name} has explicitly agreed to receive WhatsApp notifications.`
+      : `Stop WhatsApp notifications to ${customer.name}?`);
+    if (!confirmed) return;
+    setWorking(true);
+    setError(null);
+    try {
+      await withSession((token) => api.setWhatsAppConsent(token, customer, consented));
+      setNotice(!consented
+        ? `WhatsApp notifications opted out for ${customer.name}.`
+        : `WhatsApp consent recorded for ${customer.name}.`);
       await reloadCurrent();
     } catch (cause) {
       setError(messageFor(cause));
@@ -852,9 +880,24 @@ function App() {
             )}
             {loading ? <LoadingState /> : customers.length ? (
               <div className="table-wrap">
-                <table><thead><tr><th>Customer</th><th>Phone</th><th>Added</th></tr></thead>
+                <table><thead><tr><th>Customer</th><th>Phone</th><th>WhatsApp consent</th><th>Added</th></tr></thead>
                   <tbody>{customers.map((customer) => (
-                    <tr key={customer.id}><td><strong>{customer.name}</strong>{customer.notes && <small className="table-note">{customer.notes}</small>}</td><td>{customer.phone}</td><td>{karachiDate(customer.createdAt)}</td></tr>
+                    <tr key={customer.id}>
+                      <td><strong>{customer.name}</strong>{customer.notes && <small className="table-note">{customer.notes}</small>}</td>
+                      <td>{customer.phone}</td>
+                      <td>
+                        <span className="notification-pill">{customer.whatsappConsent && !customer.whatsappOptedOutAt ? 'Opted in' : 'Not opted in'}</span>
+                        {permissions.has('customers:write') && (
+                          <button
+                            className="button button-quiet"
+                            disabled={working || !online}
+                            aria-label={`${customer.whatsappConsent ? 'Opt out' : 'Record consent'} for ${customer.name}`}
+                            onClick={() => void toggleWhatsAppConsent(customer)}
+                          >{customer.whatsappConsent ? 'Opt out' : 'Record consent'}</button>
+                        )}
+                      </td>
+                      <td>{karachiDate(customer.createdAt)}</td>
+                    </tr>
                   ))}</tbody>
                 </table>
               </div>
@@ -982,6 +1025,27 @@ function App() {
           </section>
         )}
 
+        {view === 'notifications' && (
+          <section className="content-stack">
+            <div className="section-heading"><div><h2>WhatsApp delivery history</h2><p className="muted">Sent means accepted by Meta; Delivered and Read are confirmed by verified delivery webhooks.</p></div></div>
+            {notifications.length ? (
+              <div className="table-wrap">
+                <table><thead><tr><th>Created</th><th>Customer number</th><th>Event</th><th>Status</th><th>Details</th></tr></thead>
+                  <tbody>{notifications.map((notification) => (
+                    <tr key={notification.id}>
+                      <td>{karachiDate(notification.createdAt)}</td>
+                      <td>{notification.recipientPhone || 'Invalid number'}</td>
+                      <td>{notification.kind.replaceAll('_', ' ').toLowerCase()}</td>
+                      <td><NotificationPill status={notification.status} /></td>
+                      <td>{notification.lastError ?? (notification.readAt ? `Read ${karachiDate(notification.readAt)}` : notification.deliveredAt ? `Delivered ${karachiDate(notification.deliveredAt)}` : notification.sentAt ? `Sent ${karachiDate(notification.sentAt)}` : `Attempts: ${notification.attemptCount}`)}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            ) : <EmptyState title="No WhatsApp notifications yet" detail="Order, payment and pickup notifications appear here after their changes commit." />}
+          </section>
+        )}
+
         {loading && <span className="sync-note" role="status">Refreshing records…</span>}
       </main>
 
@@ -1032,6 +1096,18 @@ function MetricCard({ label, value, icon, tone = 'green' }: { label: string; val
 function StatusPill({ status }: { status: Order['status'] | 'ACTIVE' | 'SUSPENDED' | 'PENDING' }) {
   const label = status.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
   return <span className={`status-pill status-${status.toLowerCase()}`}>{label}</span>;
+}
+
+function NotificationPill({ status }: { status: WhatsAppNotification['status'] }) {
+  const labels: Record<WhatsAppNotification['status'], string> = {
+    QUEUED: 'Queued',
+    SENT: 'Sent',
+    DELIVERED: 'Delivered',
+    READ: 'Read',
+    FAILED: 'Failed',
+    NOT_SENT: 'Not sent',
+  };
+  return <span className={`notification-pill notification-${status.toLowerCase()}`}>{labels[status]}</span>;
 }
 
 function TransitionButton({ order, onChange, disabled }: { order: Order; onChange: (order: Order, next: Order['status']) => void; disabled: boolean }) {

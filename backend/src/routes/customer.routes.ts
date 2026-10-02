@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import express from 'express';
-import { createCustomerSchema, customerQuerySchema, normalizePakistanPhone, updateCustomerSchema } from '@tailor/shared';
+import { createCustomerSchema, customerQuerySchema, normalizePakistanPhone, toE164Phone, updateCustomerSchema } from '@tailor/shared';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
@@ -11,6 +11,10 @@ const router = express.Router();
 const customerIdSchema = z.string().uuid();
 const duplicateQuerySchema = z.object({ phone: createCustomerSchema.shape.phone });
 const deleteSchema = z.object({ version: z.number().int().positive() });
+const whatsappConsentSchema = z.object({
+  consented: z.boolean(),
+  version: z.number().int().positive(),
+});
 
 function getBusinessId(req: express.Request): string {
   if (req.auth?.scope !== 'business' || !req.auth.business) {
@@ -89,7 +93,7 @@ router.post('/', requireBusinessPermission('customers:write'), asyncHandler(asyn
         data: {
           businessId,
           name: input.name,
-          phone: input.phone,
+          phone: toE164Phone(input.phone),
           phoneNormalized: normalizePakistanPhone(input.phone),
           notes: input.notes,
         },
@@ -147,13 +151,24 @@ router.patch('/:customerId', requireBusinessPermission('customers:write'), async
   const input = updateCustomerSchema.parse(req.body);
   try {
     const customer = await prisma.$transaction(async (tx) => {
+      const existing = await tx.customer.findFirst({
+        where: { id: customerId, businessId, deletedAt: null },
+        select: { phoneNormalized: true },
+      });
+      const phoneChanged = input.phone !== undefined
+        && existing?.phoneNormalized !== normalizePakistanPhone(input.phone);
       const update = await tx.customer.updateMany({
         where: { id: customerId, businessId, deletedAt: null, version: input.version },
         data: {
           ...(input.name !== undefined ? { name: input.name } : {}),
           ...(input.phone !== undefined ? {
-            phone: input.phone,
+            phone: toE164Phone(input.phone),
             phoneNormalized: normalizePakistanPhone(input.phone),
+          } : {}),
+          ...(phoneChanged ? {
+            whatsappConsent: false,
+            whatsappConsentAt: null,
+            whatsappOptedOutAt: null,
           } : {}),
           ...(input.notes !== undefined ? { notes: input.notes } : {}),
           version: { increment: 1 },
@@ -164,6 +179,12 @@ router.patch('/:customerId', requireBusinessPermission('customers:write'), async
         if (!exists) throw new HttpError(404, 'Customer not found', 'CUSTOMER_NOT_FOUND');
         throw new HttpError(409, 'Customer changed since it was loaded; refresh before editing', 'VERSION_CONFLICT');
       }
+      if (phoneChanged) {
+        await tx.whatsAppNotification.updateMany({
+          where: { businessId, customerId, status: 'QUEUED' },
+          data: { status: 'NOT_SENT', lastError: 'Customer phone number changed before delivery', failedAt: new Date() },
+        });
+      }
       const updated = await tx.customer.findFirstOrThrow({ where: { id: customerId, businessId } });
       await tx.auditEvent.create({
         data: {
@@ -172,7 +193,7 @@ router.patch('/:customerId', requireBusinessPermission('customers:write'), async
           action: 'customer.updated',
           entityType: 'customer',
           entityId: customerId,
-          metadata: { version: updated.version },
+          metadata: { version: updated.version, phoneChanged },
           requestId: req.requestId,
         },
       });
@@ -182,6 +203,50 @@ router.patch('/:customerId', requireBusinessPermission('customers:write'), async
   } catch (error) {
     handleDuplicate(error);
   }
+}));
+
+router.post('/:customerId/whatsapp-consent', requireBusinessPermission('customers:write'), asyncHandler(async (req, res) => {
+  const businessId = getBusinessId(req);
+  const customerId = customerIdSchema.parse(req.params.customerId);
+  const input = whatsappConsentSchema.parse(req.body);
+  const now = new Date();
+  const customer = await prisma.$transaction(async (tx) => {
+    const update = await tx.customer.updateMany({
+      where: { id: customerId, businessId, deletedAt: null, version: input.version },
+      data: {
+        whatsappConsent: input.consented,
+        ...(input.consented
+          ? { whatsappConsentAt: now, whatsappOptedOutAt: null }
+          : { whatsappOptedOutAt: now }),
+        version: { increment: 1 },
+      },
+    });
+    if (!update.count) {
+      const exists = await tx.customer.findFirst({ where: { id: customerId, businessId, deletedAt: null }, select: { id: true } });
+      if (!exists) throw new HttpError(404, 'Customer not found', 'CUSTOMER_NOT_FOUND');
+      throw new HttpError(409, 'Customer changed since it was loaded; refresh before updating', 'VERSION_CONFLICT');
+    }
+    if (!input.consented) {
+      await tx.whatsAppNotification.updateMany({
+        where: { businessId, customerId, status: 'QUEUED' },
+        data: { status: 'NOT_SENT', lastError: 'Customer opted out', failedAt: now },
+      });
+    }
+    const updated = await tx.customer.findFirstOrThrow({ where: { id: customerId, businessId } });
+    await tx.auditEvent.create({
+      data: {
+        businessId,
+        actorId: getActorId(req),
+        action: input.consented ? 'customer.whatsapp_consented' : 'customer.whatsapp_opted_out',
+        entityType: 'customer',
+        entityId: customerId,
+        metadata: { source: 'business_user' },
+        requestId: req.requestId,
+      },
+    });
+    return updated;
+  });
+  res.json({ data: customer });
 }));
 
 router.delete('/:customerId', requireBusinessPermission('customers:write'), asyncHandler(async (req, res) => {
@@ -198,6 +263,10 @@ router.delete('/:customerId', requireBusinessPermission('customers:write'), asyn
       if (!exists) throw new HttpError(404, 'Customer not found', 'CUSTOMER_NOT_FOUND');
       throw new HttpError(409, 'Customer changed since it was loaded; refresh before deleting', 'VERSION_CONFLICT');
     }
+    await tx.whatsAppNotification.updateMany({
+      where: { businessId, customerId, status: 'QUEUED' },
+      data: { status: 'NOT_SENT', lastError: 'Customer record was archived', failedAt: new Date() },
+    });
     await tx.auditEvent.create({
       data: {
         businessId,

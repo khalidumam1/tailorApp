@@ -5,6 +5,7 @@ import {
   createOrderSchema,
   garmentTemplateFieldSchema,
   normalizePakistanPhone,
+  toE164Phone,
   syncOperationSchema,
 } from '@tailor/shared';
 import { z } from 'zod';
@@ -12,6 +13,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate } from '../middleware/auth.js';
+import { queueOrderCreated } from '../whatsapp.js';
 
 const router = express.Router();
 const idSchema = z.string().uuid();
@@ -151,7 +153,7 @@ async function applyOperation(
           id: operation.entityId,
           businessId,
           name: payload.customer.name,
-          phone: payload.customer.phone,
+          phone: toE164Phone(payload.customer.phone),
           phoneNormalized: normalizePakistanPhone(payload.customer.phone),
           notes: payload.customer.notes,
         },
@@ -185,6 +187,14 @@ async function applyOperation(
       });
       if (duplicate) return conflict('DUPLICATE_CUSTOMER_PHONE', { entityId: duplicate.id });
     }
+    const currentPhone = input.phone !== undefined
+      ? await tx.customer.findFirst({
+        where: { id: operation.entityId, businessId, deletedAt: null },
+        select: { phoneNormalized: true },
+      })
+      : null;
+    const phoneChanged = input.phone !== undefined
+      && currentPhone?.phoneNormalized !== normalizePakistanPhone(input.phone);
     const updatedCount = await tx.customer.updateMany({
       where: {
         id: operation.entityId,
@@ -195,8 +205,13 @@ async function applyOperation(
       data: {
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.phone !== undefined ? {
-          phone: input.phone,
+          phone: toE164Phone(input.phone),
           phoneNormalized: normalizePakistanPhone(input.phone),
+        } : {}),
+        ...(phoneChanged ? {
+          whatsappConsent: false,
+          whatsappConsentAt: null,
+          whatsappOptedOutAt: null,
         } : {}),
         ...(input.notes !== undefined ? { notes: input.notes } : {}),
         version: { increment: 1 },
@@ -209,6 +224,12 @@ async function applyOperation(
       });
       return conflict(current ? 'VERSION_CONFLICT' : 'CUSTOMER_NOT_FOUND', current ?? {});
     }
+    if (phoneChanged) {
+      await tx.whatsAppNotification.updateMany({
+        where: { businessId, customerId: operation.entityId, status: 'QUEUED' },
+        data: { status: 'NOT_SENT', lastError: 'Customer phone number changed before delivery', failedAt: new Date() },
+      });
+    }
     const customer = await tx.customer.findFirstOrThrow({
       where: { id: operation.entityId, businessId },
     });
@@ -219,7 +240,7 @@ async function applyOperation(
         action: 'customer.updated',
         entityType: 'customer',
         entityId: customer.id,
-        metadata: { source: 'offline_sync', version: customer.version },
+        metadata: { source: 'offline_sync', version: customer.version, phoneChanged },
         requestId,
       },
     });
@@ -379,6 +400,7 @@ async function applyOperation(
       requestId,
     },
   });
+  await queueOrderCreated(tx, order.id);
   return { status: 'APPLIED', response: order };
 }
 

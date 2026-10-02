@@ -2,7 +2,7 @@
   "expo": {
     "name": "TailorApp",
     "slug": "tailor-management",
-    "version": "1.2.1",
+    "version": "1.2.4",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "scheme": "tailorapp",
@@ -12,7 +12,7 @@
     },
     "android": {
       "package": "com.tailorapp.mobile",
-      "versionCode": 4
+      "versionCode": 7
     },
     "plugins": [
       "expo-secure-store",
@@ -20,6 +20,24 @@
         "expo-sqlite",
         {
           "useSQLCipher": true
+        }
+      ],
+      [
+        "@morrowdigital/watermelondb-expo-plugin",
+        {
+          "disableJsi": true
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "packagingOptions": {
+              "pickFirst": [
+                "**/libc++_shared.so"
+              ]
+            }
+          }
         }
       ]
     ]

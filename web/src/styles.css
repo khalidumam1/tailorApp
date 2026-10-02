@@ -203,6 +203,13 @@ th { padding: 12px 16px; color: #75857e; background: #f8faf8; font-size: .7rem; 
 td { padding: 14px 16px; border-top: 1px solid #edf1ee; color: #405a50; font-size: .83rem; white-space: nowrap; }
 td strong { color: #234238; }
 .table-note { display: block; max-width: 360px; overflow: hidden; color: #778780; font-size: .74rem; text-overflow: ellipsis; white-space: nowrap; }
+.notification-pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 9px; color: #53695f; background: #edf2ef; font-size: .7rem; font-weight: 700; white-space: nowrap; }
+.notification-queued { color: #3f6991; background: #e9f1f8; }
+.notification-sent { color: #67548c; background: #f0ecf7; }
+.notification-delivered { color: #227252; background: #e4f3e9; }
+.notification-read { color: #176c5b; background: #e0f2ed; }
+.notification-failed { color: #a24e43; background: #faeae7; }
+.notification-not_sent { color: #80631e; background: #faf2dc; }
 .negative-money { color: #a14739; }
 
 .order-list { display: grid; gap: 11px; }
