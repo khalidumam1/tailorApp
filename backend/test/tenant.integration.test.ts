@@ -17,11 +17,14 @@ let orderBId = '';
 let userAId = '';
 let userBId = '';
 let platformStaffId = '';
+let platformSuperAdminId = '';
 let assignedOwnerId = '';
 let roleAId = '';
 let roleBId = '';
 let platformReadPermissionId = '';
 let offlineOrderId = '';
+let subscriptionPlanId = '';
+let subscriptionPaymentId = '';
 
 before(async () => {
   if (!enabled) return;
@@ -79,6 +82,16 @@ before(async () => {
       update: {},
       create: { key: 'notifications:read', description: 'Read notifications in tenant isolation test' },
     }),
+    prisma.permission.upsert({
+      where: { key: 'subscriptions:read' },
+      update: {},
+      create: { key: 'subscriptions:read', description: 'Read subscriptions in tenant isolation test' },
+    }),
+    prisma.permission.upsert({
+      where: { key: 'subscriptions:manage' },
+      update: {},
+      create: { key: 'subscriptions:manage', description: 'Submit subscription payments in tenant isolation test' },
+    }),
   ]);
   const [userA, userB] = await Promise.all([
     prisma.user.create({ data: { email: `tenant-a-${suffix}@example.test`, name: 'Tenant A User', passwordHash: 'test-hash' } }),
@@ -95,6 +108,15 @@ before(async () => {
     },
   });
   platformStaffId = platformStaff.id;
+  const platformSuperAdmin = await prisma.user.create({
+    data: {
+      email: `platform-super-${suffix}@example.test`,
+      name: 'Platform Super Admin',
+      passwordHash: 'test-hash',
+      platformRole: 'SUPER_ADMIN',
+    },
+  });
+  platformSuperAdminId = platformSuperAdmin.id;
   const platformReadPermission = await prisma.permission.upsert({
     where: { key: 'platform:businesses:read' },
     update: {},
@@ -107,8 +129,36 @@ before(async () => {
   ]);
   roleAId = roleA.id;
   roleBId = roleB.id;
+  const defaultPlan = await prisma.subscriptionPlan.findFirstOrThrow({ where: { active: true, isDefault: true } });
+  const paymentPlan = await prisma.subscriptionPlan.create({
+    data: {
+      name: `Tenant test plan ${suffix.slice(0, 8)}`,
+      monthlyPrice: '1200.00',
+      yearlyPrice: '12000.00',
+      trialDays: 0,
+      features: { orders: true },
+      limits: { ordersPerMonth: -1 },
+    },
+  });
+  subscriptionPlanId = paymentPlan.id;
+  const startsAt = new Date(Date.now() - 86_400_000);
+  const endsAt = new Date(Date.now() + 30 * 86_400_000);
+  await prisma.subscription.createMany({
+    data: [businessA.id, businessB.id].map((businessId) => ({
+      businessId,
+      planId: defaultPlan.id,
+      status: 'ACTIVE' as const,
+      cycle: 'MONTHLY' as const,
+      startsAt,
+      endsAt,
+      graceUntil: new Date(endsAt.getTime() + 7 * 86_400_000),
+    })),
+  });
   await prisma.rolePermissionGrant.createMany({
     data: permissions.map((permission) => ({ roleId: roleA.id, permissionId: permission.id })),
+  });
+  await prisma.rolePermissionGrant.createMany({
+    data: permissions.map((permission) => ({ roleId: roleB.id, permissionId: permission.id })),
   });
   const [membershipA] = await Promise.all([
     prisma.membership.create({ data: { businessId: businessA.id, userId: userA.id, roleId: roleA.id } }),
@@ -156,6 +206,11 @@ before(async () => {
     { subject: platformStaff.id, issuer: 'tailor-api', audience: 'tailor-clients', expiresIn: '5m', algorithm: 'HS256' },
   );
   process.env.TENANT_TEST_PLATFORM_TOKEN = platformToken;
+  process.env.TENANT_TEST_SUPER_ADMIN_TOKEN = jwt.sign(
+    { scope: 'platform' },
+    secret,
+    { subject: platformSuperAdmin.id, issuer: 'tailor-api', audience: 'tailor-clients', expiresIn: '5m', algorithm: 'HS256' },
+  );
   const { app } = await import('../src/app.js');
   const server = app.listen(0);
   await new Promise<void>((resolve, reject) => {
@@ -176,6 +231,10 @@ after(async () => {
     return;
   }
   await closeServer?.();
+  await prisma.subscriptionEvent.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
+  await prisma.subscriptionPayment.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
+  await prisma.subscription.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
+  if (subscriptionPlanId) await prisma.subscriptionPlan.delete({ where: { id: subscriptionPlanId } });
   await prisma.whatsAppNotification.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.payment.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.order.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
@@ -187,6 +246,7 @@ after(async () => {
   await prisma.user.deleteMany({ where: { id: { in: [userAId, userBId] } } });
   if (assignedOwnerId) await prisma.user.delete({ where: { id: assignedOwnerId } });
   await prisma.user.delete({ where: { id: platformStaffId } });
+  await prisma.user.delete({ where: { id: platformSuperAdminId } });
   await prisma.business.deleteMany({ where: { id: { in: [businessAId, businessBId] } } });
   await prisma.$disconnect();
 });
@@ -292,6 +352,105 @@ test('platform owner assignment creates its role permissions within a transactio
   assert.equal(membership?.role.grants.length, 14);
 });
 
+test('subscription payment review is tenant-scoped, idempotent and required before activation', { skip: !enabled }, async () => {
+  const suffix = randomUUID();
+  const foreignPayment = await prisma.subscriptionPayment.create({
+    data: {
+      businessId: businessBId,
+      planId: subscriptionPlanId,
+      submittedById: userBId,
+      cycle: 'MONTHLY',
+      transactionReference: `FOREIGN-${suffix}`,
+      senderName: 'Tenant B Sender',
+      amount: '1200.00',
+      method: 'BANK TRANSFER',
+      paymentDate: new Date(),
+      status: 'PENDING',
+    },
+  });
+  const before = await prisma.subscription.count({ where: { businessId: businessAId } });
+  const historyResponse = await fetch(`${baseUrl}/api/v1/subscriptions`, { headers: { authorization: authHeader } });
+  assert.equal(historyResponse.status, 200);
+  const history = await historyResponse.json() as { data: { payments: Array<{ id: string }> } };
+  assert.equal(history.data.payments.some((payment) => payment.id === foreignPayment.id), false);
+
+  const submission = {
+    planId: subscriptionPlanId,
+    cycle: 'MONTHLY',
+    transactionReference: `LOCAL-${suffix}`,
+    senderName: 'Tenant A Sender',
+    amount: '1200.00',
+    method: 'BANK TRANSFER',
+    paymentDate: new Date().toISOString().slice(0, 10),
+  };
+  const submit = () => fetch(`${baseUrl}/api/v1/subscriptions/payments`, {
+    method: 'POST',
+    headers: { authorization: authHeader, 'content-type': 'application/json' },
+    body: JSON.stringify(submission),
+  });
+  const submitted = await submit();
+  assert.equal(submitted.status, 201);
+  const submittedBody = await submitted.json() as { data: { id: string; status: string } };
+  subscriptionPaymentId = submittedBody.data.id;
+  assert.equal(submittedBody.data.status, 'PENDING');
+  assert.equal(await prisma.subscription.count({ where: { businessId: businessAId } }), before);
+  assert.equal((await submit()).status, 409);
+  const forbiddenQueue = await fetch(`${baseUrl}/api/v1/platform/billing/payments`, { headers: { authorization: authHeader } });
+  assert.equal(forbiddenQueue.status, 403);
+
+  const reviewPermission = await prisma.permission.upsert({
+    where: { key: 'platform:payments:review' },
+    update: {},
+    create: { key: 'platform:payments:review', description: 'Review subscription payments in integration test' },
+  });
+  await prisma.platformPermissionGrant.createMany({
+    data: [
+      { userId: platformStaffId, permissionId: reviewPermission.id },
+      { userId: platformSuperAdminId, permissionId: reviewPermission.id },
+    ],
+  });
+  const platformToken = process.env.TENANT_TEST_PLATFORM_TOKEN;
+  const superAdminToken = process.env.TENANT_TEST_SUPER_ADMIN_TOKEN;
+  if (!platformToken || !superAdminToken) throw new Error('Platform test tokens were not initialized');
+  const staffReview = await fetch(`${baseUrl}/api/v1/platform/billing/payments/${subscriptionPaymentId}/review`, {
+    method: 'PATCH',
+    headers: { authorization: `Bearer ${platformToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ decision: 'APPROVE' }),
+  });
+  assert.equal(staffReview.status, 403);
+  const rejectForeign = (body: unknown) => fetch(`${baseUrl}/api/v1/platform/billing/payments/${foreignPayment.id}/review`, {
+    method: 'PATCH',
+    headers: { authorization: `Bearer ${superAdminToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  assert.equal((await rejectForeign({ decision: 'REJECT' })).status, 400);
+  const rejected = await rejectForeign({ decision: 'REJECT', reason: 'Reference could not be reconciled' });
+  assert.equal(rejected.status, 200);
+  const rejectionBody = await rejected.json() as { data: { payment: { status: string; rejectionReason: string } } };
+  assert.equal(rejectionBody.data.payment.status, 'REJECTED');
+  assert.equal(rejectionBody.data.payment.rejectionReason, 'Reference could not be reconciled');
+  const review = () => fetch(`${baseUrl}/api/v1/platform/billing/payments/${subscriptionPaymentId}/review`, {
+    method: 'PATCH',
+    headers: { authorization: `Bearer ${superAdminToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ decision: 'APPROVE' }),
+  });
+  const approved = await review();
+  assert.equal(approved.status, 200);
+  const approvedBody = await approved.json() as { data: { payment: { status: string; invoiceNumber: string | null }; subscription: { status: string } } };
+  assert.equal(approvedBody.data.payment.status, 'APPROVED');
+  assert.ok(approvedBody.data.payment.invoiceNumber);
+  assert.equal(approvedBody.data.subscription.status, 'ACTIVE');
+  assert.equal((await review()).status, 409);
+
+  const foreignDetail = await fetch(`${baseUrl}/api/v1/platform/billing/businesses/${businessBId}`, { headers: { authorization: authHeader } });
+  assert.equal(foreignDetail.status, 403);
+  const ownReceipt = await fetch(`${baseUrl}/api/v1/subscriptions/payments/${subscriptionPaymentId}/receipt.pdf`, { headers: { authorization: authHeader } });
+  assert.equal(ownReceipt.status, 200);
+  assert.equal(ownReceipt.headers.get('content-type'), 'application/pdf');
+  const foreignReceipt = await fetch(`${baseUrl}/api/v1/subscriptions/payments/${foreignPayment.id}/receipt.pdf`, { headers: { authorization: authHeader } });
+  assert.equal(foreignReceipt.status, 404);
+});
+
 test('offline order retries and duplicate payment requests create one notification per committed event', { skip: !enabled }, async () => {
   const operationId = randomUUID();
   offlineOrderId = randomUUID();
@@ -386,6 +545,28 @@ test('offline order retries and duplicate payment requests create one notificati
   assert.equal(scopedHistory.status, 200);
   const history = await scopedHistory.json() as { data: { items: Array<{ id: string }> } };
   assert.equal(history.data.items.some((item) => item.id === foreignNotification.id), false);
+});
+
+test('expired subscriptions preserve business reads and billing while blocking tenant writes', { skip: !enabled }, async () => {
+  const active = await prisma.subscription.findFirstOrThrow({
+    where: { businessId: businessAId, status: 'ACTIVE', grandfathered: false },
+    orderBy: { createdAt: 'desc' },
+  });
+  const expiredAt = new Date(Date.now() - 10 * 86_400_000);
+  await prisma.subscription.update({
+    where: { id: active.id },
+    data: { status: 'EXPIRED', endsAt: expiredAt, graceUntil: expiredAt },
+  });
+  const customers = await fetch(`${baseUrl}/api/v1/customers`, { headers: { authorization: authHeader } });
+  assert.equal(customers.status, 200);
+  const blockedWrite = await fetch(`${baseUrl}/api/v1/customers`, {
+    method: 'POST',
+    headers: { authorization: authHeader, 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Must remain blocked', phone: '03001230099' }),
+  });
+  assert.equal(blockedWrite.status, 402);
+  const billing = await fetch(`${baseUrl}/api/v1/subscriptions`, { headers: { authorization: authHeader } });
+  assert.equal(billing.status, 200);
 });
 
 test('Meta send failures persist as Failed and verified webhooks alone confirm delivery', { skip: !enabled }, async () => {

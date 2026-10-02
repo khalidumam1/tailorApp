@@ -95,6 +95,39 @@ router.post('/businesses', requirePlatformPermission('platform:businesses:manage
   try {
     const business = await prisma.$transaction(async (tx) => {
       const created = await tx.business.create({ data: { ...input, status: 'PENDING' } });
+      const defaultPlan = await tx.subscriptionPlan.findFirst({
+        where: { active: true, isDefault: true },
+      });
+      if (defaultPlan?.trialDays) {
+        const startsAt = new Date();
+        const endsAt = new Date(startsAt);
+        endsAt.setUTCDate(endsAt.getUTCDate() + defaultPlan.trialDays);
+        const graceSetting = await tx.platformSetting.findUnique({ where: { key: 'billing' }, select: { value: true } });
+        const settingValue = graceSetting?.value;
+        const graceDays = typeof settingValue === 'object' && settingValue !== null
+          && 'gracePeriodDays' in settingValue && typeof settingValue.gracePeriodDays === 'number'
+          ? settingValue.gracePeriodDays : 7;
+        const subscription = await tx.subscription.create({
+          data: {
+            businessId: created.id,
+            planId: defaultPlan.id,
+            status: 'TRIAL',
+            cycle: 'MONTHLY',
+            startsAt,
+            endsAt,
+            graceUntil: new Date(endsAt.getTime() + graceDays * 86400000),
+          },
+        });
+        await tx.subscriptionEvent.create({
+          data: {
+            businessId: created.id,
+            subscriptionId: subscription.id,
+            actorId,
+            action: 'subscription.trial_provisioned',
+            metadata: { trialDays: defaultPlan.trialDays, plan: defaultPlan.name },
+          },
+        });
+      }
       await writePlatformAudit(tx, actorId, 'platform.business_created', 'business', created.id, req.requestId, {
         name: created.name,
         slug: created.slug,
@@ -196,6 +229,31 @@ router.patch('/businesses/:businessId/status', requirePlatformPermission('platfo
       if (!owner) throw new HttpError(409, 'Assign an active business owner before activation', 'BUSINESS_OWNER_REQUIRED');
     }
     const next = await tx.business.update({ where: { id: businessId }, data: { status } });
+    if (business.status === 'PENDING' && status === 'ACTIVE') {
+      const trial = await tx.subscription.findFirst({
+        where: { businessId, status: 'TRIAL' },
+        include: { plan: { select: { trialDays: true } } },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (trial?.plan.trialDays) {
+        const startsAt = new Date();
+        const endsAt = new Date(startsAt);
+        endsAt.setUTCDate(endsAt.getUTCDate() + trial.plan.trialDays);
+        const setting = await tx.platformSetting.findUnique({ where: { key: 'billing' }, select: { value: true } });
+        const value = setting?.value;
+        const graceDays = typeof value === 'object' && value !== null
+          && 'gracePeriodDays' in value && typeof value.gracePeriodDays === 'number'
+          ? value.gracePeriodDays : 7;
+        await tx.subscription.update({
+          where: { id: trial.id },
+          data: { startsAt, endsAt, graceUntil: new Date(endsAt.getTime() + graceDays * 86400000) },
+        });
+        await tx.subscriptionEvent.create({
+          data: { businessId, subscriptionId: trial.id, actorId, action: 'subscription.trial_started', metadata: { trialDays: trial.plan.trialDays } },
+        });
+        await writePlatformAudit(tx, actorId, 'platform.subscription_trial_started', 'subscription', trial.id, req.requestId, { trialDays: trial.plan.trialDays });
+      }
+    }
     await writePlatformAudit(tx, actorId, 'platform.business_status_changed', 'business', businessId, req.requestId, {
       from: business.status,
       to: status,

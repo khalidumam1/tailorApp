@@ -6,6 +6,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
+import { assertPlanLimit } from '../plan-limits.js';
 
 const router = express.Router();
 const customerIdSchema = z.string().uuid();
@@ -89,6 +90,7 @@ router.post('/', requireBusinessPermission('customers:write'), asyncHandler(asyn
   const input = createCustomerSchema.parse(req.body);
   try {
     const customer = await prisma.$transaction(async (tx) => {
+      await assertPlanLimit(tx, businessId, 'customers:write');
       const created = await tx.customer.create({
         data: {
           businessId,

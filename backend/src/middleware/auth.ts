@@ -18,6 +18,7 @@ export interface AuthContext {
   business?: { id: string; name: string; slug: string; timezone: string };
   permissions: string[];
   platformPermissions: string[];
+  platformRole?: 'SUPER_ADMIN' | 'PLATFORM_STAFF';
 }
 
 declare global {
@@ -96,13 +97,14 @@ export const authenticate: RequestHandler = asyncHandler(async (req, _res, next)
       scope: 'platform',
       permissions: [],
       platformPermissions: user.platformPermissions.map((grant) => grant.permission.key),
+      platformRole: user.platformRole,
     };
   }
   next();
 });
 
 export function requireBusinessPermission(permission: string): RequestHandler {
-  return (req, _res, next) => {
+  const handler: RequestHandler = asyncHandler(async (req, _res, next) => {
     if (req.auth?.scope !== 'business' || !req.auth.business) {
       next(new HttpError(403, 'Business membership is required', 'BUSINESS_ACCESS_DENIED'));
       return;
@@ -111,14 +113,68 @@ export function requireBusinessPermission(permission: string): RequestHandler {
       next(new HttpError(403, 'Permission is not granted', 'PERMISSION_DENIED'));
       return;
     }
+    const paidMutation = !permission.startsWith('subscriptions:')
+      && (permission.endsWith(':write') || permission.endsWith(':manage') || permission === 'orders:transition');
+    await assertSubscriptionAccess(req.auth.business.id, permission, paidMutation);
     next();
-  };
+  });
+  return handler;
+}
+
+export async function assertSubscriptionAccess(
+  businessId: string,
+  permission?: string,
+  isPaidMutation = true,
+): Promise<void> {
+  const setting = await prisma.platformSetting.findUnique({ where: { key: 'billing' }, select: { value: true } });
+  const billing = setting?.value;
+  const enforcementEnabled = typeof billing === 'object' && billing !== null
+    && 'enforcementEnabled' in billing && billing.enforcementEnabled === true;
+  if (!enforcementEnabled) return;
+  const now = new Date();
+  const entitlement = await prisma.subscription.findFirst({
+    where: {
+      businessId,
+      status: { in: ['TRIAL', 'ACTIVE', 'EXPIRED'] },
+      startsAt: { lte: now },
+      graceUntil: { gt: now },
+    },
+    orderBy: [{ endsAt: 'desc' }, { createdAt: 'desc' }],
+    include: { plan: { select: { features: true } } },
+  });
+  if (!entitlement && isPaidMutation) {
+    throw new HttpError(402, 'Your subscription has expired. Submit a renewal payment to restore paid features.', 'SUBSCRIPTION_REQUIRED');
+  }
+  if (!entitlement) return;
+
+  const feature = permission?.startsWith('customers:') ? 'customers'
+    : permission?.startsWith('measurements:') ? 'measurements'
+      : permission?.startsWith('orders:') ? 'orders'
+        : permission?.startsWith('payments:') ? 'payments'
+            : permission === 'staff:manage' ? 'staff'
+            : permission === 'reports:read' ? 'reports' : undefined;
+  const features = entitlement.plan.features;
+  if (feature && typeof features === 'object' && features !== null && !Array.isArray(features)
+    && feature in features && features[feature] === false) {
+    throw new HttpError(403, `Your current plan does not include ${feature}.`, 'SUBSCRIPTION_FEATURE_UNAVAILABLE');
+  }
 }
 
 export function requirePlatformPermission(permission: string): RequestHandler {
   return (req, _res, next) => {
     if (req.auth?.scope !== 'platform' || !req.auth.platformPermissions.includes(permission)) {
       next(new HttpError(403, 'Platform permission is not granted', 'PLATFORM_PERMISSION_DENIED'));
+      return;
+    }
+    next();
+  };
+}
+
+export function requireSuperAdminPermission(permission: string): RequestHandler {
+  return (req, _res, next) => {
+    if (req.auth?.scope !== 'platform' || req.auth.platformRole !== 'SUPER_ADMIN'
+      || !req.auth.platformPermissions.includes(permission)) {
+      next(new HttpError(403, 'This action requires a super admin with the explicit permission', 'SUPER_ADMIN_PERMISSION_REQUIRED'));
       return;
     }
     next();

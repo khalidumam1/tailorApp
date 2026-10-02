@@ -10,6 +10,9 @@ address.
 - Business sign-in, business selection, secure refresh-token storage, and
   permission-filtered navigation.
 - English, Urdu, and Urdu Roman interface language selection.
+- Online-only subscription and manual-payment request screens; billing details
+  and approved receipt references are shown, but pending submissions never
+  activate a plan and payment requests are not queued offline.
 - Device-safe top and bottom insets keep the shop header and tab bar clear of
   status and Android navigation bars on different screen sizes.
 - WatermelonDB-backed SQLite local storage, visible online/offline and sync status, and

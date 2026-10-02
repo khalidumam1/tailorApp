@@ -4,7 +4,7 @@ TypeScript project for tailoring businesses in Karachi. PostgreSQL is authoritat
 
 ## Implementation status
 
-The migration from the starter prototype now includes a versioned Express API with authentication, membership-derived tenant authorization, customer/measurement/order/payment/report routes, append-only audit and payment records, a business admin flow, and platform APIs/screens for business onboarding/status, explicitly permissioned platform staff, audit and health. The Prisma schema and initial PostgreSQL migration are checked in. CI and focused tests are present.
+The migration from the starter prototype now includes a versioned Express API with authentication, membership-derived tenant authorization, customer/measurement/order/payment/report routes, append-only audit records, business billing screens and APIs, and a permissioned platform console for business onboarding, staff, subscriptions, manual-payment review, plans, billing settings, reports, audit and health. Subscription periods, payment review, receipts, settings and history are represented in Prisma and the committed migration.
 
 **This is not production-ready.** Business employee/role administration, password-reset delivery, alteration-management UI, mobile sign-in and tailor workflows, mobile SQLite outbox/retry/conflict-resolution integration, operational monitoring and recovery automation still need implementation and live deployment verification. The backend now exposes tenant-scoped sync push/pull endpoints; the Expo app does not yet sync queued work. See [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md).
 
@@ -144,6 +144,10 @@ erDiagram
   ORDER ||--o{ PAYMENT : ledger
   PAYMENT ||--o{ PAYMENT : corrected_by
   BUSINESS ||--o{ AUDIT_EVENT : audits
+  BUSINESS ||--o{ SUBSCRIPTION : subscribes
+  SUBSCRIPTION_PLAN ||--o{ SUBSCRIPTION : defines
+  BUSINESS ||--o{ SUBSCRIPTION_PAYMENT : submits
+  SUBSCRIPTION_PAYMENT ||--o{ SUBSCRIPTION_EVENT : records
   BUSINESS ||--o{ SYNC_OPERATION : deduplicates
 ```
 
@@ -173,7 +177,7 @@ and cookies.
 | Context | Intended authority | Enforcement |
 | --- | --- | --- |
 | Platform super admin | Platform-wide actions only where explicitly granted | `platformRole` is not sufficient by itself; every platform route checks a `PlatformPermissionGrant` |
-| Business owner/manager | Own business, staff/roles, customers, work, ledger and reports | Active membership plus its business role grants |
+| Business owner/manager | Own business, staff/roles, customers, work, ledger, billing and reports | Active membership plus its business role grants |
 | Tailor/staff | Assigned workflow permissions only | Same tenant membership checks; permission middleware denies by default |
 
 The local seed grants its Owner role all current business permissions. The
@@ -182,6 +186,47 @@ payment, settings, reports or audit permissions. Platform grants are separate
 from business grants. Platform staff can grant only permissions they
 themselves hold. The local seed creates a demo platform super admin; it refuses
 to run in production.
+
+Subscription owners use `subscriptions:read` and `subscriptions:manage`; payment
+submission is tenant-derived and remains pending until an explicitly authorized
+platform reviewer approves it. Platform billing uses separate grants for
+subscription overview, plan management, payment review, lifecycle management,
+billing settings and reports. The platform console never accepts a client-
+selected business as authority for an owner billing request.
+
+## Subscriptions and manual billing
+
+Apply the `20261002120000_subscription_management` migration before deploying
+this release. It creates a default 14-day Starter trial, billing settings, and
+legacy complimentary records for existing shops so the schema deployment does
+not abruptly restrict their current access. A legacy shop keeps that access
+until a super admin assigns a new period or approves its first paid renewal.
+New shops start on the configured default plan and trial. Configure at least one
+paid plan and payment instructions in **Platform console → Plans / Billing
+settings** before onboarding paid shops.
+
+Shops submit only the plan, billing cycle, transaction reference, sender name,
+amount, configured method and payment date. There are no subscription proof
+uploads or payment-gateway/bank-verification integrations. A globally unique
+transaction reference prevents duplicate submissions. Only a Super Admin with
+the explicit payment-review grant can approve/reject or record a refund/
+adjustment; a platform-staff grant alone cannot activate subscriptions.
+Approval is transactional:
+the review record, subscription period, invoice number, immutable event and audit
+entry commit together. Rejection requires a reason. Receipt PDFs use the saved
+approved payment and subscription data. Recorded refunds/adjustments are
+auditable internal entries and do not claim an external refund was sent.
+
+The configurable grace period is snapshotted onto each new subscription period.
+After it ends, server-side authorization blocks business write workflows and
+offline sync while retaining sign-in, billing/payment submission, support details
+and read access to business data. Plan features and customer, staff and monthly
+order limits are checked by the API. Platform expiry alerts use the configured
+reminder window; no external email/SMS reminder provider is configured.
+`platform:payments:review` and the other platform billing permissions must be
+explicitly granted; existing super admins receive them through the migration.
+Use `GET /api/v1/platform/billing/report.csv?from=YYYY-MM-DD&to=YYYY-MM-DD`
+for a date-filtered reconciliation export.
 
 ## Environment and security
 

@@ -13,6 +13,8 @@ export const businessPermissions = [
   ['audit:read', 'View business audit history'],
   ['staff:manage', 'Manage business staff'],
   ['settings:manage', 'Manage business settings'],
+  ['subscriptions:read', 'View subscription and payment history'],
+  ['subscriptions:manage', 'Request plans and submit subscription payments'],
 ] as const;
 
 export const platformPermissions = [
@@ -21,4 +23,10 @@ export const platformPermissions = [
   ['platform:staff:manage', 'Manage platform staff and their explicit grants'],
   ['platform:audit:read', 'View platform-wide audit history'],
   ['platform:system:health', 'View platform system health'],
+  ['platform:subscriptions:read', 'View subscription dashboard and business subscriptions'],
+  ['platform:plans:manage', 'Manage subscription plans'],
+  ['platform:payments:review', 'Review subscription payment submissions'],
+  ['platform:subscriptions:manage', 'Manage business subscription lifecycle'],
+  ['platform:billing:settings', 'Manage billing instructions and settings'],
+  ['platform:reports:read', 'View subscription and payment reports'],
 ] as const;

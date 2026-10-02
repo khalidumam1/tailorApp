@@ -50,7 +50,7 @@ import {
   updatePaymentAttempt,
 } from './src/sync';
 
-type Page = 'home' | 'orders' | 'customers' | 'measurements' | 'notifications' | 'settings';
+type Page = 'home' | 'orders' | 'customers' | 'measurements' | 'notifications' | 'subscription' | 'settings';
 type WhatsAppNotification = {
   id: string;
   kind: string;
@@ -65,6 +65,32 @@ type WhatsAppNotification = {
 };
 type ShopOption = { id: string; name: string };
 type SyncState = Awaited<ReturnType<typeof loadSyncState>>;
+type SubscriptionPlan = { id: string; name: string; monthlyPrice: string; yearlyPrice: string };
+type SubscriptionBilling = {
+  subscription: {
+    status: string;
+    endsAt: string;
+    complimentary: boolean;
+    grandfathered: boolean;
+    plan: { name: string };
+  } | null;
+  plans: SubscriptionPlan[];
+  payments: Array<{
+    id: string;
+    status: string;
+    plan: { name: string };
+    cycle: string;
+    amount: string;
+    method: string;
+    transactionReference: string;
+    senderName: string;
+    invoiceNumber: string | null;
+    createdAt: string;
+  }>;
+  paymentInstructions: string;
+  paymentMethods: string[];
+  supportContact: string;
+};
 
 const LANGUAGE_KEY = 'tailorapp.language.v1';
 const statusProgress = ['NEW', 'MEASUREMENT_CONFIRMED', 'CUTTING', 'STITCHING', 'FINISHING', 'READY_FOR_PICKUP', 'COLLECTED'];
@@ -176,6 +202,16 @@ function AppContent() {
   const syncLock = useRef(false);
   const [dashboard, setDashboard] = useState<Record<string, unknown>>({});
   const [notificationHistory, setNotificationHistory] = useState<WhatsAppNotification[]>([]);
+  const [subscriptionBilling, setSubscriptionBilling] = useState<SubscriptionBilling | null>(null);
+  const [subscriptionPlanId, setSubscriptionPlanId] = useState('');
+  const [subscriptionCycle, setSubscriptionCycle] = useState<'MONTHLY' | 'YEARLY'>('MONTHLY');
+  const [subscriptionPayment, setSubscriptionPayment] = useState({
+    transactionReference: '',
+    senderName: '',
+    amount: '',
+    method: '',
+    paymentDate: new Date().toISOString().slice(0, 10),
+  });
 
   const [customerForm, setCustomerForm] = useState(false);
   const [customerName, setCustomerName] = useState('');
@@ -225,6 +261,36 @@ function AppContent() {
   useEffect(() => {
     if (page === 'notifications') void refreshNotificationHistory();
   }, [page, refreshNotificationHistory]);
+
+  const refreshSubscriptionBilling = useCallback(async () => {
+    if (!session || online !== true || !session.permissions.includes('subscriptions:read')) return;
+    try {
+      const response = await apiRequest<{ data?: SubscriptionBilling }>(
+        session,
+        '/api/v1/subscriptions',
+        {},
+        updateSession,
+      );
+      if (!response.data) throw new Error('Subscription details are unavailable.');
+      setSubscriptionBilling(response.data);
+      if (!subscriptionPlanId && response.data.plans[0]) {
+        setSubscriptionPlanId(response.data.plans[0].id);
+        setSubscriptionPayment((current) => ({
+          ...current,
+          amount: response.data?.plans[0]?.monthlyPrice ?? '',
+          method: current.method || response.data?.paymentMethods[0] || '',
+        }));
+      } else if (!subscriptionPayment.method && response.data.paymentMethods[0]) {
+        setSubscriptionPayment((current) => ({ ...current, method: response.data?.paymentMethods[0] ?? '' }));
+      }
+    } catch (billingError) {
+      setError(billingError instanceof Error ? billingError.message : copy.error);
+    }
+  }, [copy.error, online, session, subscriptionPayment.method, subscriptionPlanId, updateSession]);
+
+  useEffect(() => {
+    if (page === 'subscription') void refreshSubscriptionBilling();
+  }, [page, refreshSubscriptionBilling]);
 
   const refreshLocal = useCallback(async (businessId: string) => {
     const [nextCustomers, nextOrders, nextTemplates, nextMeasurements, nextSyncState] = await Promise.all([
@@ -337,6 +403,7 @@ function AppContent() {
     ...(can('customers:read') ? [{ id: 'customers' as const, label: copy.customers }] : []),
     ...(can('measurements:read') ? [{ id: 'measurements' as const, label: copy.measurements }] : []),
     ...(can('notifications:read') ? [{ id: 'notifications' as const, label: copy.notifications }] : []),
+    ...(can('subscriptions:read') ? [{ id: 'subscription' as const, label: copy.subscription }] : []),
     { id: 'settings', label: copy.settings },
   ];
 
@@ -406,6 +473,35 @@ function AppContent() {
   const changeLanguage = async (next: Language) => {
     await SecureStore.setItemAsync(LANGUAGE_KEY, next);
     setLanguage(next);
+  };
+
+  const submitSubscriptionPayment = async () => {
+    if (!session || !subscriptionPlanId) return;
+    setSaving(true);
+    setError('');
+    try {
+      const response = await apiRequest<{ data?: unknown }>(
+        session,
+        '/api/v1/subscriptions/payments',
+        {
+          method: 'POST',
+          body: {
+            planId: subscriptionPlanId,
+            cycle: subscriptionCycle,
+            ...subscriptionPayment,
+          },
+        },
+        updateSession,
+      );
+      if (!response.data) throw new Error(copy.error);
+      setSubscriptionPayment((current) => ({ ...current, transactionReference: '', senderName: '' }));
+      await refreshSubscriptionBilling();
+      Alert.alert(copy.submitForReview, copy.pendingAdminReview);
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : copy.error);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const saveCustomer = async () => {
@@ -933,6 +1029,108 @@ function AppContent() {
             )}
             {online === true ? <ActionButton title={copy.retry} onPress={() => void refreshNotificationHistory()} secondary /> : null}
             <Text style={styles.offlineHint}>{copy.sent} confirms Meta accepted the message. {copy.delivered} and {copy.read.toLowerCase()} require verified status callbacks.</Text>
+          </>
+        ) : null}
+
+        {page === 'subscription' ? (
+          <>
+            <Text style={styles.pageTitle}>{copy.subscriptionTitle}</Text>
+            {online !== true ? (
+              <View style={styles.emptyCard}><Text style={styles.emptyText}>{copy.subscriptionOnline}</Text></View>
+            ) : subscriptionBilling ? (
+              <>
+                <View style={styles.card}>
+                  <Text style={styles.sectionTitle}>{copy.currentPlan}</Text>
+                  {subscriptionBilling.subscription ? (
+                    <>
+                      <Text style={styles.listTitle}>{subscriptionBilling.subscription.plan.name}{subscriptionBilling.subscription.grandfathered ? ' · Legacy access' : subscriptionBilling.subscription.complimentary ? ' · Complimentary' : ''}</Text>
+                      <Text style={styles.listMeta}>{subscriptionBilling.subscription.status} · {copy.subscriptionValidTo}: {new Date(subscriptionBilling.subscription.endsAt).toLocaleDateString()}</Text>
+                    </>
+                  ) : <Text style={styles.listMeta}>{copy.noSubscription}</Text>}
+                </View>
+                <View style={styles.card}>
+                  <Text style={styles.sectionTitle}>{copy.paymentInstructions}</Text>
+                  <Text style={styles.listMeta}>{subscriptionBilling.paymentInstructions || copy.subscriptionOnline}</Text>
+                  {subscriptionBilling.supportContact ? <Text style={styles.listMeta}>{subscriptionBilling.supportContact}</Text> : null}
+                </View>
+                {can('subscriptions:manage') && subscriptionBilling.plans.length ? (
+                  <View style={styles.card}>
+                    <Text style={styles.sectionTitle}>{copy.requestRenewal}</Text>
+                    <Text style={styles.fieldLabel}>{copy.plan}</Text>
+                    <View style={styles.chipWrap}>
+                      {subscriptionBilling.plans.map((plan) => (
+                        <Pressable
+                          key={plan.id}
+                          onPress={() => {
+                            setSubscriptionPlanId(plan.id);
+                            setSubscriptionPayment((current) => ({
+                              ...current,
+                              amount: subscriptionCycle === 'MONTHLY' ? plan.monthlyPrice : plan.yearlyPrice,
+                            }));
+                          }}
+                          style={[styles.chip, subscriptionPlanId === plan.id && styles.chipSelected]}
+                        >
+                          <Text style={[styles.chipText, subscriptionPlanId === plan.id && styles.chipTextSelected]}>{plan.name}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                    <Text style={styles.fieldLabel}>{copy.billingCycle}</Text>
+                    <View style={styles.chipWrap}>
+                      {(['MONTHLY', 'YEARLY'] as const).map((cycle) => (
+                        <Pressable
+                          key={cycle}
+                          onPress={() => {
+                            setSubscriptionCycle(cycle);
+                            const selected = subscriptionBilling.plans.find((plan) => plan.id === subscriptionPlanId);
+                            setSubscriptionPayment((current) => ({
+                              ...current,
+                              amount: selected ? (cycle === 'MONTHLY' ? selected.monthlyPrice : selected.yearlyPrice) : '',
+                            }));
+                          }}
+                          style={[styles.chip, subscriptionCycle === cycle && styles.chipSelected]}
+                        >
+                          <Text style={[styles.chipText, subscriptionCycle === cycle && styles.chipTextSelected]}>{cycle === 'MONTHLY' ? copy.monthly : copy.yearly}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                    <Text style={styles.fieldLabel}>{copy.paymentMethod}</Text>
+                    <View style={styles.chipWrap}>
+                      {subscriptionBilling.paymentMethods.map((method) => (
+                        <Pressable key={method} onPress={() => setSubscriptionPayment((current) => ({ ...current, method }))} style={[styles.chip, subscriptionPayment.method === method && styles.chipSelected]}>
+                          <Text style={[styles.chipText, subscriptionPayment.method === method && styles.chipTextSelected]}>{method}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                    <Field label={copy.subscriptionAmount} value={subscriptionPayment.amount} onChangeText={(amount) => setSubscriptionPayment((current) => ({ ...current, amount }))} keyboardType="decimal-pad" />
+                    <Field label={copy.transactionReference} value={subscriptionPayment.transactionReference} onChangeText={(transactionReference) => setSubscriptionPayment((current) => ({ ...current, transactionReference }))} />
+                    <Field label={copy.senderName} value={subscriptionPayment.senderName} onChangeText={(senderName) => setSubscriptionPayment((current) => ({ ...current, senderName }))} />
+                    <Field label={copy.paymentDate} value={subscriptionPayment.paymentDate} onChangeText={(paymentDate) => setSubscriptionPayment((current) => ({ ...current, paymentDate }))} />
+                    <Text style={styles.offlineHint}>{copy.pendingAdminReview}</Text>
+                    <ActionButton
+                      title={saving ? '…' : copy.submitForReview}
+                      onPress={() => void submitSubscriptionPayment()}
+                      disabled={saving || !subscriptionPlanId || !subscriptionPayment.method || Number(subscriptionPayment.amount) <= 0 || !subscriptionPayment.transactionReference || !subscriptionPayment.senderName || !subscriptionPayment.paymentDate}
+                    />
+                  </View>
+                ) : null}
+                <Text style={styles.sectionTitle}>{copy.subscriptionHistory}</Text>
+                {subscriptionBilling.payments.length ? subscriptionBilling.payments.map((payment) => (
+                  <View key={payment.id} style={styles.listCard}>
+                    <View style={styles.listMain}>
+                      <Text style={styles.listTitle}>{payment.plan.name} · {payment.status}</Text>
+                      <Text style={styles.listMeta}>{formatPkr(payment.amount)} · {payment.method} · {new Date(payment.createdAt).toLocaleDateString()}</Text>
+                      <Text style={styles.listMeta}>{payment.transactionReference} · {payment.senderName}</Text>
+                      {payment.invoiceNumber ? <Text style={styles.syncBadge}>{copy.receipt}: {payment.invoiceNumber}</Text> : null}
+                    </View>
+                  </View>
+                )) : <View style={styles.emptyCard}><Text style={styles.emptyText}>{copy.noSubscriptionPayments}</Text></View>}
+              </>
+            ) : (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyText}>{copy.subscriptionOnline}</Text>
+                {online === true ? <ActionButton title={copy.retry} onPress={() => void refreshSubscriptionBilling()} secondary /> : null}
+              </View>
+            )}
           </>
         ) : null}
 

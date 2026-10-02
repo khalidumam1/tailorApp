@@ -77,6 +77,23 @@ test('protected profile endpoint rejects missing credentials before database acc
   assert.equal(body.error.code, 'UNAUTHENTICATED');
 });
 
+test('shop billing and platform billing APIs require authentication', async () => {
+  for (const [path, method] of [
+    ['/api/v1/subscriptions', 'GET'],
+    ['/api/v1/subscriptions/payments', 'POST'],
+    ['/api/v1/platform/billing/dashboard', 'GET'],
+  ] as const) {
+    const response = await fetch(`${baseUrl}${path}`, {
+      method,
+      headers: method === 'POST' ? { 'content-type': 'application/json' } : undefined,
+      ...(method === 'POST' ? { body: '{}' } : {}),
+    });
+    assert.equal(response.status, 401, `${method} ${path} must require a session`);
+    const body = await response.json() as { error: { code: string } };
+    assert.equal(body.error.code, 'UNAUTHENTICATED');
+  }
+});
+
 test('login validates request shape before database access', async () => {
   const response = await fetch(`${baseUrl}/api/v1/auth/login`, {
     method: 'POST',

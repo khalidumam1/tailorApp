@@ -12,7 +12,8 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
-import { authenticate } from '../middleware/auth.js';
+import { assertSubscriptionAccess, authenticate } from '../middleware/auth.js';
+import { assertPlanLimit } from '../plan-limits.js';
 import { queueOrderCreated } from '../whatsapp.js';
 
 const router = express.Router();
@@ -492,6 +493,19 @@ router.post('/operations', asyncHandler(async (req, res) => {
     }
     return operation;
   });
+  const writePermissions = new Set<string>();
+  for (const operation of preparedOperations) {
+    const payload = syncPayloadSchema.parse(operation.payload);
+    const permission = payload.action.startsWith('customer.')
+      ? 'customers:write'
+      : payload.action === 'measurement.revision'
+        ? 'measurements:write'
+        : 'orders:write';
+    writePermissions.add(permission);
+  }
+  for (const permission of writePermissions) {
+    await assertSubscriptionAccess(businessId, permission, true);
+  }
   const results: OperationResult[] = [];
 
   for (const operation of preparedOperations) {
@@ -511,6 +525,9 @@ router.post('/operations', asyncHandler(async (req, res) => {
         } satisfies OperationResult;
       }
 
+      const payload = syncPayloadSchema.parse(operation.payload);
+      if (payload.action === 'customer.create') await assertPlanLimit(tx, businessId, 'customers:write');
+      if (payload.action === 'order.create') await assertPlanLimit(tx, businessId, 'orders:write');
       const applied = await applyOperation(tx, operation, businessId, actorId, req.requestId);
       const recorded = await tx.syncOperation.create({
         data: {

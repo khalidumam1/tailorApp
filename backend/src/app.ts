@@ -20,6 +20,8 @@ import platformRoutes from './routes/platform.routes.js';
 import syncRoutes from './routes/sync.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
 import whatsappWebhookRoutes from './routes/whatsapp-webhook.routes.js';
+import subscriptionRoutes from './routes/subscription.routes.js';
+import platformBillingRoutes from './routes/platform-billing.routes.js';
 
 declare global {
   namespace Express {
@@ -109,6 +111,8 @@ app.use('/api/v1/payments', paymentRoutes);
 app.use('/api/v1/reports', reportRoutes);
 app.use('/api/v1/audit', auditRoutes);
 app.use('/api/v1/platform', platformRoutes);
+app.use('/api/v1/platform/billing', platformBillingRoutes);
+app.use('/api/v1/subscriptions', subscriptionRoutes);
 app.use('/api/v1/sync', syncRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/webhooks/whatsapp', whatsappWebhookRoutes);

@@ -183,6 +183,84 @@ const auditEventSchema = z.object({
   actor: z.object({ id: z.string().uuid(), name: z.string(), email: z.string() }).nullable(),
 });
 
+const subscriptionPlanSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  description: z.string().nullable(),
+  monthlyPrice: z.string(),
+  yearlyPrice: z.string(),
+  currency: z.string(),
+  trialDays: z.number().int(),
+  features: z.record(z.string(), z.boolean()),
+  limits: z.record(z.string(), z.number()),
+  active: z.boolean(),
+  isDefault: z.boolean(),
+  _count: z.object({ subscriptions: z.number().int(), payments: z.number().int() }).optional(),
+});
+const subscriptionStatusSchema = z.enum(['TRIAL', 'ACTIVE', 'EXPIRED', 'SUSPENDED', 'CANCELLED']);
+const subscriptionSchema = z.object({
+  id: z.string().uuid(),
+  businessId: z.string().uuid(),
+  planId: z.string().uuid(),
+  status: subscriptionStatusSchema,
+  cycle: z.enum(['MONTHLY', 'YEARLY', 'CUSTOM']),
+  startsAt: z.string(),
+  endsAt: z.string(),
+  graceUntil: z.string(),
+  customPrice: z.string().nullable(),
+  discountAmount: z.string(),
+  complimentary: z.boolean(),
+  grandfathered: z.boolean(),
+  createdAt: z.string(),
+  plan: subscriptionPlanSchema,
+});
+const subscriptionPaymentSchema = z.object({
+  id: z.string().uuid(),
+  businessId: z.string().uuid(),
+  planId: z.string().uuid(),
+  subscriptionId: z.string().uuid().nullable(),
+  status: z.enum(['PENDING', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'ADJUSTED']),
+  cycle: z.enum(['MONTHLY', 'YEARLY', 'CUSTOM']),
+  transactionReference: z.string(),
+  senderName: z.string(),
+  amount: z.string(),
+  method: z.string(),
+  paymentDate: z.string(),
+  invoiceNumber: z.string().nullable(),
+  rejectionReason: z.string().nullable(),
+  reviewedAt: z.string().nullable(),
+  createdAt: z.string(),
+  plan: z.object({ name: z.string() }).or(subscriptionPlanSchema),
+  business: z.object({ id: z.string().uuid(), name: z.string(), slug: z.string() }).optional(),
+  submittedBy: z.object({ name: z.string(), email: z.string() }).optional(),
+  reviewedBy: z.object({ name: z.string(), email: z.string() }).nullable().optional(),
+  subscription: z.object({ startsAt: z.string(), endsAt: z.string() }).nullable().optional(),
+});
+const billingSettingsSchema = z.object({
+  paymentMethods: z.array(z.string()),
+  paymentInstructions: z.string(),
+  gracePeriodDays: z.number().int(),
+  expiryReminderDays: z.array(z.number().int()),
+  enforcementEnabled: z.boolean(),
+  supportContact: z.string(),
+});
+const platformBillingDashboardSchema = z.object({
+  businesses: z.number().int(),
+  active: z.number().int(),
+  trial: z.number().int(),
+  complimentary: z.number().int(),
+  expired: z.number().int(),
+  pendingPayments: z.number().int(),
+  recordedRevenue: z.string(),
+  approvedPaymentCount: z.number().int(),
+  expiring: z.array(z.object({
+    id: z.string().uuid(),
+    endsAt: z.string(),
+    business: z.object({ id: z.string().uuid(), name: z.string() }),
+    plan: z.object({ name: z.string() }),
+  })),
+});
+
 const errorSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
 });
@@ -200,6 +278,11 @@ export type PlatformBusiness = z.infer<typeof platformBusinessSchema>;
 export type PlatformStaff = z.infer<typeof platformStaffSchema>;
 export type PlatformPermission = z.infer<typeof platformPermissionSchema>;
 export type AuditEvent = z.infer<typeof auditEventSchema>;
+export type SubscriptionPlan = z.infer<typeof subscriptionPlanSchema>;
+export type Subscription = z.infer<typeof subscriptionSchema>;
+export type SubscriptionPayment = z.infer<typeof subscriptionPaymentSchema>;
+export type BillingSettings = z.infer<typeof billingSettingsSchema>;
+export type PlatformBillingDashboard = z.infer<typeof platformBillingDashboardSchema>;
 export type Session = Extract<LoginResult, { accessToken: string }>;
 export type CurrentUser = z.infer<typeof meSchema>;
 export type CustomerInput = z.infer<typeof createCustomerSchema>;
@@ -239,6 +322,40 @@ async function request<T>(
     );
   }
   return schema.parse(z.object({ data: z.unknown() }).parse(payload).data);
+}
+
+async function requestPdf(route: string, token: string): Promise<Blob> {
+  const response = await fetch(`${apiBaseUrl}/api/v1${route}`, {
+    headers: { accept: 'application/pdf', authorization: `Bearer ${token}` },
+    credentials: 'omit',
+  });
+  if (!response.ok) {
+    const payload: unknown = await response.json();
+    const error = errorSchema.safeParse(payload);
+    throw new ApiError(
+      error.success ? error.data.error.message : `Request failed (${response.status})`,
+      error.success ? error.data.error.code : 'REQUEST_FAILED',
+      response.status,
+    );
+  }
+  return response.blob();
+}
+
+async function requestCsv(route: string, token: string): Promise<Blob> {
+  const response = await fetch(`${apiBaseUrl}/api/v1${route}`, {
+    headers: { accept: 'text/csv', authorization: `Bearer ${token}` },
+    credentials: 'omit',
+  });
+  if (!response.ok) {
+    const payload: unknown = await response.json();
+    const error = errorSchema.safeParse(payload);
+    throw new ApiError(
+      error.success ? error.data.error.message : `Request failed (${response.status})`,
+      error.success ? error.data.error.code : 'REQUEST_FAILED',
+      response.status,
+    );
+  }
+  return response.blob();
 }
 
 export const api = {
@@ -378,5 +495,111 @@ export const api = {
       items: z.array(auditEventSchema),
       nextCursor: z.string().nullable(),
     }), { token });
+  },
+  shopSubscription(token: string) {
+    return request('/subscriptions', z.object({
+      subscription: subscriptionSchema.nullable(),
+      plans: z.array(subscriptionPlanSchema),
+      payments: z.array(subscriptionPaymentSchema),
+      events: z.array(z.object({ id: z.string().uuid(), action: z.string(), metadata: z.record(z.string(), z.unknown()), createdAt: z.string() })),
+      paymentInstructions: z.string(),
+      paymentMethods: z.array(z.string()),
+      supportContact: z.string(),
+    }), { token });
+  },
+  submitSubscriptionPayment(token: string, input: {
+    planId: string; cycle: 'MONTHLY' | 'YEARLY'; transactionReference: string;
+    senderName: string; amount: string; method: string; paymentDate: string;
+  }) {
+    return request('/subscriptions/payments', subscriptionPaymentSchema, { token, method: 'POST', body: input });
+  },
+  platformBillingDashboard(token: string) {
+    return request('/platform/billing/dashboard', platformBillingDashboardSchema, { token });
+  },
+  platformSubscriptionPlans(token: string) {
+    return request('/platform/billing/plans', z.object({ items: z.array(subscriptionPlanSchema) }), { token });
+  },
+  createSubscriptionPlan(token: string, input: {
+    name: string; description?: string; monthlyPrice: string; yearlyPrice: string; trialDays: number;
+    features: Record<string, boolean>; limits: Record<string, number>; active: boolean; isDefault: boolean;
+  }) {
+    return request('/platform/billing/plans', subscriptionPlanSchema, { token, method: 'POST', body: input });
+  },
+  updateSubscriptionPlan(token: string, planId: string, input: Partial<{
+    name: string; description: string; monthlyPrice: string; yearlyPrice: string; trialDays: number;
+    features: Record<string, boolean>; limits: Record<string, number>; active: boolean; isDefault: boolean;
+  }>) {
+    return request(`/platform/billing/plans/${planId}`, subscriptionPlanSchema, { token, method: 'PATCH', body: input });
+  },
+  subscriptionPayments(token: string, status?: string, q = '', cursor?: string) {
+    const params = new URLSearchParams({ limit: '100' });
+    if (status) params.set('status', status);
+    if (q) params.set('q', q);
+    if (cursor) params.set('cursor', cursor);
+    return request(`/platform/billing/payments?${params}`, z.object({
+      items: z.array(subscriptionPaymentSchema),
+      nextCursor: z.string().nullable(),
+    }), { token });
+  },
+  reviewSubscriptionPayment(token: string, paymentId: string, input: { decision: 'APPROVE' | 'UNDER_REVIEW' } | { decision: 'REJECT'; reason: string }) {
+    return request(`/platform/billing/payments/${paymentId}/review`, z.object({
+      payment: subscriptionPaymentSchema,
+      subscription: subscriptionSchema.omit({ plan: true }).nullable(),
+    }), { token, method: 'PATCH', body: input });
+  },
+  billingSettings(token: string) {
+    return request('/platform/billing/settings', billingSettingsSchema, { token });
+  },
+  updateBillingSettings(token: string, input: BillingSettings) {
+    return request('/platform/billing/settings', billingSettingsSchema, { token, method: 'PUT', body: input });
+  },
+  platformBillingBusinesses(token: string) {
+    return request('/platform/billing/businesses?limit=100', z.object({
+      items: z.array(platformBusinessSchema),
+      nextCursor: z.string().nullable(),
+    }), { token });
+  },
+  platformBillingBusiness(token: string, businessId: string) {
+    return request(`/platform/billing/businesses/${businessId}`, z.object({
+      business: z.object({ id: z.string().uuid(), name: z.string(), slug: z.string(), status: z.string() }),
+      subscriptions: z.array(subscriptionSchema),
+      payments: z.array(subscriptionPaymentSchema),
+      events: z.array(z.object({ id: z.string().uuid(), action: z.string(), metadata: z.record(z.string(), z.unknown()), createdAt: z.string() })),
+    }), { token });
+  },
+  assignBusinessSubscription(token: string, businessId: string, input: {
+    planId: string; cycle: 'MONTHLY' | 'YEARLY' | 'CUSTOM'; startsAt: string; endsAt: string;
+    status: 'ACTIVE' | 'TRIAL'; complimentary: boolean; customPrice?: string; discountAmount: string; reason: string;
+  }) {
+    return request(`/platform/billing/businesses/${businessId}/subscriptions`, subscriptionSchema.omit({ plan: true }), {
+      token, method: 'POST', body: input,
+    });
+  },
+  setSubscriptionStatus(token: string, subscriptionId: string, input: {
+    status: 'ACTIVE' | 'SUSPENDED' | 'CANCELLED'; endsAt?: string; reason: string;
+  }) {
+    return request(`/platform/billing/subscriptions/${subscriptionId}/status`, subscriptionSchema.omit({ plan: true }), {
+      token, method: 'PATCH', body: input,
+    });
+  },
+  recordSubscriptionAdjustment(token: string, paymentId: string, input: {
+    kind: 'REFUND_RECORDED' | 'ADJUSTMENT_RECORDED'; amount: string; reason: string;
+  }) {
+    return request(`/platform/billing/payments/${paymentId}/adjustments`, z.object({
+      id: z.string().uuid(),
+      action: z.string(),
+      metadata: z.record(z.string(), z.unknown()),
+      createdAt: z.string(),
+    }), { token, method: 'POST', body: input });
+  },
+  subscriptionReceipt(token: string, paymentId: string) {
+    return requestPdf(`/subscriptions/payments/${paymentId}/receipt.pdf`, token);
+  },
+  platformSubscriptionReceipt(token: string, paymentId: string) {
+    return requestPdf(`/platform/billing/payments/${paymentId}/receipt.pdf`, token);
+  },
+  subscriptionReportCsv(token: string, from: string, to: string) {
+    const params = new URLSearchParams({ from, to });
+    return requestCsv(`/platform/billing/report.csv?${params}`, token);
   },
 };

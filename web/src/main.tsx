@@ -25,8 +25,8 @@ import {
 } from './api';
 import './styles.css';
 
-type View = 'dashboard' | 'orders' | 'customers' | 'measurements' | 'payments' | 'notifications';
-type PlatformView = 'businesses' | 'staff' | 'audit' | 'health';
+type View = 'dashboard' | 'orders' | 'customers' | 'measurements' | 'payments' | 'notifications' | 'subscription';
+type PlatformView = 'businesses' | 'staff' | 'audit' | 'health' | 'billing' | 'plans' | 'paymentQueue' | 'billingSettings' | 'reports';
 type Selection = Exclude<LoginResult, { accessToken: string }>;
 
 const navigation: Array<{ view: View; label: string; permission?: string }> = [
@@ -36,6 +36,7 @@ const navigation: Array<{ view: View; label: string; permission?: string }> = [
   { view: 'measurements', label: 'Measurements', permission: 'measurements:read' },
   { view: 'payments', label: 'Payments', permission: 'payments:read' },
   { view: 'notifications', label: 'WhatsApp notifications', permission: 'notifications:read' },
+  { view: 'subscription', label: 'Subscription & billing', permission: 'subscriptions:read' },
 ];
 
 function money(value: string | undefined): string {
@@ -122,6 +123,37 @@ function App() {
   const [platformStaffEmail, setPlatformStaffEmail] = useState('');
   const [platformStaffPassword, setPlatformStaffPassword] = useState('');
   const [newStaffPermissions, setNewStaffPermissions] = useState<string[]>([]);
+  const [shopSubscription, setShopSubscription] = useState<Awaited<ReturnType<typeof api.shopSubscription>> | null>(null);
+  const [selectedSubscriptionPlanId, setSelectedSubscriptionPlanId] = useState('');
+  const [subscriptionCycle, setSubscriptionCycle] = useState<'MONTHLY' | 'YEARLY'>('MONTHLY');
+  const [subscriptionPayment, setSubscriptionPayment] = useState({ transactionReference: '', senderName: '', amount: '', method: '', paymentDate: new Date().toISOString().slice(0, 10) });
+  const [billingDashboard, setBillingDashboard] = useState<import('./api').PlatformBillingDashboard | null>(null);
+  const [billingPlans, setBillingPlans] = useState<import('./api').SubscriptionPlan[]>([]);
+  const [billingPayments, setBillingPayments] = useState<import('./api').SubscriptionPayment[]>([]);
+  const [billingPaymentCursor, setBillingPaymentCursor] = useState<string | null>(null);
+  const [billingPaymentSearch, setBillingPaymentSearch] = useState('');
+  const [billingPaymentFilter, setBillingPaymentFilter] = useState('REVIEW');
+  const [billingSettings, setBillingSettings] = useState<import('./api').BillingSettings | null>(null);
+  const [billingBusinesses, setBillingBusinesses] = useState<import('./api').PlatformBusiness[]>([]);
+  const [billingBusinessId, setBillingBusinessId] = useState('');
+  const [billingBusinessDetail, setBillingBusinessDetail] = useState<Awaited<ReturnType<typeof api.platformBillingBusiness>> | null>(null);
+  const [planDraft, setPlanDraft] = useState({ name: '', description: '', monthlyPrice: '', yearlyPrice: '', trialDays: '14' });
+  const [planFeatures, setPlanFeatures] = useState<Record<string, boolean>>({ customers: true, measurements: true, orders: true, payments: true, staff: true, reports: true });
+  const [planLimits, setPlanLimits] = useState<Record<string, string>>({ customers: '-1', staff: '-1', ordersPerMonth: '-1' });
+  const [editingPlanId, setEditingPlanId] = useState<string | null>(null);
+  const [assignDraft, setAssignDraft] = useState({
+    planId: '',
+    startsAt: dateTimeInput(0),
+    endsAt: dateTimeInput(30),
+    reason: '',
+    status: 'ACTIVE' as 'ACTIVE' | 'TRIAL',
+    complimentary: true,
+    customPrice: '',
+    discountAmount: '0',
+  });
+  const [rejectionReasons, setRejectionReasons] = useState<Record<string, string>>({});
+  const [reportFrom, setReportFrom] = useState(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
+  const [reportTo, setReportTo] = useState(new Date().toISOString().slice(0, 10));
 
   const withSession = useCallback(async <T,>(action: (token: string) => Promise<T>): Promise<T> => {
     if (!session) throw new Error('Please sign in again.');
@@ -163,6 +195,16 @@ function App() {
         if (!measurementCustomerId && customerResult.items[0]) setMeasurementCustomerId(customerResult.items[0].id);
       } else if (view === 'payments') {
         setPayments((await withSession(api.payments)).items);
+      } else if (view === 'subscription') {
+        const result = await withSession(api.shopSubscription);
+        setShopSubscription(result);
+        if (!selectedSubscriptionPlanId && result.plans[0]) {
+          setSelectedSubscriptionPlanId(result.plans[0].id);
+          setSubscriptionPayment((current) => ({ ...current, amount: result.plans[0].monthlyPrice }));
+        }
+        if (!subscriptionPayment.method && result.paymentMethods[0]) {
+          setSubscriptionPayment((current) => ({ ...current, method: result.paymentMethods[0] }));
+        }
       } else {
         setNotifications((await withSession(api.notifications)).items);
       }
@@ -171,7 +213,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [currentUser?.context.scope, measurementCustomerId, measurementTemplateId, search, session, view, withSession]);
+  }, [currentUser?.context.scope, measurementCustomerId, measurementTemplateId, search, selectedSubscriptionPlanId, session, subscriptionPayment.method, view, withSession]);
 
   useEffect(() => {
     const onlineChanged = () => setOnline(navigator.onLine);
@@ -220,10 +262,18 @@ function App() {
       staff: 'platform:staff:manage',
       audit: 'platform:audit:read',
       health: 'platform:system:health',
+      billing: 'platform:subscriptions:read',
+      plans: 'platform:plans:manage',
+      paymentQueue: 'platform:payments:review',
+      billingSettings: 'platform:billing:settings',
+      reports: 'platform:reports:read',
     };
     if (!currentUser.context.platformPermissions.includes(viewPermissions[platformView])) {
       setLoading(false);
       setError(null);
+      const firstAvailable = (Object.entries(viewPermissions) as Array<[PlatformView, string]>)
+        .find(([, permission]) => currentUser.context.platformPermissions.includes(permission))?.[0];
+      if (firstAvailable) setPlatformView(firstAvailable);
       return;
     }
     setLoading(true);
@@ -251,6 +301,23 @@ function App() {
       } else if (platformView === 'health' && currentUser.context.platformPermissions.includes('platform:system:health')) {
         const result = await withSession(api.platformHealth);
         if (active) setPlatformHealth(result);
+      } else if (platformView === 'billing' && currentUser.context.platformPermissions.includes('platform:subscriptions:read')) {
+        const [dashboard, businesses] = await Promise.all([
+          withSession(api.platformBillingDashboard),
+          withSession(api.platformBillingBusinesses),
+        ]);
+        if (active) {
+          setBillingDashboard(dashboard);
+          setBillingBusinesses(businesses.items);
+        }
+      } else if (platformView === 'plans' && currentUser.context.platformPermissions.includes('platform:plans:manage')) {
+        setBillingPlans((await withSession(api.platformSubscriptionPlans)).items);
+      } else if (platformView === 'paymentQueue' && currentUser.context.platformPermissions.includes('platform:payments:review')) {
+        const result = await withSession(api.subscriptionPayments);
+        setBillingPayments(result.items);
+        setBillingPaymentCursor(result.nextCursor);
+      } else if (platformView === 'billingSettings' && currentUser.context.platformPermissions.includes('platform:billing:settings')) {
+        setBillingSettings(await withSession(api.billingSettings));
       } else {
         throw new Error('This platform permission is not granted.');
       }
@@ -262,6 +329,18 @@ function App() {
     });
     return () => { active = false; };
   }, [currentUser, platformView, session, withSession]);
+
+  useEffect(() => {
+    let active = true;
+    if (session && currentUser?.context.scope === 'platform' && platformView === 'billing' && billingBusinessId) {
+      withSession((token) => api.platformBillingBusiness(token, billingBusinessId))
+        .then((detail) => { if (active) setBillingBusinessDetail(detail); })
+        .catch((cause: unknown) => { if (active) setError(messageFor(cause)); });
+    } else {
+      setBillingBusinessDetail(null);
+    }
+    return () => { active = false; };
+  }, [billingBusinessId, currentUser?.context.scope, platformView, session, withSession]);
 
   useEffect(() => {
     let active = true;
@@ -581,6 +660,274 @@ function App() {
     }
   }
 
+  async function submitSubscriptionPayment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWorking(true);
+    setError(null);
+    try {
+      const result = await withSession((token) => api.submitSubscriptionPayment(token, {
+        planId: selectedSubscriptionPlanId,
+        cycle: subscriptionCycle,
+        ...subscriptionPayment,
+      }));
+      setShopSubscription((current) => current ? {
+        ...current,
+        payments: [result, ...current.payments],
+      } : current);
+      setSubscriptionPayment((current) => ({ ...current, transactionReference: '', senderName: '' }));
+      setNotice('Payment details submitted for admin review. Your subscription has not been activated yet.');
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function createPlan(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWorking(true);
+    setError(null);
+    try {
+      const input = {
+        ...planDraft,
+        monthlyPrice: planDraft.monthlyPrice,
+        yearlyPrice: planDraft.yearlyPrice,
+        trialDays: Number(planDraft.trialDays),
+        features: planFeatures,
+        limits: Object.fromEntries(Object.entries(planLimits).map(([key, value]) => [key, Number(value)])),
+      };
+      if (editingPlanId) {
+        const plan = await withSession((token) => api.updateSubscriptionPlan(token, editingPlanId, input));
+        setBillingPlans((current) => current.map((item) => item.id === plan.id ? { ...item, ...plan, _count: item._count } : item));
+        setNotice(`Plan ${plan.name} updated.`);
+      } else {
+        const plan = await withSession((token) => api.createSubscriptionPlan(token, { ...input, active: true, isDefault: false }));
+        setBillingPlans((current) => [...current, plan]);
+        setNotice('Subscription plan created.');
+      }
+      setPlanDraft({ name: '', description: '', monthlyPrice: '', yearlyPrice: '', trialDays: '14' });
+      setPlanFeatures({ customers: true, measurements: true, orders: true, payments: true, staff: true, reports: true });
+      setPlanLimits({ customers: '-1', staff: '-1', ordersPerMonth: '-1' });
+      setEditingPlanId(null);
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  function editPlan(plan: import('./api').SubscriptionPlan) {
+    setEditingPlanId(plan.id);
+    setPlanDraft({
+      name: plan.name,
+      description: plan.description ?? '',
+      monthlyPrice: plan.monthlyPrice,
+      yearlyPrice: plan.yearlyPrice,
+      trialDays: String(plan.trialDays),
+    });
+    setPlanFeatures(plan.features);
+    setPlanLimits(Object.fromEntries(Object.entries(plan.limits).map(([key, value]) => [key, String(value)])));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function cancelPlanEdit() {
+    setEditingPlanId(null);
+    setPlanDraft({ name: '', description: '', monthlyPrice: '', yearlyPrice: '', trialDays: '14' });
+    setPlanFeatures({ customers: true, measurements: true, orders: true, payments: true, staff: true, reports: true });
+    setPlanLimits({ customers: '-1', staff: '-1', ordersPerMonth: '-1' });
+  }
+
+  async function reviewSubscriptionPayment(payment: import('./api').SubscriptionPayment, decision: 'APPROVE' | 'REJECT' | 'UNDER_REVIEW') {
+    const reason = rejectionReasons[payment.id]?.trim();
+    if (decision === 'REJECT' && !reason) {
+      setError('Enter a rejection reason before rejecting a payment.');
+      return;
+    }
+    if (decision === 'APPROVE' && !window.confirm(`Approve ${money(payment.amount)} for ${payment.business?.name ?? 'this business'} and activate its subscription?`)) return;
+    setWorking(true);
+    setError(null);
+    try {
+      const result = await withSession((token) => api.reviewSubscriptionPayment(
+        token,
+        payment.id,
+        decision === 'REJECT' ? { decision, reason: reason ?? '' } : { decision },
+      ));
+      setBillingPayments((current) => decision === 'UNDER_REVIEW'
+        ? current.map((item) => item.id === payment.id ? { ...item, ...result.payment } : item)
+        : current.filter((item) => item.id !== payment.id));
+      setRejectionReasons((current) => { const next = { ...current }; delete next[payment.id]; return next; });
+      setNotice(decision === 'APPROVE' ? `Payment approved; invoice and subscription period recorded.` : decision === 'REJECT' ? 'Payment rejected with the reason recorded.' : 'Payment marked under review.');
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function searchSubscriptionPayments(event?: FormEvent<HTMLFormElement>, append = false) {
+    event?.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      const status = billingPaymentFilter === 'REVIEW' ? undefined : billingPaymentFilter;
+      const cursor = append ? billingPaymentCursor ?? undefined : undefined;
+      if (append && !cursor) return;
+      const result = await withSession((token) => api.subscriptionPayments(token, status, billingPaymentSearch, cursor));
+      setBillingPayments((current) => append ? [...current, ...result.items] : result.items);
+      setBillingPaymentCursor(result.nextCursor);
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveBillingSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!billingSettings) return;
+    setWorking(true);
+    setError(null);
+    try {
+      setBillingSettings(await withSession((token) => api.updateBillingSettings(token, billingSettings)));
+      setNotice('Billing instructions and subscription policies saved.');
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function assignSubscription(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!billingBusinessId || !assignDraft.planId) {
+      setError('Choose a business and plan before assigning access.');
+      return;
+    }
+    setWorking(true);
+    setError(null);
+    try {
+      await withSession((token) => api.assignBusinessSubscription(token, billingBusinessId, {
+        planId: assignDraft.planId,
+        cycle: 'CUSTOM',
+        status: assignDraft.status,
+        complimentary: assignDraft.complimentary,
+        ...(!assignDraft.complimentary ? { customPrice: assignDraft.customPrice } : {}),
+        discountAmount: assignDraft.discountAmount,
+        startsAt: karachiInputToUtc(assignDraft.startsAt),
+        endsAt: karachiInputToUtc(assignDraft.endsAt),
+        reason: assignDraft.reason,
+      }));
+      setBillingBusinessDetail(await withSession((token) => api.platformBillingBusiness(token, billingBusinessId)));
+      setAssignDraft((current) => ({ ...current, reason: '' }));
+      setNotice('Complimentary access assigned and audited.');
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function changeSubscriptionStatus(subscriptionId: string, status: 'ACTIVE' | 'SUSPENDED' | 'CANCELLED') {
+    const reason = window.prompt(`Reason for ${status.toLowerCase()} this subscription?`)?.trim();
+    if (!reason) return;
+    setWorking(true);
+    setError(null);
+    try {
+      await withSession((token) => api.setSubscriptionStatus(token, subscriptionId, {
+        status,
+        ...(status === 'ACTIVE' ? { endsAt: karachiInputToUtc(assignDraft.endsAt) } : {}),
+        reason,
+      }));
+      if (billingBusinessId) setBillingBusinessDetail(await withSession((token) => api.platformBillingBusiness(token, billingBusinessId)));
+      setNotice(`Subscription ${status.toLowerCase()} action recorded.`);
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function downloadSubscriptionReceipt(paymentId: string, platform = false) {
+    setWorking(true);
+    setError(null);
+    try {
+      const blob = await withSession((token) => platform
+        ? api.platformSubscriptionReceipt(token, paymentId)
+        : api.subscriptionReceipt(token, paymentId));
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'subscription-receipt.pdf';
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function downloadSubscriptionReport() {
+    setWorking(true);
+    setError(null);
+    try {
+      const blob = await withSession((token) => api.subscriptionReportCsv(token, reportFrom, reportTo));
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `subscription-reconciliation-${reportFrom}-${reportTo}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function recordSubscriptionAdjustment(payment: import('./api').SubscriptionPayment) {
+    const kindChoice = window.prompt('Enter REFUND or ADJUSTMENT (this records an internal entry only):')?.trim().toUpperCase();
+    if (kindChoice !== 'REFUND' && kindChoice !== 'ADJUSTMENT') return;
+    const amount = window.prompt('Enter amount in PKR:')?.trim();
+    if (!amount) return;
+    const reason = window.prompt('Enter the reason (at least 5 characters):')?.trim();
+    if (!reason || reason.length < 5) {
+      setError('A reason of at least five characters is required.');
+      return;
+    }
+    setWorking(true);
+    setError(null);
+    try {
+      await withSession((token) => api.recordSubscriptionAdjustment(token, payment.id, {
+        kind: kindChoice === 'REFUND' ? 'REFUND_RECORDED' : 'ADJUSTMENT_RECORDED',
+        amount,
+        reason,
+      }));
+      if (billingBusinessId) setBillingBusinessDetail(await withSession((token) => api.platformBillingBusiness(token, billingBusinessId)));
+      setNotice(`${kindChoice === 'REFUND' ? 'Refund' : 'Adjustment'} recorded for reconciliation. This does not claim an external transfer occurred.`);
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function togglePlan(plan: import('./api').SubscriptionPlan, updates: { active?: boolean; isDefault?: boolean }) {
+    setWorking(true);
+    setError(null);
+    try {
+      const updated = await withSession((token) => api.updateSubscriptionPlan(token, plan.id, updates));
+      setBillingPlans((current) => current.map((item) => item.id === updated.id
+        ? { ...item, ...updated, _count: item._count }
+        : updates.isDefault ? { ...item, isDefault: false } : item));
+      setNotice(`Plan ${updated.name} updated.`);
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
   if (!session) {
     const availableBusinesses = selection?.businesses ?? [];
     return (
@@ -636,8 +983,14 @@ function App() {
 
   if (currentUser?.context.scope === 'platform') {
     const grants = new Set(currentUser.context.platformPermissions);
+    const canApprovePayments = currentUser.user.platformRole === 'SUPER_ADMIN' && grants.has('platform:payments:review');
     const platformNavigation: Array<{ view: PlatformView; label: string; permission: string }> = [
       { view: 'businesses', label: 'Businesses', permission: 'platform:businesses:read' },
+      { view: 'billing', label: 'Subscriptions', permission: 'platform:subscriptions:read' },
+      { view: 'plans', label: 'Plans', permission: 'platform:plans:manage' },
+      { view: 'paymentQueue', label: 'Payment review', permission: 'platform:payments:review' },
+      { view: 'billingSettings', label: 'Billing settings', permission: 'platform:billing:settings' },
+      { view: 'reports', label: 'Billing reports', permission: 'platform:reports:read' },
       { view: 'staff', label: 'Platform staff', permission: 'platform:staff:manage' },
       { view: 'audit', label: 'Audit history', permission: 'platform:audit:read' },
       { view: 'health', label: 'System health', permission: 'platform:system:health' },
@@ -758,6 +1111,136 @@ function App() {
                 <button className="button button-secondary" disabled={working || !online} onClick={() => void savePlatformStaff(staff)}>Save permissions</button>
               </article>
             ))}
+          </section>
+        )}
+        {platformView === 'billing' && grants.has('platform:subscriptions:read') && (
+          <section className="content-stack">
+            <div className="section-heading"><div><p className="eyebrow">Subscription lifecycle</p><h2>Billing overview</h2><p className="muted">Renewals, trials, expiry and recorded manual payments. Approval is the only payment action that activates a subscription.</p></div></div>
+            {loading ? <LoadingState /> : billingDashboard ? (
+              <>
+                <div className="platform-metrics">
+                  <article className="platform-metric"><span className="platform-metric-label">Businesses</span><strong>{billingDashboard.businesses}</strong></article>
+                  <article className="platform-metric"><span className="platform-metric-label">Active subscriptions</span><strong>{billingDashboard.active}</strong></article>
+                  <article className="platform-metric"><span className="platform-metric-label">Trials</span><strong>{billingDashboard.trial}</strong></article>
+                  <article className="platform-metric"><span className="platform-metric-label">Grandfathered access</span><strong>{billingDashboard.complimentary}</strong></article>
+                  <article className="platform-metric"><span className="platform-metric-label">Expired</span><strong>{billingDashboard.expired}</strong></article>
+                  <article className="platform-metric"><span className="platform-metric-label">Pending payments</span><strong>{billingDashboard.pendingPayments}</strong></article>
+                  <article className="platform-metric"><span className="platform-metric-label">Recorded revenue</span><strong>{money(billingDashboard.recordedRevenue)}</strong></article>
+                </div>
+                {grants.has('platform:subscriptions:manage') && (
+                  <section className="panel form-panel">
+                    <div className="panel-heading"><h3>Manage a business subscription</h3><p className="muted">Grant complimentary access with explicit dates and an audited reason.</p></div>
+                    <form className="form-grid" onSubmit={assignSubscription}>
+                      <label>Business<select value={billingBusinessId} onChange={(event) => setBillingBusinessId(event.target.value)} required><option value="">Choose business</option>{billingBusinesses.map((business) => <option key={business.id} value={business.id}>{business.name}</option>)}</select></label>
+                      <label>Plan<select value={assignDraft.planId} onChange={(event) => setAssignDraft((current) => ({ ...current, planId: event.target.value }))} required><option value="">Choose plan</option>{billingPlans.filter((plan) => plan.active).map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select></label>
+                      <label>Access type<select value={assignDraft.status} onChange={(event) => setAssignDraft((current) => ({ ...current, status: event.target.value as 'ACTIVE' | 'TRIAL' }))}><option value="ACTIVE">Active subscription</option><option value="TRIAL">Free trial</option></select></label>
+                      <label>Starts at (Karachi time)<input type="datetime-local" value={assignDraft.startsAt} onChange={(event) => setAssignDraft((current) => ({ ...current, startsAt: event.target.value }))} required /></label>
+                      <label>Expires at (Karachi time)<input type="datetime-local" value={assignDraft.endsAt} onChange={(event) => setAssignDraft((current) => ({ ...current, endsAt: event.target.value }))} required /></label>
+                      <label className="checkbox-row"><input type="checkbox" checked={assignDraft.complimentary} onChange={(event) => setAssignDraft((current) => ({ ...current, complimentary: event.target.checked }))} /> Complimentary access</label>
+                      {!assignDraft.complimentary && <label>Custom price (PKR)<input inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" value={assignDraft.customPrice} onChange={(event) => setAssignDraft((current) => ({ ...current, customPrice: event.target.value }))} required /></label>}
+                      <label>Discount amount (PKR)<input inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" value={assignDraft.discountAmount} onChange={(event) => setAssignDraft((current) => ({ ...current, discountAmount: event.target.value }))} required /></label>
+                      <label className="span-all">Reason<input value={assignDraft.reason} onChange={(event) => setAssignDraft((current) => ({ ...current, reason: event.target.value }))} minLength={5} maxLength={1000} required /></label>
+                      <div className="span-all"><button className="button button-primary" disabled={working || !online}>Assign complimentary access</button></div>
+                    </form>
+                  </section>
+                )}
+                <section className="panel content-stack">
+                  <div><h3>Upcoming expiry alerts</h3><p className="muted">Contact these businesses within the configured reminder window before access expires.</p></div>
+                  {billingDashboard.expiring.length ? <div className="table-wrap"><table><thead><tr><th>Business</th><th>Plan</th><th>Expires (Karachi)</th><th>Manage</th></tr></thead><tbody>
+                    {billingDashboard.expiring.map((item) => <tr key={item.id}><td>{item.business.name}</td><td>{item.plan.name}</td><td>{karachiDate(item.endsAt)}</td><td><button className="button button-secondary" onClick={() => setBillingBusinessId(item.business.id)}>View history</button></td></tr>)}
+                  </tbody></table></div> : <EmptyState title="No upcoming expiries" />}
+                </section>
+                {billingBusinessDetail && <section className="panel content-stack">
+                  <div className="section-heading"><div><h3>{billingBusinessDetail.business.name} subscription history</h3><p className="muted">Business status: {billingBusinessDetail.business.status} · {billingBusinessDetail.business.slug}</p></div><button className="button button-quiet" onClick={() => setBillingBusinessId('')}>Close</button></div>
+                  {billingBusinessDetail.subscriptions.length ? <div className="table-wrap"><table><thead><tr><th>Plan</th><th>Status</th><th>Cycle</th><th>Period</th><th>Management</th></tr></thead><tbody>
+                    {billingBusinessDetail.subscriptions.map((subscription) => <tr key={subscription.id}><td>{subscription.plan.name}{subscription.grandfathered ? ' · Legacy access' : subscription.complimentary ? ' · Complimentary' : ''}</td><td>{subscription.status}</td><td>{subscription.cycle}</td><td>{karachiDate(subscription.startsAt)} – {karachiDate(subscription.endsAt)}</td><td><div className="row-actions">{grants.has('platform:subscriptions:manage') && subscription.status === 'ACTIVE' && <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void changeSubscriptionStatus(subscription.id, 'SUSPENDED')}>Suspend</button>}{grants.has('platform:subscriptions:manage') && subscription.status === 'SUSPENDED' && <button className="button button-primary" disabled={working || !online} onClick={() => void changeSubscriptionStatus(subscription.id, 'ACTIVE')}>Reactivate</button>}{grants.has('platform:subscriptions:manage') && !['CANCELLED', 'EXPIRED'].includes(subscription.status) && <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void changeSubscriptionStatus(subscription.id, 'CANCELLED')}>Cancel</button>}</div></td></tr>)}
+                  </tbody></table></div> : <EmptyState title="No subscription periods" />}
+                  <h3>Payments and system invoices</h3>
+                  {billingBusinessDetail.payments.length ? <div className="table-wrap"><table><thead><tr><th>Transaction</th><th>Amount</th><th>Status</th><th>Invoice</th><th>Submitted</th><th>Receipt</th></tr></thead><tbody>
+                    {billingBusinessDetail.payments.map((payment) => <tr key={payment.id}><td>{payment.transactionReference}</td><td>{money(payment.amount)}</td><td>{payment.status}</td><td>{payment.invoiceNumber ?? '—'}</td><td>{karachiDate(payment.createdAt)}</td><td><div className="row-actions">{payment.invoiceNumber && grants.has('platform:payments:review') && <button className="button button-quiet" disabled={working} onClick={() => void downloadSubscriptionReceipt(payment.id, true)}>Receipt PDF</button>}{payment.status === 'APPROVED' && canApprovePayments && <button className="button button-secondary" disabled={working || !online} onClick={() => void recordSubscriptionAdjustment(payment)}>Record refund/adjustment</button>}</div></td></tr>)}
+                  </tbody></table></div> : <EmptyState title="No subscription payments" />}
+                  <h3>Renewal and admin activity</h3>
+                  {billingBusinessDetail.events.length ? <div className="table-wrap"><table><thead><tr><th>Action</th><th>Details</th><th>Recorded (Karachi)</th></tr></thead><tbody>
+                    {billingBusinessDetail.events.map((event) => <tr key={event.id}><td>{event.action.replaceAll('.', ' ')}</td><td>{Object.entries(event.metadata).map(([key, value]) => `${key}: ${String(value)}`).join(' · ') || '—'}</td><td>{karachiDate(event.createdAt)}</td></tr>)}
+                  </tbody></table></div> : <EmptyState title="No subscription events recorded" />}
+                </section>}
+              </>
+            ) : <EmptyState title="Subscription overview unavailable" />}
+          </section>
+        )}
+        {platformView === 'plans' && grants.has('platform:plans:manage') && (
+          <section className="content-stack">
+            <div className="section-heading"><div><p className="eyebrow">Pricing configuration</p><h2>Subscription plans</h2><p className="muted">Prices are PKR. Limits use -1 to indicate unlimited. Plan changes do not delete subscription history.</p></div></div>
+            <form className="panel form-panel" onSubmit={createPlan}>
+              <div className="panel-heading"><h3>{editingPlanId ? 'Edit subscription plan' : 'Create a plan'}</h3><p className="muted">New businesses receive a trial on the configured default plan.</p></div>
+              <div className="form-grid">
+                <label>Plan name<input value={planDraft.name} onChange={(event) => setPlanDraft((draft) => ({ ...draft, name: event.target.value }))} minLength={2} maxLength={100} required /></label>
+                <label>Trial days<input type="number" min={0} max={365} value={planDraft.trialDays} onChange={(event) => setPlanDraft((draft) => ({ ...draft, trialDays: event.target.value }))} required /></label>
+                <label>Monthly price (PKR)<input inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" value={planDraft.monthlyPrice} onChange={(event) => setPlanDraft((draft) => ({ ...draft, monthlyPrice: event.target.value }))} required /></label>
+                <label>Yearly price (PKR)<input inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" value={planDraft.yearlyPrice} onChange={(event) => setPlanDraft((draft) => ({ ...draft, yearlyPrice: event.target.value }))} required /></label>
+                <label className="span-all">Description<input value={planDraft.description} onChange={(event) => setPlanDraft((draft) => ({ ...draft, description: event.target.value }))} maxLength={1000} /></label>
+              </div>
+              <fieldset className="permission-picker"><legend>Included features</legend>
+                {Object.entries(planFeatures).map(([feature, enabled]) => <label key={feature}><input type="checkbox" checked={enabled} onChange={(event) => setPlanFeatures((current) => ({ ...current, [feature]: event.target.checked }))} /> {feature.replaceAll(/([A-Z])/g, ' $1')}</label>)}
+              </fieldset>
+              <div className="form-grid">
+                {Object.entries(planLimits).map(([limit, value]) => <label key={limit}>{limit.replaceAll(/([A-Z])/g, ' $1')} limit (-1 unlimited)<input type="number" min={-1} value={value} onChange={(event) => setPlanLimits((current) => ({ ...current, [limit]: event.target.value }))} /></label>)}
+              </div>
+              <div className="row-actions"><button className="button button-primary" disabled={working || !online}>{editingPlanId ? 'Save plan changes' : 'Create plan'}</button>{editingPlanId && <button type="button" className="button button-secondary" onClick={cancelPlanEdit}>Cancel editing</button>}</div>
+            </form>
+            {loading ? <LoadingState /> : billingPlans.length ? <div className="table-wrap"><table><thead><tr><th>Plan</th><th>Monthly</th><th>Yearly</th><th>Trial</th><th>Subscriptions</th><th>Default</th><th>Actions</th></tr></thead><tbody>
+              {billingPlans.map((plan) => <tr key={plan.id}><td><strong>{plan.name}</strong><small className="table-note">{plan.active ? 'Active' : 'Inactive'}{plan.description ? ` · ${plan.description}` : ''}</small></td><td>{money(plan.monthlyPrice)}</td><td>{money(plan.yearlyPrice)}</td><td>{plan.trialDays} days</td><td>{plan._count?.subscriptions ?? 0}</td><td>{plan.isDefault ? 'Yes' : 'No'}</td><td><div className="row-actions"><button className="button button-secondary" disabled={working || !online} onClick={() => editPlan(plan)}>Edit</button><button className="button button-secondary" disabled={working || !online || plan.isDefault || !plan.active} onClick={() => void togglePlan(plan, { isDefault: true })}>Make default</button><button className={plan.active ? 'button button-danger-quiet' : 'button button-primary'} disabled={working || !online || (plan.active && plan.isDefault)} title={plan.active && plan.isDefault ? 'Select another default plan first' : undefined} onClick={() => void togglePlan(plan, { active: !plan.active })}>{plan.active ? 'Deactivate' : 'Activate'}</button></div></td></tr>)}
+            </tbody></table></div> : <EmptyState title="No plans configured" />}
+          </section>
+        )}
+        {platformView === 'paymentQueue' && grants.has('platform:payments:review') && (
+          <section className="content-stack">
+            <div className="section-heading"><div><p className="eyebrow">Manual reconciliation</p><h2>Subscription payment review</h2><p className="muted">Verify transfer details independently. Shop submissions do not activate a plan.</p></div></div>
+            <form className="panel form-panel" onSubmit={(event) => void searchSubscriptionPayments(event)}>
+              <div className="search-form">
+                <label className="visually-hidden" htmlFor="billing-payment-search">Search transaction reference, sender or business</label>
+                <input id="billing-payment-search" value={billingPaymentSearch} onChange={(event) => setBillingPaymentSearch(event.target.value)} placeholder="Business, transaction reference or sender" maxLength={120} />
+                <label className="visually-hidden" htmlFor="billing-payment-filter">Filter payment status</label>
+                <select id="billing-payment-filter" value={billingPaymentFilter} onChange={(event) => setBillingPaymentFilter(event.target.value)}>
+                  <option value="REVIEW">Needs review</option><option value="ALL">All statuses</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option><option value="UNDER_REVIEW">Under review</option><option value="PENDING">Pending</option>
+                </select>
+                <button className="button button-secondary" type="submit" disabled={working || !online}>Search</button>
+              </div>
+            </form>
+            {loading ? <LoadingState /> : billingPayments.length ? <div className="table-wrap"><table><thead><tr><th>Business / plan</th><th>Amount</th><th>Method / date</th><th>Reference / sender</th><th>Review</th></tr></thead><tbody>
+              {billingPayments.map((payment) => <tr key={payment.id}><td><strong>{payment.business?.name}</strong><small className="table-note">{payment.plan.name}</small></td><td>{money(payment.amount)}</td><td>{payment.method}<small className="table-note">{payment.paymentDate.slice(0, 10)}</small></td><td>{payment.transactionReference}<small className="table-note">{payment.senderName}</small></td><td>{payment.status === 'PENDING' || payment.status === 'UNDER_REVIEW' ? canApprovePayments ? <div className="row-actions">{payment.status === 'PENDING' && <button className="button button-secondary" disabled={working || !online} onClick={() => void reviewSubscriptionPayment(payment, 'UNDER_REVIEW')}>Reviewing</button>}<button className="button button-primary" disabled={working || !online} onClick={() => void reviewSubscriptionPayment(payment, 'APPROVE')}>Approve</button><label className="visually-hidden" htmlFor={`reject-${payment.id}`}>Rejection reason</label><input id={`reject-${payment.id}`} placeholder="Required rejection reason" value={rejectionReasons[payment.id] ?? ''} onChange={(event) => setRejectionReasons((current) => ({ ...current, [payment.id]: event.target.value }))} maxLength={1000} /><button className="button button-danger-quiet" disabled={working || !online || (rejectionReasons[payment.id]?.trim().length ?? 0) < 5} onClick={() => void reviewSubscriptionPayment(payment, 'REJECT')}>Reject</button></div> : 'Super admin review required' : payment.status}</td></tr>)}
+            </tbody></table></div> : <EmptyState title="No payments awaiting review" detail="Payment submissions will appear here after shop owners submit their transaction details." />}
+            {billingPaymentCursor && <button className="button button-secondary" disabled={loading || working || !online} onClick={() => void searchSubscriptionPayments(undefined, true)}>Load more payments</button>}
+          </section>
+        )}
+        {platformView === 'billingSettings' && grants.has('platform:billing:settings') && (
+          <section className="content-stack">
+            <div className="section-heading"><div><p className="eyebrow">Platform configuration</p><h2>Billing settings</h2><p className="muted">Configure manual payment instructions, grace period, reminder schedule and support details.</p></div></div>
+            {loading ? <LoadingState /> : billingSettings ? <form className="panel form-panel" onSubmit={saveBillingSettings}>
+              <div className="form-grid">
+                <label className="span-all">Payment methods (comma-separated)<input value={billingSettings.paymentMethods.join(', ')} onChange={(event) => setBillingSettings({ ...billingSettings, paymentMethods: [...new Set(event.target.value.split(',').map((method) => method.trim()).filter(Boolean))] })} required /></label>
+                <label className="span-all">Payment account details and instructions<textarea rows={5} maxLength={4000} value={billingSettings.paymentInstructions} onChange={(event) => setBillingSettings({ ...billingSettings, paymentInstructions: event.target.value })} /></label>
+                <label>Grace period (days)<input type="number" min={0} max={90} value={billingSettings.gracePeriodDays} onChange={(event) => setBillingSettings({ ...billingSettings, gracePeriodDays: Number(event.target.value) })} /></label>
+                <label>Expiry reminder days<input value={billingSettings.expiryReminderDays.join(', ')} onChange={(event) => setBillingSettings({ ...billingSettings, expiryReminderDays: event.target.value.split(',').map((value) => Number(value.trim())).filter((value) => Number.isInteger(value) && value >= 0) })} /></label>
+                <label>Support contact<input maxLength={200} value={billingSettings.supportContact} onChange={(event) => setBillingSettings({ ...billingSettings, supportContact: event.target.value })} /></label>
+                <label className="checkbox-row"><input type="checkbox" checked={billingSettings.enforcementEnabled} onChange={(event) => setBillingSettings({ ...billingSettings, enforcementEnabled: event.target.checked })} /> Enforce subscription access after grace period</label>
+              </div>
+              <p className="fine-print">Expiry enforcement restricts paid mutations only. Shops retain login, read access to their business data, billing and support.</p>
+              <button className="button button-primary" disabled={working || !online}>Save billing settings</button>
+            </form> : <EmptyState title="Billing settings unavailable" />}
+          </section>
+        )}
+        {platformView === 'reports' && grants.has('platform:reports:read') && (
+          <section className="content-stack">
+            <div className="section-heading"><div><p className="eyebrow">Finance & reconciliation</p><h2>Subscription reports</h2><p className="muted">Export submitted, approved and rejected manual-payment records for the selected payment-date range.</p></div></div>
+            <form className="panel form-panel" onSubmit={(event) => { event.preventDefault(); void downloadSubscriptionReport(); }}>
+              <div className="form-grid">
+                <label>From<input type="date" value={reportFrom} max={reportTo} onChange={(event) => setReportFrom(event.target.value)} required /></label>
+                <label>To<input type="date" value={reportTo} min={reportFrom} onChange={(event) => setReportTo(event.target.value)} required /></label>
+              </div>
+              <p className="fine-print">Recorded refunds and adjustments are audit events and are not represented as external transfers.</p>
+              <button className="button button-primary" disabled={working || !online}>Download reconciliation CSV</button>
+            </form>
           </section>
         )}
         {platformView === 'audit' && grants.has('platform:audit:read') && (
@@ -1043,6 +1526,58 @@ function App() {
                 </table>
               </div>
             ) : <EmptyState title="No WhatsApp notifications yet" detail="Order, payment and pickup notifications appear here after their changes commit." />}
+          </section>
+        )}
+        {view === 'subscription' && (
+          <section className="content-stack">
+            <div className="section-heading"><div><p className="eyebrow">Shop account</p><h2>Subscription & billing</h2><p className="muted">View your plan, renewal date, account instructions and manual-payment history.</p></div></div>
+            {loading && !shopSubscription ? <LoadingState /> : shopSubscription ? (
+              <>
+                {shopSubscription.subscription ? <section className="panel dashboard-note">
+                  <div><p className="eyebrow">{shopSubscription.subscription.status.replaceAll('_', ' ')}</p><h3>{shopSubscription.subscription.plan.name}{shopSubscription.subscription.grandfathered ? ' · Legacy access' : shopSubscription.subscription.complimentary ? ' · Complimentary access' : ''}</h3><p className="muted">Valid {karachiDate(shopSubscription.subscription.startsAt)} through {karachiDate(shopSubscription.subscription.endsAt)} · {shopSubscription.subscription.cycle.toLowerCase()}</p>
+                    {new Date(shopSubscription.subscription.graceUntil) < new Date() && <p className="alert alert-error">Your grace period has ended. Paid changes are restricted; billing, login and read access remain available.</p>}
+                  </div>
+                  <span className="notification-pill">Renewal: {karachiDate(shopSubscription.subscription.endsAt)}</span>
+                </section> : <section className="panel"><h3>No subscription assigned</h3><p className="muted">Contact platform support to select a plan. Existing business data remains available.</p></section>}
+                <section className="panel">
+                  <h3>Payment instructions</h3>
+                  <p className="muted">{shopSubscription.paymentInstructions || 'Contact platform support for current payment account details.'}</p>
+                  {shopSubscription.supportContact && <p>Support: {shopSubscription.supportContact}</p>}
+                </section>
+                {permissions.has('subscriptions:manage') && shopSubscription.plans.length > 0 && (
+                  <form className="panel form-panel" onSubmit={submitSubscriptionPayment}>
+                    <div className="panel-heading"><h3>Request or renew a plan</h3><p className="muted">Submitting details creates a pending review only. Access changes after an authorized admin confirms the payment.</p></div>
+                    <div className="form-grid">
+                      <label>Plan<select value={selectedSubscriptionPlanId} onChange={(event) => {
+                        const planId = event.target.value;
+                        setSelectedSubscriptionPlanId(planId);
+                        const plan = shopSubscription.plans.find((item) => item.id === planId);
+                        setSubscriptionPayment((current) => ({ ...current, amount: plan ? (subscriptionCycle === 'MONTHLY' ? plan.monthlyPrice : plan.yearlyPrice) : '' }));
+                      }} required>{shopSubscription.plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} · {money(plan.monthlyPrice)}/month</option>)}</select></label>
+                      <label>Billing cycle<select value={subscriptionCycle} onChange={(event) => {
+                        const cycle = event.target.value as 'MONTHLY' | 'YEARLY';
+                        setSubscriptionCycle(cycle);
+                        const plan = shopSubscription.plans.find((item) => item.id === selectedSubscriptionPlanId);
+                        setSubscriptionPayment((current) => ({ ...current, amount: plan ? (cycle === 'MONTHLY' ? plan.monthlyPrice : plan.yearlyPrice) : '' }));
+                      }}><option value="MONTHLY">Monthly</option><option value="YEARLY">Yearly</option></select></label>
+                      <label>Payment method<select value={subscriptionPayment.method} onChange={(event) => setSubscriptionPayment((current) => ({ ...current, method: event.target.value }))} required>{shopSubscription.paymentMethods.map((method) => <option key={method} value={method}>{method}</option>)}</select></label>
+                      <label>Amount (PKR)<input inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" value={subscriptionPayment.amount} onChange={(event) => setSubscriptionPayment((current) => ({ ...current, amount: event.target.value }))} required /></label>
+                      <label>Transaction ID / reference<input value={subscriptionPayment.transactionReference} onChange={(event) => setSubscriptionPayment((current) => ({ ...current, transactionReference: event.target.value }))} minLength={3} maxLength={120} required /></label>
+                      <label>Sender name<input value={subscriptionPayment.senderName} onChange={(event) => setSubscriptionPayment((current) => ({ ...current, senderName: event.target.value }))} minLength={2} maxLength={160} required /></label>
+                      <label>Payment date<input type="date" value={subscriptionPayment.paymentDate} onChange={(event) => setSubscriptionPayment((current) => ({ ...current, paymentDate: event.target.value }))} required /></label>
+                    </div>
+                    {Number(subscriptionPayment.amount) <= 0 && <p className="fine-print">This is a free plan/trial. Choose a paid plan to submit a manual payment.</p>}
+                    <button className="button button-primary" disabled={working || !online || !subscriptionPayment.method || Number(subscriptionPayment.amount) <= 0}>{working ? 'Submitting…' : 'Submit payment for review'}</button>
+                  </form>
+                )}
+                <section className="content-stack">
+                  <div><h3>Payment history and invoices</h3><p className="muted">Payment references and approval receipts are preserved for reconciliation.</p></div>
+                  {shopSubscription.payments.length ? <div className="table-wrap"><table><thead><tr><th>Submitted</th><th>Plan / cycle</th><th>Amount</th><th>Method</th><th>Transaction</th><th>Status / invoice</th><th>Receipt</th></tr></thead><tbody>
+                    {shopSubscription.payments.map((payment) => <tr key={payment.id}><td>{karachiDate(payment.createdAt)}</td><td>{payment.plan.name}<small className="table-note">{payment.cycle.toLowerCase()}</small></td><td>{money(payment.amount)}</td><td>{payment.method}</td><td>{payment.transactionReference}<small className="table-note">Sender: {payment.senderName}</small></td><td>{payment.status}{payment.invoiceNumber && <small className="table-note">Receipt {payment.invoiceNumber}</small>}{payment.rejectionReason && <small className="table-note">Reason: {payment.rejectionReason}</small>}</td><td>{payment.invoiceNumber && <button className="button button-quiet" disabled={working || !online} onClick={() => void downloadSubscriptionReceipt(payment.id)}>Download PDF</button>}</td></tr>)}
+                  </tbody></table></div> : <EmptyState title="No subscription payment history" detail="Submitted plan payments will appear here for tracking." />}
+                </section>
+              </>
+            ) : <EmptyState title="Subscription details unavailable" action="Refresh" onAction={() => void reloadCurrent()} />}
           </section>
         )}
 

@@ -250,6 +250,49 @@ export async function generateReceiptPdf(
   return output;
 }
 
+export async function generateSubscriptionReceiptPdf(input: {
+  businessName: string;
+  planName: string;
+  cycle: string;
+  amount: string;
+  transactionReference: string;
+  senderName: string;
+  paymentMethod: string;
+  paymentDate: string;
+  invoiceNumber: string;
+  startsAt: string;
+  endsAt: string;
+}): Promise<Buffer> {
+  const document = new PDFDocument({
+    size: 'A4',
+    margin: 52,
+    info: { Title: `Subscription receipt ${input.invoiceNumber}`, Author: input.businessName },
+  });
+  const chunks: Buffer[] = [];
+  const output = new Promise<Buffer>((resolve, reject) => {
+    document.on('data', (chunk: Buffer) => chunks.push(chunk));
+    document.on('end', () => resolve(Buffer.concat(chunks)));
+    document.on('error', reject);
+  });
+  document.fontSize(22).fillColor('#17324d').text('TailorApp');
+  document.moveDown(0.25).fontSize(11).fillColor('#68788a').text('SUBSCRIPTION PAYMENT RECEIPT');
+  document.moveDown(1).fontSize(12).fillColor('#17202a').text(input.businessName);
+  document.moveDown(0.5).fontSize(10).fillColor('#52616f');
+  document.text(`Receipt: ${input.invoiceNumber}`);
+  document.text(`Payment date: ${input.paymentDate}`);
+  document.text(`Plan: ${input.planName} (${input.cycle.toLowerCase()})`);
+  document.text(`Subscription period: ${input.startsAt} to ${input.endsAt}`);
+  document.moveDown(0.8).fontSize(12).fillColor('#17202a').text(`Amount recorded: PKR ${input.amount}`);
+  document.moveDown(0.4).fontSize(10).fillColor('#52616f');
+  document.text(`Payment method: ${input.paymentMethod}`);
+  document.text(`Transaction reference: ${input.transactionReference}`);
+  document.text(`Sender name: ${input.senderName}`);
+  document.moveDown(2).fontSize(9).fillColor('#68788a')
+    .text('This receipt confirms the subscription payment recorded by TailorApp. It does not represent an external bank or wallet refund.');
+  document.end();
+  return output;
+}
+
 type MetaResponse = { messages?: Array<{ id?: string }> };
 
 export async function metaPost<T>(

@@ -13,6 +13,7 @@ import { calculateNetPaid, calculateOutstanding } from '../domain/finance.js';
 import { isAllowedOrderTransition } from '../domain/orders.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
+import { assertPlanLimit } from '../plan-limits.js';
 import { queueOrderCreated, queueOrderReady } from '../whatsapp.js';
 
 const router = express.Router();
@@ -146,6 +147,7 @@ router.post('/', requireBusinessPermission('orders:write'), asyncHandler(async (
 
   try {
     const order = await prisma.$transaction(async (tx) => {
+      await assertPlanLimit(tx, businessId, 'orders:write');
       const business = await tx.business.update({
         where: { id: businessId },
         data: { orderSequence: { increment: 1 } },

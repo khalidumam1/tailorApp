@@ -144,6 +144,52 @@ workspaces show Queued, Sent, Delivered, Read, Failed, and Not Sent distinctly.
 The authorized PDF endpoint is
 `GET /api/v1/payments/:paymentId/receipt.pdf`.
 
+## Subscriptions and manual payments
+
+Apply `20261002120000_subscription_management` through the existing migration
+release step. The migration creates a 14-day default trial plan, billing
+settings, subscription/payment/event records and narrowly scoped platform
+permissions. Existing shops receive grandfathered complimentary access so a
+schema rollout does not suddenly disable established workspaces; it ends when a
+super admin assigns a new subscription or approves the shop's first paid
+renewal. Configure paid plans and payment account instructions in the platform
+console before onboarding shops that need paid access.
+
+Shop-owner endpoints derive the business exclusively from the authenticated
+membership:
+
+- `GET /api/v1/subscriptions`: current period, active plans, payment history,
+  immutable events, payment methods/instructions and support contact.
+- `POST /api/v1/subscriptions/payments`: submits transaction reference, sender,
+  amount, configured method and payment date. Submission never grants access;
+  a unique transaction reference prevents duplicate submissions.
+- `GET /api/v1/subscriptions/payments/:paymentId/receipt.pdf`: returns a
+  server-generated PDF only for that shop's approved payment.
+
+Platform endpoints are under `/api/v1/platform/billing` and enforce separate
+`platform:subscriptions:read`, `platform:plans:manage`,
+`platform:payments:review`, `platform:subscriptions:manage`,
+`platform:billing:settings` and `platform:reports:read` grants. They provide
+dashboard/expiry alerts, plan configuration, paginated/searchable payment review,
+approval/rejection (rejection reason required), lifecycle assignment/suspension/
+cancellation/reactivation, audit-linked manual refund/adjustment records,
+settings, subscription history, receipt PDFs and date-filtered CSV
+reconciliation. Approval atomically records the payment, subscription period,
+invoice reference, event and audit entry. Repeated review cannot create a second
+renewal. Refund entries are internal records only and do not represent an
+external transfer.
+Even when a platform staff account is granted `platform:payments:review`, only a
+Super Admin with that explicit grant can approve/reject submissions or record
+refund/adjustment entries.
+
+The grace period is stored per subscription period. Once its end passes, the API
+continues to allow login, shop data reads and subscription/payment/support
+routes, but denies paid business writes and offline sync. Plan feature keys for
+customers, measurements, orders, payments and reports, plus customer, staff and
+monthly-order limits, are enforced server-side. Expiry alert windows are driven
+by the configured reminder-day settings; this release does not configure an
+external reminder delivery service.
+
 ## Checks
 
 ```sh
