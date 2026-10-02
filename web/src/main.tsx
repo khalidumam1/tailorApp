@@ -152,6 +152,7 @@ function App() {
     discountAmount: '0',
   });
   const [rejectionReasons, setRejectionReasons] = useState<Record<string, string>>({});
+  const [rejectingSubscriptionPaymentId, setRejectingSubscriptionPaymentId] = useState<string | null>(null);
   const [reportFrom, setReportFrom] = useState(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
   const [reportTo, setReportTo] = useState(new Date().toISOString().slice(0, 10));
 
@@ -756,6 +757,7 @@ function App() {
         ? current.map((item) => item.id === payment.id ? { ...item, ...result.payment } : item)
         : current.filter((item) => item.id !== payment.id));
       setRejectionReasons((current) => { const next = { ...current }; delete next[payment.id]; return next; });
+      if (decision === 'REJECT') setRejectingSubscriptionPaymentId(null);
       setNotice(decision === 'APPROVE' ? `Payment approved; invoice and subscription period recorded.` : decision === 'REJECT' ? 'Payment rejected with the reason recorded.' : 'Payment marked under review.');
     } catch (cause) {
       setError(messageFor(cause));
@@ -1118,7 +1120,7 @@ function App() {
             <div className="section-heading"><div><p className="eyebrow">Subscription lifecycle</p><h2>Billing overview</h2><p className="muted">Renewals, trials, expiry and recorded manual payments. Approval is the only payment action that activates a subscription.</p></div></div>
             {loading ? <LoadingState /> : billingDashboard ? (
               <>
-                <div className="platform-metrics">
+                <div className="platform-metrics billing-metrics">
                   <article className="platform-metric"><span className="platform-metric-label">Businesses</span><strong>{billingDashboard.businesses}</strong></article>
                   <article className="platform-metric"><span className="platform-metric-label">Active subscriptions</span><strong>{billingDashboard.active}</strong></article>
                   <article className="platform-metric"><span className="platform-metric-label">Trials</span><strong>{billingDashboard.trial}</strong></article>
@@ -1128,9 +1130,9 @@ function App() {
                   <article className="platform-metric"><span className="platform-metric-label">Recorded revenue</span><strong>{money(billingDashboard.recordedRevenue)}</strong></article>
                 </div>
                 {grants.has('platform:subscriptions:manage') && (
-                  <section className="panel form-panel">
-                    <div className="panel-heading"><h3>Manage a business subscription</h3><p className="muted">Grant complimentary access with explicit dates and an audited reason.</p></div>
-                    <form className="form-grid" onSubmit={assignSubscription}>
+                  <details className="panel disclosure-panel">
+                    <summary><span><strong>Manage a business subscription</strong><small>Assign a plan, free trial or complimentary access</small></span><span className="disclosure-action">Open form</span></summary>
+                    <form className="form-grid disclosure-content" onSubmit={assignSubscription}>
                       <label>Business<select value={billingBusinessId} onChange={(event) => setBillingBusinessId(event.target.value)} required><option value="">Choose business</option>{billingBusinesses.map((business) => <option key={business.id} value={business.id}>{business.name}</option>)}</select></label>
                       <label>Plan<select value={assignDraft.planId} onChange={(event) => setAssignDraft((current) => ({ ...current, planId: event.target.value }))} required><option value="">Choose plan</option>{billingPlans.filter((plan) => plan.active).map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select></label>
                       <label>Access type<select value={assignDraft.status} onChange={(event) => setAssignDraft((current) => ({ ...current, status: event.target.value as 'ACTIVE' | 'TRIAL' }))}><option value="ACTIVE">Active subscription</option><option value="TRIAL">Free trial</option></select></label>
@@ -1140,9 +1142,9 @@ function App() {
                       {!assignDraft.complimentary && <label>Custom price (PKR)<input inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" value={assignDraft.customPrice} onChange={(event) => setAssignDraft((current) => ({ ...current, customPrice: event.target.value }))} required /></label>}
                       <label>Discount amount (PKR)<input inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" value={assignDraft.discountAmount} onChange={(event) => setAssignDraft((current) => ({ ...current, discountAmount: event.target.value }))} required /></label>
                       <label className="span-all">Reason<input value={assignDraft.reason} onChange={(event) => setAssignDraft((current) => ({ ...current, reason: event.target.value }))} minLength={5} maxLength={1000} required /></label>
-                      <div className="span-all"><button className="button button-primary" disabled={working || !online}>Assign complimentary access</button></div>
+                      <div className="span-all"><button className="button button-primary" disabled={working || !online}>Assign subscription</button></div>
                     </form>
-                  </section>
+                  </details>
                 )}
                 <section className="panel content-stack">
                   <div><h3>Upcoming expiry alerts</h3><p className="muted">Contact these businesses within the configured reminder window before access expires.</p></div>
@@ -1171,7 +1173,9 @@ function App() {
         {platformView === 'plans' && grants.has('platform:plans:manage') && (
           <section className="content-stack">
             <div className="section-heading"><div><p className="eyebrow">Pricing configuration</p><h2>Subscription plans</h2><p className="muted">Prices are PKR. Limits use -1 to indicate unlimited. Plan changes do not delete subscription history.</p></div></div>
-            <form className="panel form-panel" onSubmit={createPlan}>
+            <details className="panel disclosure-panel" open={Boolean(editingPlanId)}>
+              <summary><span><strong>{editingPlanId ? 'Edit subscription plan' : 'Create a plan'}</strong><small>Set prices, trial duration, included features and usage limits</small></span><span className="disclosure-action">{editingPlanId ? 'Editing' : 'Open form'}</span></summary>
+              <form className="form-panel disclosure-content" onSubmit={createPlan}>
               <div className="panel-heading"><h3>{editingPlanId ? 'Edit subscription plan' : 'Create a plan'}</h3><p className="muted">New businesses receive a trial on the configured default plan.</p></div>
               <div className="form-grid">
                 <label>Plan name<input value={planDraft.name} onChange={(event) => setPlanDraft((draft) => ({ ...draft, name: event.target.value }))} minLength={2} maxLength={100} required /></label>
@@ -1187,7 +1191,8 @@ function App() {
                 {Object.entries(planLimits).map(([limit, value]) => <label key={limit}>{limit.replaceAll(/([A-Z])/g, ' $1')} limit (-1 unlimited)<input type="number" min={-1} value={value} onChange={(event) => setPlanLimits((current) => ({ ...current, [limit]: event.target.value }))} /></label>)}
               </div>
               <div className="row-actions"><button className="button button-primary" disabled={working || !online}>{editingPlanId ? 'Save plan changes' : 'Create plan'}</button>{editingPlanId && <button type="button" className="button button-secondary" onClick={cancelPlanEdit}>Cancel editing</button>}</div>
-            </form>
+              </form>
+            </details>
             {loading ? <LoadingState /> : billingPlans.length ? <div className="table-wrap"><table><thead><tr><th>Plan</th><th>Monthly</th><th>Yearly</th><th>Trial</th><th>Subscriptions</th><th>Default</th><th>Actions</th></tr></thead><tbody>
               {billingPlans.map((plan) => <tr key={plan.id}><td><strong>{plan.name}</strong><small className="table-note">{plan.active ? 'Active' : 'Inactive'}{plan.description ? ` · ${plan.description}` : ''}</small></td><td>{money(plan.monthlyPrice)}</td><td>{money(plan.yearlyPrice)}</td><td>{plan.trialDays} days</td><td>{plan._count?.subscriptions ?? 0}</td><td>{plan.isDefault ? 'Yes' : 'No'}</td><td><div className="row-actions"><button className="button button-secondary" disabled={working || !online} onClick={() => editPlan(plan)}>Edit</button><button className="button button-secondary" disabled={working || !online || plan.isDefault || !plan.active} onClick={() => void togglePlan(plan, { isDefault: true })}>Make default</button><button className={plan.active ? 'button button-danger-quiet' : 'button button-primary'} disabled={working || !online || (plan.active && plan.isDefault)} title={plan.active && plan.isDefault ? 'Select another default plan first' : undefined} onClick={() => void togglePlan(plan, { active: !plan.active })}>{plan.active ? 'Deactivate' : 'Activate'}</button></div></td></tr>)}
             </tbody></table></div> : <EmptyState title="No plans configured" />}
@@ -1196,10 +1201,12 @@ function App() {
         {platformView === 'paymentQueue' && grants.has('platform:payments:review') && (
           <section className="content-stack">
             <div className="section-heading"><div><p className="eyebrow">Manual reconciliation</p><h2>Subscription payment review</h2><p className="muted">Verify transfer details independently. Shop submissions do not activate a plan.</p></div></div>
-            <form className="panel form-panel" onSubmit={(event) => void searchSubscriptionPayments(event)}>
-              <div className="search-form">
+            <form className="billing-filter-bar" onSubmit={(event) => void searchSubscriptionPayments(event)}>
+              <div className="billing-filter-search">
                 <label className="visually-hidden" htmlFor="billing-payment-search">Search transaction reference, sender or business</label>
                 <input id="billing-payment-search" value={billingPaymentSearch} onChange={(event) => setBillingPaymentSearch(event.target.value)} placeholder="Business, transaction reference or sender" maxLength={120} />
+              </div>
+              <div className="billing-filter-status">
                 <label className="visually-hidden" htmlFor="billing-payment-filter">Filter payment status</label>
                 <select id="billing-payment-filter" value={billingPaymentFilter} onChange={(event) => setBillingPaymentFilter(event.target.value)}>
                   <option value="REVIEW">Needs review</option><option value="ALL">All statuses</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option><option value="UNDER_REVIEW">Under review</option><option value="PENDING">Pending</option>
@@ -1208,7 +1215,7 @@ function App() {
               </div>
             </form>
             {loading ? <LoadingState /> : billingPayments.length ? <div className="table-wrap"><table><thead><tr><th>Business / plan</th><th>Amount</th><th>Method / date</th><th>Reference / sender</th><th>Review</th></tr></thead><tbody>
-              {billingPayments.map((payment) => <tr key={payment.id}><td><strong>{payment.business?.name}</strong><small className="table-note">{payment.plan.name}</small></td><td>{money(payment.amount)}</td><td>{payment.method}<small className="table-note">{payment.paymentDate.slice(0, 10)}</small></td><td>{payment.transactionReference}<small className="table-note">{payment.senderName}</small></td><td>{payment.status === 'PENDING' || payment.status === 'UNDER_REVIEW' ? canApprovePayments ? <div className="row-actions">{payment.status === 'PENDING' && <button className="button button-secondary" disabled={working || !online} onClick={() => void reviewSubscriptionPayment(payment, 'UNDER_REVIEW')}>Reviewing</button>}<button className="button button-primary" disabled={working || !online} onClick={() => void reviewSubscriptionPayment(payment, 'APPROVE')}>Approve</button><label className="visually-hidden" htmlFor={`reject-${payment.id}`}>Rejection reason</label><input id={`reject-${payment.id}`} placeholder="Required rejection reason" value={rejectionReasons[payment.id] ?? ''} onChange={(event) => setRejectionReasons((current) => ({ ...current, [payment.id]: event.target.value }))} maxLength={1000} /><button className="button button-danger-quiet" disabled={working || !online || (rejectionReasons[payment.id]?.trim().length ?? 0) < 5} onClick={() => void reviewSubscriptionPayment(payment, 'REJECT')}>Reject</button></div> : 'Super admin review required' : payment.status}</td></tr>)}
+              {billingPayments.map((payment) => <tr key={payment.id}><td><strong>{payment.business?.name}</strong><small className="table-note">{payment.plan.name}</small></td><td><strong>{money(payment.amount)}</strong></td><td>{payment.method}<small className="table-note">{payment.paymentDate.slice(0, 10)}</small></td><td>{payment.transactionReference}<small className="table-note">Sender: {payment.senderName}</small></td><td><StatusPill status={payment.status} />{payment.status === 'PENDING' || payment.status === 'UNDER_REVIEW' ? canApprovePayments ? <div className="row-actions payment-review-actions">{payment.status === 'PENDING' && <button className="button button-secondary" disabled={working || !online} onClick={() => void reviewSubscriptionPayment(payment, 'UNDER_REVIEW')}>Mark reviewing</button>}<button className="button button-primary" disabled={working || !online} onClick={() => void reviewSubscriptionPayment(payment, 'APPROVE')}>Approve</button>{rejectingSubscriptionPaymentId === payment.id ? <div className="reject-payment-form"><label className="visually-hidden" htmlFor={`reject-${payment.id}`}>Rejection reason</label><input id={`reject-${payment.id}`} placeholder="Reason required (5+ characters)" value={rejectionReasons[payment.id] ?? ''} onChange={(event) => setRejectionReasons((current) => ({ ...current, [payment.id]: event.target.value }))} maxLength={1000} /><button className="button button-danger-quiet" disabled={working || !online || (rejectionReasons[payment.id]?.trim().length ?? 0) < 5} onClick={() => void reviewSubscriptionPayment(payment, 'REJECT')}>Confirm reject</button><button className="button button-quiet" onClick={() => setRejectingSubscriptionPaymentId(null)}>Cancel</button></div> : <button className="button button-danger-quiet" disabled={working || !online} onClick={() => setRejectingSubscriptionPaymentId(payment.id)}>Reject</button>}</div> : <small className="table-note">Super Admin review required</small> : null}</td></tr>)}
             </tbody></table></div> : <EmptyState title="No payments awaiting review" detail="Payment submissions will appear here after shop owners submit their transaction details." />}
             {billingPaymentCursor && <button className="button button-secondary" disabled={loading || working || !online} onClick={() => void searchSubscriptionPayments(undefined, true)}>Load more payments</button>}
           </section>
@@ -1233,13 +1240,13 @@ function App() {
         {platformView === 'reports' && grants.has('platform:reports:read') && (
           <section className="content-stack">
             <div className="section-heading"><div><p className="eyebrow">Finance & reconciliation</p><h2>Subscription reports</h2><p className="muted">Export submitted, approved and rejected manual-payment records for the selected payment-date range.</p></div></div>
-            <form className="panel form-panel" onSubmit={(event) => { event.preventDefault(); void downloadSubscriptionReport(); }}>
-              <div className="form-grid">
+            <form className="panel report-filter-bar" onSubmit={(event) => { event.preventDefault(); void downloadSubscriptionReport(); }}>
+              <div className="report-date-fields">
                 <label>From<input type="date" value={reportFrom} max={reportTo} onChange={(event) => setReportFrom(event.target.value)} required /></label>
                 <label>To<input type="date" value={reportTo} min={reportFrom} onChange={(event) => setReportTo(event.target.value)} required /></label>
               </div>
-              <p className="fine-print">Recorded refunds and adjustments are audit events and are not represented as external transfers.</p>
-              <button className="button button-primary" disabled={working || !online}>Download reconciliation CSV</button>
+              <div className="report-filter-action"><p className="fine-print">Includes payment-date status and reconciliation references.</p><button className="button button-primary" disabled={working || !online}>{working ? 'Preparing report…' : 'Download CSV'}</button></div>
+              <p className="report-disclaimer fine-print">Recorded refunds and adjustments are audit events and are not represented as external transfers.</p>
             </form>
           </section>
         )}
@@ -1533,27 +1540,31 @@ function App() {
             <div className="section-heading"><div><p className="eyebrow">Shop account</p><h2>Subscription & billing</h2><p className="muted">View your plan, renewal date, account instructions and manual-payment history.</p></div></div>
             {loading && !shopSubscription ? <LoadingState /> : shopSubscription ? (
               <>
-                {shopSubscription.subscription ? <section className="panel dashboard-note">
+                <div className="shop-billing-summary">
+                {shopSubscription.subscription ? <section className="panel shop-plan-card">
                   <div><p className="eyebrow">{shopSubscription.subscription.status.replaceAll('_', ' ')}</p><h3>{shopSubscription.subscription.plan.name}{shopSubscription.subscription.grandfathered ? ' · Legacy access' : shopSubscription.subscription.complimentary ? ' · Complimentary access' : ''}</h3><p className="muted">Valid {karachiDate(shopSubscription.subscription.startsAt)} through {karachiDate(shopSubscription.subscription.endsAt)} · {shopSubscription.subscription.cycle.toLowerCase()}</p>
                     {new Date(shopSubscription.subscription.graceUntil) < new Date() && <p className="alert alert-error">Your grace period has ended. Paid changes are restricted; billing, login and read access remain available.</p>}
                   </div>
-                  <span className="notification-pill">Renewal: {karachiDate(shopSubscription.subscription.endsAt)}</span>
+                  <div className="plan-renewal"><span>Next renewal</span><strong>{karachiDate(shopSubscription.subscription.endsAt)}</strong></div>
                 </section> : <section className="panel"><h3>No subscription assigned</h3><p className="muted">Contact platform support to select a plan. Existing business data remains available.</p></section>}
-                <section className="panel">
-                  <h3>Payment instructions</h3>
+                <section className="panel payment-instructions">
+                  <div><p className="eyebrow">Need to renew?</p><h3>Payment instructions</h3></div>
                   <p className="muted">{shopSubscription.paymentInstructions || 'Contact platform support for current payment account details.'}</p>
-                  {shopSubscription.supportContact && <p>Support: {shopSubscription.supportContact}</p>}
+                  {shopSubscription.supportContact && <p className="support-contact">Support: {shopSubscription.supportContact}</p>}
                 </section>
+                </div>
                 {permissions.has('subscriptions:manage') && shopSubscription.plans.length > 0 && (
-                  <form className="panel form-panel" onSubmit={submitSubscriptionPayment}>
-                    <div className="panel-heading"><h3>Request or renew a plan</h3><p className="muted">Submitting details creates a pending review only. Access changes after an authorized admin confirms the payment.</p></div>
+                  <details className="panel disclosure-panel shop-payment-disclosure">
+                    <summary><span><strong>Request or renew a plan</strong><small>Submit transfer details for secure admin review</small></span><span className="disclosure-action">Open form</span></summary>
+                    <form className="form-panel disclosure-content" onSubmit={submitSubscriptionPayment}>
+                    <div className="panel-heading"><p className="muted">Submitting details creates a pending review only. Access changes after an authorized admin confirms the payment.</p></div>
                     <div className="form-grid">
                       <label>Plan<select value={selectedSubscriptionPlanId} onChange={(event) => {
                         const planId = event.target.value;
                         setSelectedSubscriptionPlanId(planId);
                         const plan = shopSubscription.plans.find((item) => item.id === planId);
                         setSubscriptionPayment((current) => ({ ...current, amount: plan ? (subscriptionCycle === 'MONTHLY' ? plan.monthlyPrice : plan.yearlyPrice) : '' }));
-                      }} required>{shopSubscription.plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} · {money(plan.monthlyPrice)}/month</option>)}</select></label>
+                      }} required>{shopSubscription.plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} · {money(subscriptionCycle === 'MONTHLY' ? plan.monthlyPrice : plan.yearlyPrice)}/{subscriptionCycle === 'MONTHLY' ? 'month' : 'year'}</option>)}</select></label>
                       <label>Billing cycle<select value={subscriptionCycle} onChange={(event) => {
                         const cycle = event.target.value as 'MONTHLY' | 'YEARLY';
                         setSubscriptionCycle(cycle);
@@ -1568,12 +1579,13 @@ function App() {
                     </div>
                     {Number(subscriptionPayment.amount) <= 0 && <p className="fine-print">This is a free plan/trial. Choose a paid plan to submit a manual payment.</p>}
                     <button className="button button-primary" disabled={working || !online || !subscriptionPayment.method || Number(subscriptionPayment.amount) <= 0}>{working ? 'Submitting…' : 'Submit payment for review'}</button>
-                  </form>
+                    </form>
+                  </details>
                 )}
                 <section className="content-stack">
-                  <div><h3>Payment history and invoices</h3><p className="muted">Payment references and approval receipts are preserved for reconciliation.</p></div>
-                  {shopSubscription.payments.length ? <div className="table-wrap"><table><thead><tr><th>Submitted</th><th>Plan / cycle</th><th>Amount</th><th>Method</th><th>Transaction</th><th>Status / invoice</th><th>Receipt</th></tr></thead><tbody>
-                    {shopSubscription.payments.map((payment) => <tr key={payment.id}><td>{karachiDate(payment.createdAt)}</td><td>{payment.plan.name}<small className="table-note">{payment.cycle.toLowerCase()}</small></td><td>{money(payment.amount)}</td><td>{payment.method}</td><td>{payment.transactionReference}<small className="table-note">Sender: {payment.senderName}</small></td><td>{payment.status}{payment.invoiceNumber && <small className="table-note">Receipt {payment.invoiceNumber}</small>}{payment.rejectionReason && <small className="table-note">Reason: {payment.rejectionReason}</small>}</td><td>{payment.invoiceNumber && <button className="button button-quiet" disabled={working || !online} onClick={() => void downloadSubscriptionReceipt(payment.id)}>Download PDF</button>}</td></tr>)}
+                  <div className="section-heading"><div><h3>Payment history and invoices</h3><p className="muted">Your transfer submissions and approved receipts.</p></div><span className="history-count">{shopSubscription.payments.length} records</span></div>
+                  {shopSubscription.payments.length ? <div className="table-wrap billing-history-table"><table><thead><tr><th>Submitted</th><th>Plan / cycle</th><th>Amount</th><th>Reference</th><th>Status</th><th>Receipt</th></tr></thead><tbody>
+                    {shopSubscription.payments.map((payment) => <tr key={payment.id}><td>{karachiDate(payment.createdAt)}</td><td>{payment.plan.name}<small className="table-note">{payment.cycle.toLowerCase()} · {payment.method}</small></td><td><strong>{money(payment.amount)}</strong></td><td>{payment.transactionReference}<small className="table-note">Sender: {payment.senderName}</small></td><td><StatusPill status={payment.status} />{payment.invoiceNumber && <small className="table-note">Invoice {payment.invoiceNumber}</small>}{payment.rejectionReason && <small className="table-note">Reason: {payment.rejectionReason}</small>}</td><td>{payment.invoiceNumber && <button className="button button-quiet" disabled={working || !online} onClick={() => void downloadSubscriptionReceipt(payment.id)}>PDF</button>}</td></tr>)}
                   </tbody></table></div> : <EmptyState title="No subscription payment history" detail="Submitted plan payments will appear here for tracking." />}
                 </section>
               </>
@@ -1628,7 +1640,7 @@ function MetricCard({ label, value, icon, tone = 'green' }: { label: string; val
   return <article className={`metric-card tone-${tone}`}><span className="metric-icon" aria-hidden="true">{icon}</span><span className="metric-label">{label}</span><strong>{value}</strong></article>;
 }
 
-function StatusPill({ status }: { status: Order['status'] | 'ACTIVE' | 'SUSPENDED' | 'PENDING' }) {
+function StatusPill({ status }: { status: Order['status'] | 'ACTIVE' | 'SUSPENDED' | 'PENDING' | 'TRIAL' | 'EXPIRED' | 'CANCELLED' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED' | 'ADJUSTED' }) {
   const label = status.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
   return <span className={`status-pill status-${status.toLowerCase()}`}>{label}</span>;
 }
