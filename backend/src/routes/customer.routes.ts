@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, type CustomFieldDefinition } from '@prisma/client';
 import express from 'express';
 import { createCustomerSchema, customerQuerySchema, normalizePakistanPhone, toE164Phone, updateCustomerSchema } from '@tailor/shared';
 import { z } from 'zod';
@@ -7,6 +7,7 @@ import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { assertPlanLimit } from '../plan-limits.js';
+import { customFieldValueData, validateCustomFieldValues } from '../domain/custom-fields.js';
 
 const router = express.Router();
 const customerIdSchema = z.string().uuid();
@@ -36,6 +37,85 @@ function handleDuplicate(error: unknown): never {
   throw error;
 }
 
+async function customerFieldDefinitions(
+  tx: Prisma.TransactionClient,
+  businessId: string,
+): Promise<CustomFieldDefinition[]> {
+  const business = await tx.business.findUnique({
+    where: { id: businessId },
+    include: {
+      configuration: true,
+      template: { include: { fields: { where: { active: true, module: 'customers' } } } },
+      customFields: { where: { active: true, module: 'customers' } },
+    },
+  });
+  if (!business) throw new HttpError(404, 'Business not found', 'BUSINESS_NOT_FOUND');
+  const enabledModules = business.configuration?.enabledModules ?? business.template?.enabledModules ?? ['customers'];
+  if (!enabledModules.includes('customers')) {
+    throw new HttpError(403, 'The customers module is disabled for this business', 'BUSINESS_MODULE_DISABLED');
+  }
+  const byKey = new Map((business.template?.fields ?? []).map((field) => [field.key, field]));
+  for (const field of business.customFields) byKey.set(field.key, field);
+  return [...byKey.values()].filter((field) => ['customer', 'customer-create'].includes(field.screen));
+}
+
+function customerFieldValueRows(
+  businessId: string,
+  customerId: string,
+  values: ReturnType<typeof validateCustomFieldValues>,
+) {
+  return values.map((value) => ({
+    businessId,
+    customerId,
+    ...customFieldValueData(value),
+  }));
+}
+
+async function updateCustomerFieldValues(
+  tx: Prisma.TransactionClient,
+  businessId: string,
+  customerId: string,
+  values: ReturnType<typeof validateCustomFieldValues>,
+): Promise<void> {
+  for (const value of values) {
+    const valueData = {
+      valueText: null,
+      valueNumber: null,
+      valueBoolean: null,
+      valueDate: null,
+      valueJson: Prisma.DbNull,
+      ...customFieldValueData(value),
+    };
+    await tx.customFieldValue.upsert({
+      where: { customerId_fieldDefinitionId: { customerId, fieldDefinitionId: value.fieldDefinitionId } },
+      create: { businessId, customerId, ...valueData, fieldDefinitionId: value.fieldDefinitionId },
+      update: valueData,
+    });
+  }
+}
+
+function withCustomFieldMap<T extends {
+  customFieldValues: Array<{
+    fieldDefinition: { key: string };
+    valueText: string | null;
+    valueNumber: Prisma.Decimal | null;
+    valueBoolean: boolean | null;
+    valueDate: Date | null;
+    valueJson: Prisma.JsonValue | null;
+  }>;
+}>(customer: T) {
+  const customFields = Object.fromEntries(customer.customFieldValues.map((entry) => [
+    entry.fieldDefinition.key,
+    entry.valueText
+      ?? entry.valueNumber?.toString()
+      ?? entry.valueBoolean
+      ?? entry.valueDate?.toISOString()
+      ?? entry.valueJson,
+  ]));
+  const { customFieldValues: _values, ...data } = customer;
+  return { ...data, customFields };
+}
+
 router.use(authenticate);
 
 router.get('/', requireBusinessPermission('customers:read'), asyncHandler(async (req, res) => {
@@ -62,6 +142,9 @@ router.get('/', requireBusinessPermission('customers:read'), asyncHandler(async 
         ],
       } : {}),
     },
+    include: {
+      customFieldValues: { include: { fieldDefinition: { select: { key: true, label: true, type: true } } } },
+    },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     take: query.limit + 1,
@@ -70,7 +153,7 @@ router.get('/', requireBusinessPermission('customers:read'), asyncHandler(async 
   const page = hasMore ? items.slice(0, query.limit) : items;
   res.json({
     data: {
-      items: page,
+      items: page.map(withCustomFieldMap),
       nextCursor: hasMore ? page.at(-1)?.id ?? null : null,
     },
   });
@@ -91,6 +174,8 @@ router.post('/', requireBusinessPermission('customers:write'), asyncHandler(asyn
   try {
     const customer = await prisma.$transaction(async (tx) => {
       await assertPlanLimit(tx, businessId, 'customers:write');
+      const definitions = await customerFieldDefinitions(tx, businessId);
+      const customValues = validateCustomFieldValues(definitions, input.customFields ?? {});
       const created = await tx.customer.create({
         data: {
           businessId,
@@ -100,6 +185,8 @@ router.post('/', requireBusinessPermission('customers:write'), asyncHandler(asyn
           notes: input.notes,
         },
       });
+      const customValueRows = customerFieldValueRows(businessId, created.id, customValues);
+      if (customValueRows.length) await tx.customFieldValue.createMany({ data: customValueRows });
       await tx.auditEvent.create({
         data: {
           businessId,
@@ -111,9 +198,14 @@ router.post('/', requireBusinessPermission('customers:write'), asyncHandler(asyn
           requestId: req.requestId,
         },
       });
-      return created;
+      return tx.customer.findFirstOrThrow({
+        where: { id: created.id, businessId },
+        include: {
+          customFieldValues: { include: { fieldDefinition: { select: { key: true, label: true, type: true } } } },
+        },
+      });
     });
-    res.status(201).json({ data: customer });
+    res.status(201).json({ data: withCustomFieldMap(customer) });
   } catch (error) {
     handleDuplicate(error);
   }
@@ -124,6 +216,9 @@ router.get('/:customerId', requireBusinessPermission('customers:read'), asyncHan
   const customerId = customerIdSchema.parse(req.params.customerId);
   const customer = await prisma.customer.findFirst({
     where: { id: customerId, businessId, deletedAt: null },
+    include: {
+      customFieldValues: { include: { fieldDefinition: { select: { key: true, label: true, type: true } } } },
+    },
   });
   if (!customer) throw new HttpError(404, 'Customer not found', 'CUSTOMER_NOT_FOUND');
 
@@ -144,7 +239,7 @@ router.get('/:customerId', requireBusinessPermission('customers:read'), asyncHan
       })
       : Promise.resolve(undefined),
   ]);
-  res.json({ data: { customer, ...(orders ? { orders } : {}), ...(measurements ? { measurements } : {}) } });
+  res.json({ data: { customer: withCustomFieldMap(customer), ...(orders ? { orders } : {}), ...(measurements ? { measurements } : {}) } });
 }));
 
 router.patch('/:customerId', requireBusinessPermission('customers:write'), asyncHandler(async (req, res) => {
@@ -153,6 +248,9 @@ router.patch('/:customerId', requireBusinessPermission('customers:write'), async
   const input = updateCustomerSchema.parse(req.body);
   try {
     const customer = await prisma.$transaction(async (tx) => {
+      const customValues = input.customFields !== undefined
+        ? validateCustomFieldValues(await customerFieldDefinitions(tx, businessId), input.customFields)
+        : [];
       const existing = await tx.customer.findFirst({
         where: { id: customerId, businessId, deletedAt: null },
         select: { phoneNormalized: true },
@@ -181,13 +279,21 @@ router.patch('/:customerId', requireBusinessPermission('customers:write'), async
         if (!exists) throw new HttpError(404, 'Customer not found', 'CUSTOMER_NOT_FOUND');
         throw new HttpError(409, 'Customer changed since it was loaded; refresh before editing', 'VERSION_CONFLICT');
       }
+      if (input.customFields !== undefined) {
+        await updateCustomerFieldValues(tx, businessId, customerId, customValues);
+      }
       if (phoneChanged) {
         await tx.whatsAppNotification.updateMany({
           where: { businessId, customerId, status: 'QUEUED' },
           data: { status: 'NOT_SENT', lastError: 'Customer phone number changed before delivery', failedAt: new Date() },
         });
       }
-      const updated = await tx.customer.findFirstOrThrow({ where: { id: customerId, businessId } });
+      const updated = await tx.customer.findFirstOrThrow({
+        where: { id: customerId, businessId },
+        include: {
+          customFieldValues: { include: { fieldDefinition: { select: { key: true, label: true, type: true } } } },
+        },
+      });
       await tx.auditEvent.create({
         data: {
           businessId,
@@ -201,7 +307,7 @@ router.patch('/:customerId', requireBusinessPermission('customers:write'), async
       });
       return updated;
     });
-    res.json({ data: customer });
+    res.json({ data: withCustomFieldMap(customer) });
   } catch (error) {
     handleDuplicate(error);
   }

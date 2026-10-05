@@ -17,6 +17,7 @@
     "db:seed": "npm run db:seed --workspace @tailor/api",
     "typecheck": "npm run build --workspace @tailor/shared && npm run typecheck --workspace @tailor/shared && npm run typecheck --workspace @tailor/api && npm run typecheck --workspace @tailor/web && npm run typecheck --workspace @tailor/mobile",
     "test": "npm run test --workspace @tailor/api",
+    "test:db": "npm run test:db --workspace @tailor/api",
     "build": "npm run build --workspace @tailor/shared && npm run build --workspace @tailor/api && npm run build --workspace @tailor/web"
   },
   "overrides": {

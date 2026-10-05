@@ -69,6 +69,7 @@ function mapCustomer(record: CustomerRecord): LocalCustomer {
     name: record.name,
     phone: record.phone,
     notes: record.notes,
+    custom_fields_json: record.customFieldsJson,
     version: record.version,
     sync_state: record.syncState,
   };
@@ -81,10 +82,15 @@ function mapOrder(record: OrderRecord): LocalOrder {
     customer_id: record.customerId,
     customer_name: record.customerName,
     garment_name: record.garmentName,
+    item_type_key: record.itemTypeKey,
+    item_name: record.itemName,
     quantity: record.quantity,
     unit_price: record.unitPrice,
     promised_at: record.promisedAt,
     status: record.status,
+    workflow_stage_key: record.workflowStageKey,
+    order_custom_fields_json: record.orderCustomFieldsJson,
+    item_custom_fields_json: record.itemCustomFieldsJson,
     total: record.total,
     version: record.version,
     sync_state: record.syncState,
@@ -130,6 +136,7 @@ export async function saveCustomerOffline(input: {
   name: string;
   phone: string;
   notes: string;
+  customFields: Record<string, unknown>;
 }): Promise<void> {
   const name = input.name.trim();
   const phone = toE164Phone(input.phone);
@@ -141,7 +148,7 @@ export async function saveCustomerOffline(input: {
   const operationId = createClientId();
   const payload = {
     action: 'customer.create',
-    customer: { name, phone, notes },
+    customer: { name, phone, notes, customFields: input.customFields },
   };
   const operation = {
     clientOperationId: operationId,
@@ -163,6 +170,7 @@ export async function saveCustomerOffline(input: {
       record.name = name;
       record.phone = phone;
       record.notes = notes;
+      record.customFieldsJson = JSON.stringify(input.customFields);
       record.version = 0;
       record.syncState = 'pending';
       record.updatedAt = Date.now();
@@ -187,7 +195,11 @@ export async function saveCustomerOffline(input: {
 export async function saveOrderOffline(input: {
   businessId: string;
   customer: LocalCustomer;
-  garmentName: string;
+  itemName: string;
+  itemTypeKey: string;
+  orderCustomFields: Record<string, unknown>;
+  itemCustomFields: Record<string, unknown>;
+  initialStageKey: string;
   quantity: number;
   unitPrice: string;
   promisedAt: string;
@@ -203,8 +215,8 @@ export async function saveOrderOffline(input: {
     || Number.isNaN(Date.parse(`${input.promisedAt}T12:00:00+05:00`))) {
     throw new Error('Enter the promised date as YYYY-MM-DD');
   }
-  const garmentName = input.garmentName.trim();
-  if (!garmentName) throw new Error('Enter a garment name');
+  const itemName = input.itemName.trim();
+  if (!itemName) throw new Error('Enter an item name');
 
   const database = await openLocalDatabase();
   const orderId = createClientId();
@@ -221,7 +233,14 @@ export async function saveOrderOffline(input: {
       customerId: input.customer.id,
       promisedAt: due,
       notes,
-      items: [{ garmentName, quantity: input.quantity, unitPrice: input.unitPrice }],
+      customFields: input.orderCustomFields,
+      items: [{
+        itemTypeKey: input.itemTypeKey,
+        itemName,
+        quantity: input.quantity,
+        unitPrice: input.unitPrice,
+        customFields: input.itemCustomFields,
+      }],
     },
   };
   const operation = {
@@ -237,13 +256,18 @@ export async function saveOrderOffline(input: {
       record.businessId = input.businessId;
       record.customerId = input.customer.id;
       record.customerName = input.customer.name;
-      record.garmentName = garmentName;
+      record.garmentName = itemName;
+      record.itemName = itemName;
+      record.itemTypeKey = input.itemTypeKey;
       record.quantity = input.quantity;
       record.unitPrice = input.unitPrice;
       record.promisedAt = due;
       record.status = 'NEW';
+      record.workflowStageKey = input.initialStageKey;
       record.total = total;
       record.notes = notes;
+      record.orderCustomFieldsJson = JSON.stringify(input.orderCustomFields);
+      record.itemCustomFieldsJson = JSON.stringify(input.itemCustomFields);
       record.version = 0;
       record.syncState = 'pending';
       record.updatedAt = Date.now();
@@ -507,10 +531,15 @@ async function pullChanges(
           customerId,
           customerName: String(customer.name ?? localCustomer?.name ?? ''),
           garmentName: String(firstItem.garmentName ?? 'Garment'),
+          itemTypeKey: String(firstItem.itemTypeKey ?? 'garment'),
+          itemName: String(firstItem.itemName ?? firstItem.garmentName ?? 'Item'),
           quantity: Number(firstItem.quantity ?? 1),
           unitPrice: String(firstItem.unitPrice ?? '0.00'),
           promisedAt: String(order.promisedAt ?? new Date().toISOString()),
           status: String(order.status ?? 'NEW'),
+          workflowStageKey: String(order.workflowStageKey ?? order.status ?? 'NEW'),
+          orderCustomFieldsJson: JSON.stringify(order.customFieldValues ?? []),
+          itemCustomFieldsJson: JSON.stringify(firstItem.customFieldValues ?? []),
           total: String(order.total ?? '0.00'),
           notes: String(order.notes ?? ''),
           version: Number(order.version ?? 1),

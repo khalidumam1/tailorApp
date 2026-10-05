@@ -7,6 +7,7 @@ import {
   tableSchema,
 } from '@nozbe/watermelondb';
 import SQLiteAdapter from '@nozbe/watermelondb/adapters/sqlite';
+import { addColumns, createTable, schemaMigrations } from '@nozbe/watermelondb/Schema/migrations';
 import { field } from '@nozbe/watermelondb/decorators';
 import * as SQLite from 'expo-sqlite';
 import * as SecureStore from 'expo-secure-store';
@@ -22,6 +23,7 @@ export class CustomerRecord extends Model {
   @field('name') name: string;
   @field('phone') phone: string;
   @field('notes') notes: string;
+  @field('custom_fields_json') customFieldsJson: string | null;
   @field('version') version: number;
   @field('sync_state') syncState: string;
   @field('updated_at') updatedAt: number;
@@ -34,12 +36,17 @@ export class OrderRecord extends Model {
   @field('customer_id') customerId: string;
   @field('customer_name') customerName: string;
   @field('garment_name') garmentName: string;
+  @field('item_type_key') itemTypeKey: string | null;
+  @field('item_name') itemName: string | null;
   @field('quantity') quantity: number;
   @field('unit_price') unitPrice: string;
   @field('promised_at') promisedAt: string;
   @field('status') status: string;
   @field('total') total: string;
   @field('notes') notes: string;
+  @field('workflow_stage_key') workflowStageKey: string | null;
+  @field('order_custom_fields_json') orderCustomFieldsJson: string | null;
+  @field('item_custom_fields_json') itemCustomFieldsJson: string | null;
   @field('version') version: number;
   @field('sync_state') syncState: string;
   @field('updated_at') updatedAt: number;
@@ -102,8 +109,16 @@ export class PaymentAttemptRecord extends Model {
   @field('created_at') createdAt: number;
 }
 
+export class BusinessConfigurationRecord extends Model {
+  static table = 'business_configurations';
+
+  @field('business_id') businessId: string;
+  @field('config_json') configJson: string;
+  @field('updated_at') updatedAt: number;
+}
+
 const schema = appSchema({
-  version: 1,
+  version: 4,
   tables: [
     tableSchema({
       name: 'customers',
@@ -112,6 +127,7 @@ const schema = appSchema({
         { name: 'name', type: 'string', isIndexed: true },
         { name: 'phone', type: 'string' },
         { name: 'notes', type: 'string' },
+        { name: 'custom_fields_json', type: 'string', isOptional: true },
         { name: 'version', type: 'number' },
         { name: 'sync_state', type: 'string', isIndexed: true },
         { name: 'updated_at', type: 'number' },
@@ -124,12 +140,17 @@ const schema = appSchema({
         { name: 'customer_id', type: 'string', isIndexed: true },
         { name: 'customer_name', type: 'string' },
         { name: 'garment_name', type: 'string' },
+        { name: 'item_type_key', type: 'string', isOptional: true },
+        { name: 'item_name', type: 'string', isOptional: true },
         { name: 'quantity', type: 'number' },
         { name: 'unit_price', type: 'string' },
         { name: 'promised_at', type: 'string', isIndexed: true },
         { name: 'status', type: 'string', isIndexed: true },
         { name: 'total', type: 'string' },
         { name: 'notes', type: 'string' },
+        { name: 'workflow_stage_key', type: 'string', isOptional: true },
+        { name: 'order_custom_fields_json', type: 'string', isOptional: true },
+        { name: 'item_custom_fields_json', type: 'string', isOptional: true },
         { name: 'version', type: 'number' },
         { name: 'sync_state', type: 'string', isIndexed: true },
         { name: 'updated_at', type: 'number' },
@@ -192,7 +213,46 @@ const schema = appSchema({
         { name: 'created_at', type: 'number' },
       ],
     }),
+    tableSchema({
+      name: 'business_configurations',
+      columns: [
+        { name: 'business_id', type: 'string', isIndexed: true },
+        { name: 'config_json', type: 'string' },
+        { name: 'updated_at', type: 'number' },
+      ],
+    }),
   ],
+});
+const migrations = schemaMigrations({
+  migrations: [{
+    toVersion: 2,
+    steps: [createTable({
+      name: 'business_configurations',
+      columns: [
+        { name: 'business_id', type: 'string', isIndexed: true },
+        { name: 'config_json', type: 'string' },
+        { name: 'updated_at', type: 'number' },
+      ],
+    })],
+  }, {
+    toVersion: 3,
+    steps: [addColumns({
+      table: 'orders',
+      columns: [
+        { name: 'item_type_key', type: 'string', isOptional: true },
+        { name: 'item_name', type: 'string', isOptional: true },
+        { name: 'workflow_stage_key', type: 'string', isOptional: true },
+        { name: 'order_custom_fields_json', type: 'string', isOptional: true },
+        { name: 'item_custom_fields_json', type: 'string', isOptional: true },
+      ],
+    })],
+  }, {
+    toVersion: 4,
+    steps: [addColumns({
+      table: 'customers',
+      columns: [{ name: 'custom_fields_json', type: 'string', isOptional: true }],
+    })],
+  }],
 });
 
 type LegacyCustomer = {
@@ -461,6 +521,7 @@ export function openLocalDatabase(): Promise<Database> {
   if (!databasePromise) {
     const adapter = new SQLiteAdapter({
       schema,
+      migrations,
       dbName: 'tailorapp-offline',
       jsi: false,
     });
@@ -474,6 +535,7 @@ export function openLocalDatabase(): Promise<Database> {
         OutboxRecord,
         SyncStateRecord,
         PaymentAttemptRecord,
+        BusinessConfigurationRecord,
       ],
     });
     databasePromise = adapter.initializingPromise
@@ -488,4 +550,33 @@ export function openLocalDatabase(): Promise<Database> {
       });
   }
   return databasePromise;
+}
+
+export async function readBusinessConfigurationCache(businessId: string): Promise<string | null> {
+  const database = await openLocalDatabase();
+  const records = await database.get<BusinessConfigurationRecord>('business_configurations')
+    .query(Q.where('business_id', businessId)).fetch();
+  return records[0]?.configJson ?? null;
+}
+
+export async function writeBusinessConfigurationCache(businessId: string, configJson: string): Promise<void> {
+  const database = await openLocalDatabase();
+  const records = await database.get<BusinessConfigurationRecord>('business_configurations')
+    .query(Q.where('business_id', businessId)).fetch();
+  await database.write(async () => {
+    const existing = records[0];
+    if (existing) {
+      await existing.update((record) => {
+        record.configJson = configJson;
+        record.updatedAt = Date.now();
+      });
+      return;
+    }
+    await database.get<BusinessConfigurationRecord>('business_configurations').create((record) => {
+      record._raw.id = businessId;
+      record.businessId = businessId;
+      record.configJson = configJson;
+      record.updatedAt = Date.now();
+    });
+  });
 }

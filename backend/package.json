@@ -12,6 +12,7 @@
     "start": "node dist/server.js",
     "typecheck": "npm run build:shared && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.seed.json",
     "test": "tsx --test test/*.test.ts",
+    "test:db": "tsx scripts/test-db.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",

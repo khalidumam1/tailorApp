@@ -20,16 +20,20 @@ import {
   apiRequest,
   clearSession,
   createSession,
+  parseBusinessConfiguration,
   readSession,
   signIn,
   storeSession,
+  type BusinessConfiguration,
   type Session,
 } from './src/api';
 import {
   amountToMinorUnits,
   createClientId,
-  formatPkr,
+  formatCurrency,
   openLocalDatabase,
+  readBusinessConfigurationCache,
+  writeBusinessConfigurationCache,
   type LocalCustomer,
   type LocalOrder,
   type LocalTemplate,
@@ -50,13 +54,25 @@ import {
   updatePaymentAttempt,
 } from './src/sync';
 
-type Page = 'home' | 'orders' | 'customers' | 'measurements' | 'notifications' | 'subscription' | 'settings';
+type Page = 'home' | 'orders' | 'catalog' | 'customers' | 'measurements' | 'notifications' | 'subscription' | 'settings';
+type CatalogItem = {
+  id: string;
+  typeKey: string;
+  name: string;
+  sku: string | null;
+  unit: string;
+  unitPrice: string | null;
+  version: number;
+  active: boolean;
+  customFields: Record<string, unknown>;
+};
 type WhatsAppNotification = {
   id: string;
   kind: string;
   status: 'QUEUED' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'NOT_SENT';
   recipientPhone: string;
   lastError: string | null;
+  renderedMessage?: string | null;
   createdAt: string;
   sentAt: string | null;
   deliveredAt: string | null;
@@ -93,7 +109,60 @@ type SubscriptionBilling = {
 };
 
 const LANGUAGE_KEY = 'tailorapp.language.v1';
-const statusProgress = ['NEW', 'MEASUREMENT_CONFIRMED', 'CUTTING', 'STITCHING', 'FINISHING', 'READY_FOR_PICKUP', 'COLLECTED'];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function mobileFieldVisible(
+  field: BusinessConfiguration['fields'][number],
+  itemTypeKey?: string,
+): boolean {
+  if (!field.visibility || typeof field.visibility !== 'object' || Array.isArray(field.visibility)) return true;
+  const visibility = field.visibility as Record<string, unknown>;
+  const types = visibility.itemTypes ?? visibility.garmentTypes;
+  if (!Array.isArray(types) || types.length === 0) return true;
+  return Boolean(itemTypeKey && types.includes(itemTypeKey));
+}
+
+function mobileFieldOptions(field: BusinessConfiguration['fields'][number]): Array<{ key: string; label: string }> {
+  if (!Array.isArray(field.options)) return [];
+  return field.options.flatMap((option) => {
+    if (typeof option === 'string') return [{ key: option, label: option }];
+    if (option && typeof option === 'object' && !Array.isArray(option)
+      && 'key' in option && typeof option.key === 'string') {
+      return [{ key: option.key, label: 'label' in option && typeof option.label === 'string' ? option.label : option.key }];
+    }
+    return [];
+  });
+}
+
+function parseCatalogItems(value: unknown): CatalogItem[] {
+  if (!Array.isArray(value)) throw new Error('The server returned an invalid catalog list');
+  return value.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)
+      || !('id' in item) || typeof item.id !== 'string'
+      || !('typeKey' in item) || typeof item.typeKey !== 'string'
+      || !('name' in item) || typeof item.name !== 'string'
+      || !('unit' in item) || typeof item.unit !== 'string'
+      || !('version' in item) || typeof item.version !== 'number'
+      || !('active' in item) || typeof item.active !== 'boolean'
+      || !('customFields' in item) || !isRecord(item.customFields)) {
+      throw new Error('The server returned an invalid catalog item');
+    }
+    return {
+      id: item.id,
+      typeKey: item.typeKey,
+      name: item.name,
+      sku: 'sku' in item && typeof item.sku === 'string' ? item.sku : null,
+      unit: item.unit,
+      unitPrice: 'unitPrice' in item && typeof item.unitPrice === 'string' ? item.unitPrice : null,
+      version: item.version,
+      active: item.active,
+      customFields: item.customFields,
+    };
+  });
+}
 
 function karachiDateInput(): string {
   const date = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
@@ -165,6 +234,33 @@ function Field({
   );
 }
 
+function StoredCustomFields({
+  serialized,
+  definitions,
+  errorLabel,
+}: {
+  serialized: string | null | undefined;
+  definitions: BusinessConfiguration['fields'];
+  errorLabel: string;
+}) {
+  if (!serialized) return null;
+  let entries: Array<[string, unknown]>;
+  try {
+    const parsed: unknown = JSON.parse(serialized);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return <Text style={styles.listMeta}>{errorLabel}</Text>;
+    }
+    entries = Object.entries(parsed);
+  } catch {
+    return <Text style={styles.listMeta}>{errorLabel}</Text>;
+  }
+  return entries.map(([key, value]) => (
+    <Text key={key} style={styles.listMeta}>
+      {definitions.find((field) => field.key === key)?.label ?? key}: {typeof value === 'string' ? value : JSON.stringify(value)}
+    </Text>
+  ));
+}
+
 export default function App() {
   return (
     <SafeAreaProvider>
@@ -178,6 +274,7 @@ function AppContent() {
   const copy = useMemo(() => getCopy(language), [language]);
   const rtl = language === 'ur';
   const [session, setSession] = useState<Session | null>(null);
+  const [businessConfiguration, setBusinessConfiguration] = useState<BusinessConfiguration | null>(null);
   const [booting, setBooting] = useState(true);
   const [localReady, setLocalReady] = useState(false);
   const [bootError, setBootError] = useState('');
@@ -192,6 +289,7 @@ function AppContent() {
   const [pendingCredentials, setPendingCredentials] = useState<{ email: string; password: string } | null>(null);
   const [customers, setCustomers] = useState<LocalCustomer[]>([]);
   const [orders, setOrders] = useState<LocalOrder[]>([]);
+  const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
   const [templates, setTemplates] = useState<LocalTemplate[]>([]);
   const [measurements, setMeasurements] = useState<Array<{
     id: string; customer_id: string; template_name: string; values_json: string; measured_at: string; sync_state: string;
@@ -217,10 +315,21 @@ function AppContent() {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerNotes, setCustomerNotes] = useState('');
+  const [customerCustomFields, setCustomerCustomFields] = useState<Record<string, unknown>>({});
+  const [catalogForm, setCatalogForm] = useState(false);
+  const [catalogName, setCatalogName] = useState('');
+  const [catalogTypeKey, setCatalogTypeKey] = useState('');
+  const [catalogSku, setCatalogSku] = useState('');
+  const [catalogUnit, setCatalogUnit] = useState('unit');
+  const [catalogUnitPrice, setCatalogUnitPrice] = useState('');
+  const [catalogCustomFields, setCatalogCustomFields] = useState<Record<string, unknown>>({});
   const [search, setSearch] = useState('');
   const [orderForm, setOrderForm] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState('');
   const [garmentName, setGarmentName] = useState('');
+  const [orderItemTypeKey, setOrderItemTypeKey] = useState('');
+  const [orderCustomFields, setOrderCustomFields] = useState<Record<string, unknown>>({});
+  const [orderItemCustomFields, setOrderItemCustomFields] = useState<Record<string, unknown>>({});
   const [quantity, setQuantity] = useState('1');
   const [unitPrice, setUnitPrice] = useState('');
   const [dueDate, setDueDate] = useState(karachiDateInput);
@@ -243,6 +352,41 @@ function AppContent() {
     });
   }, [copy.error]);
 
+  useEffect(() => {
+    let active = true;
+    if (!session) {
+      setBusinessConfiguration(null);
+      return () => { active = false; };
+    }
+    const loadConfiguration = async () => {
+      const cached = await readBusinessConfigurationCache(session.business.id);
+      if (cached) {
+        const parsed = parseBusinessConfiguration(JSON.parse(cached) as unknown);
+        if (parsed.business.id !== session.business.id) {
+          throw new Error('Saved business configuration does not match the signed-in business');
+        }
+        if (active) setBusinessConfiguration(parsed);
+      }
+      if (online !== true) return;
+      const response = await apiRequest<{ data: unknown }>(
+        session,
+        '/api/v1/business/configuration',
+        {},
+        updateSession,
+      );
+      const parsed = parseBusinessConfiguration(response.data);
+      if (parsed.business.id !== session.business.id) {
+        throw new Error('The server returned configuration for another business');
+      }
+      await writeBusinessConfigurationCache(session.business.id, JSON.stringify(parsed));
+      if (active) setBusinessConfiguration(parsed);
+    };
+    void loadConfiguration().catch((configurationError: unknown) => {
+      if (active) setSyncError(configurationError instanceof Error ? configurationError.message : copy.error);
+    });
+    return () => { active = false; };
+  }, [copy.error, online, session?.accessToken, session?.business.id, updateSession]);
+
   const refreshNotificationHistory = useCallback(async () => {
     if (!session || online !== true || !session.permissions.includes('notifications:read')) return;
     try {
@@ -261,6 +405,86 @@ function AppContent() {
   useEffect(() => {
     if (page === 'notifications') void refreshNotificationHistory();
   }, [page, refreshNotificationHistory]);
+
+  useEffect(() => {
+    if (!['catalog', 'orders'].includes(page) || !session || online !== true
+      || !businessConfiguration?.enabledModules.includes('catalog')) return;
+    let active = true;
+    void apiRequest<{ data?: { items?: unknown } }>(
+      session,
+      '/api/v1/catalog?limit=100',
+      {},
+      updateSession,
+    ).then((response) => {
+      if (active) setCatalogItems(parseCatalogItems(response.data?.items));
+    }).catch((catalogError: unknown) => {
+      if (active) setError(catalogError instanceof Error ? catalogError.message : copy.error);
+    });
+    return () => { active = false; };
+  }, [businessConfiguration?.enabledModules, copy.error, online, page, session, updateSession]);
+
+  const saveCatalogItem = async () => {
+    if (!session || !businessConfiguration) return;
+    const typeKey = catalogTypeKey || businessConfiguration.template.itemTypes[0]?.key;
+    if (!typeKey) {
+      setError('Configure an item type before adding catalog entries.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await apiRequest(session, '/api/v1/catalog', {
+        method: 'POST',
+        body: {
+          typeKey,
+          name: catalogName,
+          ...(catalogSku ? { sku: catalogSku } : {}),
+          unit: catalogUnit,
+          ...(catalogUnitPrice ? { unitPrice: catalogUnitPrice } : {}),
+          sortOrder: catalogItems.length,
+          customFields: catalogCustomFields,
+        },
+      }, updateSession);
+      setCatalogName('');
+      setCatalogSku('');
+      setCatalogUnitPrice('');
+      setCatalogCustomFields({});
+      const refreshed = await apiRequest<{ data?: { items?: unknown } }>(
+        session,
+        '/api/v1/catalog?limit=100',
+        {},
+        updateSession,
+      );
+      setCatalogItems(parseCatalogItems(refreshed.data?.items));
+    } catch (catalogError) {
+      setError(catalogError instanceof Error ? catalogError.message : copy.error);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleCatalogItem = async (item: CatalogItem) => {
+    if (!session) return;
+    setSaving(true);
+    setError('');
+    try {
+      await apiRequest(session, `/api/v1/catalog/${item.id}`, {
+        method: 'PATCH',
+        body: { version: item.version, active: !item.active },
+      }, updateSession);
+      const refreshed = await apiRequest<{ data?: { items?: unknown } }>(
+        session,
+        '/api/v1/catalog?limit=100',
+        {},
+        updateSession,
+      );
+      setCatalogItems(parseCatalogItems(refreshed.data?.items));
+    } catch (catalogError) {
+      setError(catalogError instanceof Error ? catalogError.message : copy.error);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const refreshSubscriptionBilling = useCallback(async () => {
     if (!session || online !== true || !session.permissions.includes('subscriptions:read')) return;
@@ -397,12 +621,30 @@ function AppContent() {
 
   const membership = session?.permissions ?? [];
   const can = (permission: string) => membership.includes(permission);
+  const term = (key: string, fallback: string) => businessConfiguration?.terminology[key] ?? fallback;
+  const moduleEnabled = (module: string) => !businessConfiguration || businessConfiguration.enabledModules.includes(module);
+  const currentItemType = businessConfiguration?.template.itemTypes.find((item) => item.key === orderItemTypeKey)
+    ?? businessConfiguration?.template.itemTypes[0];
+  const orderItemFields = (businessConfiguration?.fields ?? []).filter((field) =>
+    field.module === 'orders'
+    && ['order-item', 'item'].includes(field.screen)
+    && !['garment_name', 'quantity'].includes(field.key)
+    && mobileFieldVisible(field, currentItemType?.key));
+  const orderFields = (businessConfiguration?.fields ?? []).filter((field) =>
+    field.module === 'orders' && ['order', 'job'].includes(field.screen));
+  const customerFields = (businessConfiguration?.fields ?? []).filter((field) =>
+    field.module === 'customers' && ['customer', 'customer-create'].includes(field.screen));
+  const catalogFields = (businessConfiguration?.fields ?? []).filter((field) =>
+    field.module === 'catalog' && ['item', 'catalog-item'].includes(field.screen));
+  const stageLabel = (key: string) => businessConfiguration?.workflow.stages
+    .find((stage) => stage.key === key)?.label ?? key.replaceAll('_', ' ');
   const pages: Array<{ id: Page; label: string }> = [
     { id: 'home', label: copy.home },
-    ...(can('orders:read') ? [{ id: 'orders' as const, label: copy.orders }] : []),
-    ...(can('customers:read') ? [{ id: 'customers' as const, label: copy.customers }] : []),
-    ...(can('measurements:read') ? [{ id: 'measurements' as const, label: copy.measurements }] : []),
-    ...(can('notifications:read') ? [{ id: 'notifications' as const, label: copy.notifications }] : []),
+    ...(can('orders:read') && moduleEnabled('orders') ? [{ id: 'orders' as const, label: term('orders', copy.orders) }] : []),
+    ...(can('orders:read') && moduleEnabled('catalog') ? [{ id: 'catalog' as const, label: term('items', 'Catalog') }] : []),
+    ...(can('customers:read') && moduleEnabled('customers') ? [{ id: 'customers' as const, label: term('customers', copy.customers) }] : []),
+    ...(can('measurements:read') && moduleEnabled('measurements') ? [{ id: 'measurements' as const, label: term('measurements', copy.measurements) }] : []),
+    ...(can('notifications:read') && moduleEnabled('notifications') ? [{ id: 'notifications' as const, label: copy.notifications }] : []),
     ...(can('subscriptions:read') ? [{ id: 'subscription' as const, label: copy.subscription }] : []),
     { id: 'settings', label: copy.settings },
   ];
@@ -506,6 +748,16 @@ function AppContent() {
 
   const saveCustomer = async () => {
     if (!session) return;
+    const missingField = customerFields.find((field) => {
+      const value = Object.hasOwn(customerCustomFields, field.key)
+        ? customerCustomFields[field.key] : field.defaultValue;
+      return field.required && (value === undefined || value === null || value === ''
+        || (Array.isArray(value) && value.length === 0));
+    });
+    if (missingField) {
+      setError(`${missingField.label} is required`);
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -514,11 +766,13 @@ function AppContent() {
         name: customerName,
         phone: customerPhone,
         notes: customerNotes,
+        customFields: customerCustomFields,
       });
       await refreshLocal(session.business.id);
       setCustomerName('');
       setCustomerPhone('');
       setCustomerNotes('');
+      setCustomerCustomFields({});
       setCustomerForm(false);
       if (online === true) void runSync();
     } catch (saveError) {
@@ -535,6 +789,17 @@ function AppContent() {
       setError(copy.chooseCustomer);
       return;
     }
+    const missingField = [...orderFields, ...orderItemFields].find((field) => {
+      const values = field.module === 'orders' && ['order', 'job'].includes(field.screen)
+        ? orderCustomFields : orderItemCustomFields;
+      const value = Object.hasOwn(values, field.key) ? values[field.key] : field.defaultValue;
+      return field.required && (value === undefined || value === null || value === ''
+        || (Array.isArray(value) && value.length === 0));
+    });
+    if (missingField) {
+      setError(`${missingField.label} is required`);
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -542,7 +807,11 @@ function AppContent() {
       await saveOrderOffline({
         businessId: session.business.id,
         customer,
-        garmentName,
+        itemName: garmentName,
+        itemTypeKey: currentItemType?.key ?? 'garment',
+        orderCustomFields,
+        itemCustomFields: orderItemCustomFields,
+        initialStageKey: businessConfiguration?.workflow.stages.find((stage) => stage.isInitial)?.key ?? 'NEW',
         quantity: Number(quantity),
         unitPrice,
         promisedAt: dueDate,
@@ -551,6 +820,8 @@ function AppContent() {
       await refreshLocal(session.business.id);
       setOrderForm(false);
       setGarmentName('');
+      setOrderCustomFields({});
+      setOrderItemCustomFields({});
       setQuantity('1');
       setUnitPrice('');
       setOrderNotes('');
@@ -592,18 +863,22 @@ function AppContent() {
     }
   };
 
-  const transitionOrder = async (order: LocalOrder) => {
+  const transitionOrder = async (order: LocalOrder, targetStageKey?: string) => {
     if (!session || online !== true || order.sync_state !== 'synced') {
       setError(copy.paymentOnline);
       return;
     }
-    const index = statusProgress.indexOf(order.status);
-    const nextStatus = statusProgress[index + 1];
-    if (!nextStatus) return;
+    const fromKey = order.workflow_stage_key ?? order.status;
+    const fromStage = businessConfiguration?.workflow.stages.find((stage) => stage.key === fromKey);
+    const transition = businessConfiguration?.workflow.transitions.find((item) =>
+      item.fromStageId === fromStage?.id
+      && (!targetStageKey || businessConfiguration.workflow.stages.find((stage) => stage.id === item.toStageId)?.key === targetStageKey));
+    const nextStage = businessConfiguration?.workflow.stages.find((stage) => stage.id === transition?.toStageId);
+    if (!nextStage) return;
     try {
-      await apiRequest(session, `/api/v1/orders/${order.id}/status`, {
+      await apiRequest(session, `/api/v1/orders/${order.id}/workflow`, {
         method: 'POST',
-        body: { toStatus: nextStatus, version: order.version },
+        body: { toStageKey: nextStage.key, version: order.version },
       }, updateSession);
       await runSync();
     } catch (transitionError) {
@@ -679,6 +954,63 @@ function AppContent() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const renderDynamicField = (
+    field: BusinessConfiguration['fields'][number],
+    values: Record<string, unknown>,
+    setValues: (update: (current: Record<string, unknown>) => Record<string, unknown>) => void,
+  ) => {
+    const value = Object.hasOwn(values, field.key) ? values[field.key] : field.defaultValue;
+    const updateValue = (next: unknown) => setValues((current) => ({ ...current, [field.key]: next }));
+    if (field.type === 'BOOLEAN') {
+      return (
+        <View key={field.id} style={styles.field}>
+          <Text style={styles.fieldLabel}>{field.label}{field.required ? ' *' : ''}</Text>
+          <View style={styles.chipWrap}>
+            {[true, false].map((option) => (
+              <Pressable key={String(option)} onPress={() => updateValue(option)} style={[styles.chip, value === option && styles.chipSelected]}>
+                <Text style={[styles.chipText, value === option && styles.chipTextSelected]}>{option ? 'True' : 'False'}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      );
+    }
+    if (field.type === 'DROPDOWN' || field.type === 'MULTI_SELECT') {
+      const selected = Array.isArray(value) ? value : [];
+      return (
+        <View key={field.id} style={styles.field}>
+          <Text style={styles.fieldLabel}>{field.label}{field.required ? ' *' : ''}</Text>
+          <View style={styles.chipWrap}>
+            {mobileFieldOptions(field).map((option) => {
+              const active = field.type === 'DROPDOWN' ? value === option.key : selected.includes(option.key);
+              return (
+                <Pressable
+                  key={option.key}
+                  onPress={() => updateValue(field.type === 'DROPDOWN'
+                    ? (active ? undefined : option.key)
+                    : active ? selected.filter((item) => item !== option.key) : [...selected, option.key])}
+                  style={[styles.chip, active && styles.chipSelected]}
+                >
+                  <Text style={[styles.chipText, active && styles.chipTextSelected]}>{option.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      );
+    }
+    return (
+      <Field
+        key={field.id}
+        label={`${field.label}${field.required ? ' *' : ''}`}
+        value={value === undefined || value === null ? '' : String(value)}
+        onChangeText={(text) => updateValue(text)}
+        keyboardType={['NUMBER', 'CURRENCY', 'MEASUREMENT'].includes(field.type) ? 'decimal-pad' : 'default'}
+        multiline={['LONG_TEXT', 'NOTES'].includes(field.type)}
+      />
+    );
   };
 
   if (booting) {
@@ -757,6 +1089,15 @@ function AppContent() {
   });
   const selectedTemplate = templates.find((item) => item.id === measurementTemplate);
   const dueOrders = orders.filter((order) => !['COLLECTED', 'CANCELLED'].includes(order.status));
+  const activeStageKeys = new Set(businessConfiguration?.workflow.stages
+    .filter((stage) => !stage.isInitial && !stage.isTerminal).map((stage) => stage.key) ?? []);
+  const dashboardMetrics: Array<[string, string, string]> = [
+    ['newOrders', `${term('orders', copy.orders)} today`, String(dashboard.newOrders ?? orders.filter((item) =>
+      item.workflow_stage_key === businessConfiguration?.workflow.stages.find((stage) => stage.isInitial)?.key).length)],
+    ['inProgress', copy.inProgress, String(dashboard.inProgress ?? orders.filter((item) => activeStageKeys.has(item.workflow_stage_key ?? item.status)).length)],
+    ['dueToday', copy.due, String(dashboard.dueToday ?? 0)],
+    ['overdue', copy.overdue, String(dashboard.overdue ?? 0)],
+  ];
 
   return (
     <SafeAreaView style={[styles.safe, rtl && styles.rtlLayout]}>
@@ -801,38 +1142,35 @@ function AppContent() {
           <>
             <Text style={styles.pageTitle}>{copy.welcome}</Text>
             <View style={styles.metricsGrid}>
-              {[
-                [copy.dashboardNew, String(dashboard.newOrders ?? orders.filter((item) => item.status === 'NEW').length)],
-                [copy.inProgress, String(dashboard.inProgress ?? orders.filter((item) => ['CUTTING', 'STITCHING', 'FINISHING'].includes(item.status)).length)],
-                [copy.due, String(dashboard.dueToday ?? 0)],
-                [copy.overdue, String(dashboard.overdue ?? 0)],
-              ].map(([label, value]) => (
-                <View key={label} style={styles.metricCard}>
+              {dashboardMetrics.filter(([key]) =>
+                !businessConfiguration || businessConfiguration.dashboardWidgets.includes(key),
+              ).map(([key, label, value]) => (
+                <View key={key} style={styles.metricCard}>
                   <Text style={styles.metricValue}>{value}</Text>
                   <Text style={styles.metricLabel}>{label}</Text>
                 </View>
               ))}
             </View>
-            {can('payments:read') ? (
+            {can('payments:read') && moduleEnabled('payments') ? (
               <View style={styles.moneyCard}>
                 <View style={styles.moneyRow}>
                   <Text style={styles.moneyLabel}>{copy.outstanding}</Text>
-                  <Text style={styles.moneyValue}>{formatPkr(String(dashboard.outstanding ?? '0.00'))}</Text>
+                  <Text style={styles.moneyValue}>{formatCurrency(String(dashboard.outstanding ?? '0.00'), businessConfiguration?.business.currency)}</Text>
                 </View>
                 <View style={styles.moneyRow}>
                   <Text style={styles.moneyLabel}>{copy.collected}</Text>
-                  <Text style={styles.moneyValue}>{formatPkr(String(dashboard.collectedToday ?? '0.00'))}</Text>
+                  <Text style={styles.moneyValue}>{formatCurrency(String(dashboard.collectedToday ?? '0.00'), businessConfiguration?.business.currency)}</Text>
                 </View>
               </View>
             ) : null}
-            <Text style={styles.sectionTitle}>{copy.orders}</Text>
+            {moduleEnabled('orders') ? <Text style={styles.sectionTitle}>{term('orders', copy.orders)}</Text> : null}
             {orders.slice(0, 3).map((order) => (
               <View key={order.id} style={styles.listCard}>
                 <View style={styles.listMain}>
-                  <Text style={styles.listTitle}>{order.garment_name} · {order.customer_name}</Text>
-                  <Text style={styles.listMeta}>{order.status.replaceAll('_', ' ')} · {order.promised_at.slice(0, 10)}</Text>
+                  <Text style={styles.listTitle}>{order.item_name ?? order.garment_name} · {order.customer_name}</Text>
+                  <Text style={styles.listMeta}>{stageLabel(order.workflow_stage_key ?? order.status)} · {order.promised_at.slice(0, 10)}</Text>
                 </View>
-                <Text style={styles.listPrice}>{formatPkr(order.total)}</Text>
+                <Text style={styles.listPrice}>{formatCurrency(order.total, businessConfiguration?.business.currency)}</Text>
               </View>
             ))}
           </>
@@ -841,7 +1179,7 @@ function AppContent() {
         {page === 'customers' ? (
           <>
             <View style={styles.pageHeadingRow}>
-              <View><Text style={styles.pageTitle}>{copy.customers}</Text><Text style={styles.subtitle}>{customers.length} {copy.customers.toLocaleLowerCase()}</Text></View>
+              <View><Text style={styles.pageTitle}>{term('customers', copy.customers)}</Text><Text style={styles.subtitle}>{customers.length} {term('customers', copy.customers).toLocaleLowerCase()}</Text></View>
               {can('customers:write') ? <ActionButton title={`＋ ${copy.addCustomer}`} onPress={() => { setError(''); setCustomerForm(!customerForm); }} /> : null}
             </View>
             <Field label={copy.search} value={search} onChangeText={setSearch} />
@@ -850,6 +1188,7 @@ function AppContent() {
                 <Field label={copy.customerName} value={customerName} onChangeText={setCustomerName} />
                 <Field label={copy.phone} value={customerPhone} onChangeText={setCustomerPhone} keyboardType="phone-pad" />
                 <Field label={copy.notes} value={customerNotes} onChangeText={setCustomerNotes} multiline />
+                {customerFields.map((field) => renderDynamicField(field, customerCustomFields, setCustomerCustomFields))}
                 <Text style={styles.offlineHint}>{copy.saved}</Text>
                 <ActionButton title={saving ? '…' : copy.save} onPress={() => void saveCustomer()} disabled={saving} />
               </View>
@@ -860,6 +1199,11 @@ function AppContent() {
                 <View style={styles.listMain}>
                   <Text style={styles.listTitle}>{customer.name}</Text>
                   <Text style={styles.listMeta}>{customer.phone}</Text>
+                  <StoredCustomFields
+                    serialized={customer.custom_fields_json}
+                    definitions={customerFields}
+                    errorLabel={copy.error}
+                  />
                 </View>
                 <Text style={styles.syncBadge}>{customer.sync_state === 'synced' ? '✓' : '↑'}</Text>
               </View>
@@ -867,12 +1211,77 @@ function AppContent() {
           </>
         ) : null}
 
+        {page === 'catalog' ? (
+          <>
+            <View style={styles.pageHeadingRow}>
+              <View><Text style={styles.pageTitle}>{term('items', 'Catalog')}</Text><Text style={styles.subtitle}>{catalogItems.length} entries</Text></View>
+              {can('settings:manage') && online === true ? <ActionButton title="＋ Add item" onPress={() => { setError(''); setCatalogForm(!catalogForm); }} /> : null}
+            </View>
+            <Field label={copy.search} value={search} onChangeText={setSearch} />
+            {catalogForm && can('settings:manage') && online === true ? (
+              <View style={styles.card}>
+                <Text style={styles.fieldLabel}>{term('item', 'Item')} type</Text>
+                <View style={styles.chipWrap}>
+                  {businessConfiguration?.template.itemTypes.map((itemType) => (
+                    <Pressable
+                      key={itemType.key}
+                      onPress={() => { setCatalogTypeKey(itemType.key); setCatalogCustomFields({}); }}
+                      style={[styles.chip, (catalogTypeKey || businessConfiguration.template.itemTypes[0]?.key) === itemType.key && styles.chipSelected]}
+                    >
+                      <Text style={[styles.chipText, (catalogTypeKey || businessConfiguration.template.itemTypes[0]?.key) === itemType.key && styles.chipTextSelected]}>{itemType.label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <Field label="Name" value={catalogName} onChangeText={setCatalogName} />
+                <Field label="Code / SKU" value={catalogSku} onChangeText={setCatalogSku} />
+                <View style={styles.twoFields}>
+                  <View style={styles.halfField}><Field label="Unit" value={catalogUnit} onChangeText={setCatalogUnit} /></View>
+                  <View style={styles.halfField}><Field label={`Unit price (${businessConfiguration?.business.currency ?? 'PKR'})`} value={catalogUnitPrice} onChangeText={setCatalogUnitPrice} keyboardType="decimal-pad" /></View>
+                </View>
+                {catalogFields.filter((field) => mobileFieldVisible(field, catalogTypeKey || businessConfiguration?.template.itemTypes[0]?.key)).map((field) =>
+                  renderDynamicField(field, catalogCustomFields, setCatalogCustomFields))}
+                <Text style={styles.offlineHint}>Catalog edits require a network connection. Customer and order drafts remain available offline.</Text>
+                <ActionButton title={saving ? '…' : copy.save} onPress={() => void saveCatalogItem()} disabled={saving || !catalogName.trim()} />
+              </View>
+            ) : null}
+            {catalogItems.filter((item) =>
+              !search || `${item.name} ${item.sku ?? ''}`.toLowerCase().includes(search.toLowerCase()),
+            ).map((item) => (
+              <View key={item.id} style={styles.listCard}>
+                <View style={styles.listMain}>
+                  <Text style={styles.listTitle}>{item.name}</Text>
+                  <Text style={styles.listMeta}>
+                    {businessConfiguration?.template.itemTypes.find((type) => type.key === item.typeKey)?.label ?? item.typeKey}
+                    {item.sku ? ` · ${item.sku}` : ''} · {item.unit}
+                  </Text>
+                  {item.unitPrice ? <Text style={styles.listMeta}>{formatCurrency(item.unitPrice, businessConfiguration?.business.currency)} / {item.unit}</Text> : null}
+                  <StoredCustomFields serialized={JSON.stringify(item.customFields)} definitions={catalogFields} errorLabel={copy.error} />
+                </View>
+                {can('settings:manage') && online === true ? (
+                  <Pressable accessibilityRole="button" onPress={() => void toggleCatalogItem(item)} disabled={saving}>
+                    <Text style={styles.syncBadge}>{item.active ? 'Deactivate' : 'Activate'}</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ))}
+            {!catalogItems.length ? <View style={styles.emptyCard}><Text style={styles.emptyText}>No catalog entries are available.</Text></View> : null}
+          </>
+        ) : null}
+
         {page === 'orders' ? (
           <>
             <View style={styles.pageHeadingRow}>
-              <View><Text style={styles.pageTitle}>{copy.orders}</Text><Text style={styles.subtitle}>{orders.length} {copy.orders.toLocaleLowerCase()}</Text></View>
+              <View><Text style={styles.pageTitle}>{term('orders', copy.orders)}</Text><Text style={styles.subtitle}>{orders.length} {term('orders', copy.orders).toLocaleLowerCase()}</Text></View>
               {can('orders:write') ? <ActionButton title={`＋ ${copy.newOrder}`} onPress={() => { setError(''); setOrderForm(!orderForm); }} /> : null}
             </View>
+            {businessConfiguration && businessConfiguration.template.key !== 'tailor' ? (
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Configured workflow</Text>
+                <Text style={styles.listMeta}>
+                  {businessConfiguration.workflow.stages.map((stage) => stage.label).join('  ›  ')}
+                </Text>
+              </View>
+            ) : null}
             {orderForm ? (
               <View style={styles.card}>
                 <Text style={styles.fieldLabel}>{copy.chooseCustomer}</Text>
@@ -883,7 +1292,48 @@ function AppContent() {
                     </Pressable>
                   ))}
                 </View>
-                <Field label={copy.garment} value={garmentName} onChangeText={setGarmentName} />
+                <Field
+                  label={term('item', currentItemType?.label ?? copy.garment)}
+                  value={garmentName}
+                  onChangeText={setGarmentName}
+                />
+                {businessConfiguration?.template.itemTypes.length ? (
+                  <View style={styles.field}>
+                    <Text style={styles.fieldLabel}>{term('item', currentItemType?.label ?? copy.garment)} type</Text>
+                    <View style={styles.chipWrap}>
+                      {businessConfiguration.template.itemTypes.map((itemType) => (
+                        <Pressable
+                          key={itemType.key}
+                          onPress={() => setOrderItemTypeKey(itemType.key)}
+                          style={[styles.chip, currentItemType?.key === itemType.key && styles.chipSelected]}
+                        >
+                          <Text style={[styles.chipText, currentItemType?.key === itemType.key && styles.chipTextSelected]}>{itemType.label}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+                ) : null}
+                {catalogItems.some((item) => item.active && item.typeKey === currentItemType?.key) ? (
+                  <View style={styles.field}>
+                    <Text style={styles.fieldLabel}>Saved {term('item', currentItemType?.label ?? copy.garment).toLowerCase()}</Text>
+                    <View style={styles.chipWrap}>
+                      {catalogItems.filter((item) => item.active && item.typeKey === currentItemType?.key).map((item) => (
+                        <Pressable
+                          key={item.id}
+                          onPress={() => {
+                            setGarmentName(item.name);
+                            if (item.unitPrice) setUnitPrice(item.unitPrice);
+                          }}
+                          style={[styles.chip, garmentName === item.name && styles.chipSelected]}
+                        >
+                          <Text style={[styles.chipText, garmentName === item.name && styles.chipTextSelected]}>{item.name}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+                ) : null}
+                {orderItemFields.map((field) => renderDynamicField(field, orderItemCustomFields, setOrderItemCustomFields))}
+                {orderFields.map((field) => renderDynamicField(field, orderCustomFields, setOrderCustomFields))}
                 <View style={styles.twoFields}>
                   <View style={styles.halfField}><Field label={copy.quantity} value={quantity} onChangeText={setQuantity} keyboardType="number-pad" /></View>
                   <View style={styles.halfField}><Field label={copy.unitPrice} value={unitPrice} onChangeText={setUnitPrice} keyboardType="decimal-pad" /></View>
@@ -895,19 +1345,34 @@ function AppContent() {
               </View>
             ) : null}
             {orders.length ? orders.map((order) => {
-              const index = statusProgress.indexOf(order.status);
-              const next = statusProgress[index + 1];
+              const currentStage = businessConfiguration?.workflow.stages.find((stage) =>
+                stage.key === (order.workflow_stage_key ?? order.status));
+              const outgoingTransitions = businessConfiguration?.workflow.transitions
+                .filter((transition) => transition.fromStageId === currentStage?.id) ?? [];
               return (
                 <View key={order.id} style={styles.orderCard}>
                   <View style={styles.orderTop}>
                     <View style={styles.listMain}>
-                      <Text style={styles.listTitle}>{order.garment_name} · {order.customer_name}</Text>
-                      <Text style={styles.listMeta}>{order.status.replaceAll('_', ' ')} · {order.promised_at.slice(0, 10)}</Text>
+                      <Text style={styles.listTitle}>{order.item_name ?? order.garment_name} · {order.customer_name}</Text>
+                      <Text style={styles.listMeta}>{stageLabel(order.workflow_stage_key ?? order.status)} · {order.promised_at.slice(0, 10)}</Text>
+                      <StoredCustomFields serialized={order.order_custom_fields_json} definitions={orderFields} errorLabel={copy.error} />
+                      <StoredCustomFields serialized={order.item_custom_fields_json} definitions={orderItemFields} errorLabel={copy.error} />
                     </View>
-                    <Text style={styles.listPrice}>{formatPkr(order.total)}</Text>
+                    <Text style={styles.listPrice}>{formatCurrency(order.total, businessConfiguration?.business.currency)}</Text>
                   </View>
                   {order.sync_state !== 'synced' ? <Text style={styles.pendingLabel}>{copy.pending}</Text> : null}
-                  {next && can('orders:transition') ? <ActionButton title={`${copy.nextStage}: ${next.replaceAll('_', ' ')}`} onPress={() => void transitionOrder(order)} secondary disabled={online !== true || order.sync_state !== 'synced'} /> : null}
+                  {outgoingTransitions.map((transition) => {
+                    const target = businessConfiguration?.workflow.stages.find((stage) => stage.id === transition.toStageId);
+                    return target && can('orders:transition') ? (
+                      <ActionButton
+                        key={transition.id}
+                        title={`${copy.nextStage}: ${target.label}`}
+                        onPress={() => void transitionOrder(order, target.key)}
+                        secondary
+                        disabled={online !== true || order.sync_state !== 'synced'}
+                      />
+                    ) : null;
+                  })}
                   {can('payments:write') ? (
                     paymentOrder?.id === order.id ? (
                       <View style={styles.paymentForm}>
@@ -949,7 +1414,7 @@ function AppContent() {
         {page === 'measurements' ? (
           <>
             <View style={styles.pageHeadingRow}>
-              <View><Text style={styles.pageTitle}>{copy.measurements}</Text><Text style={styles.subtitle}>{measurements.length} revisions</Text></View>
+              <View><Text style={styles.pageTitle}>{term('measurements', copy.measurements)}</Text><Text style={styles.subtitle}>{measurements.length} records</Text></View>
               {can('measurements:write') ? <ActionButton title={`＋ ${copy.saveMeasurement}`} onPress={() => { setError(''); setMeasurementForm(!measurementForm); }} /> : null}
             </View>
             {measurementForm ? (
@@ -1019,6 +1484,7 @@ function AppContent() {
                   <View style={styles.listMain}>
                     <Text style={styles.listTitle}>{notification.kind.replaceAll('_', ' ').toLowerCase()}</Text>
                     <Text style={styles.listMeta}>{notification.recipientPhone || '—'} · {new Date(notification.createdAt).toLocaleString()}</Text>
+                    {notification.renderedMessage ? <Text style={styles.listMeta}>{notification.renderedMessage}</Text> : null}
                     {notification.lastError ? <Text style={styles.syncError}>{notification.lastError}</Text> : null}
                   </View>
                   <Text style={styles.syncBadge}>{statusLabel}</Text>
@@ -1118,7 +1584,7 @@ function AppContent() {
                   <View key={payment.id} style={styles.listCard}>
                     <View style={styles.listMain}>
                       <Text style={styles.listTitle}>{payment.plan.name} · {payment.status}</Text>
-                      <Text style={styles.listMeta}>{formatPkr(payment.amount)} · {payment.method} · {new Date(payment.createdAt).toLocaleDateString()}</Text>
+                      <Text style={styles.listMeta}>{formatCurrency(payment.amount, businessConfiguration?.business.currency)} · {payment.method} · {new Date(payment.createdAt).toLocaleDateString()}</Text>
                       <Text style={styles.listMeta}>{payment.transactionReference} · {payment.senderName}</Text>
                       {payment.invoiceNumber ? <Text style={styles.syncBadge}>{copy.receipt}: {payment.invoiceNumber}</Text> : null}
                     </View>
@@ -1155,6 +1621,12 @@ function AppContent() {
             <View style={styles.card}>
               <Text style={styles.sectionTitle}>{session.business.name}</Text>
               <Text style={styles.listMeta}>{session.user.name} · {session.user.email}</Text>
+              {businessConfiguration ? (
+                <>
+                  <Text style={styles.listMeta}>{businessConfiguration.template.name} · {businessConfiguration.business.currency} · {businessConfiguration.business.timezone}</Text>
+                  <Text style={styles.listMeta}>Enabled: {businessConfiguration.enabledModules.join(', ')}</Text>
+                </>
+              ) : null}
               <ActionButton title={copy.signOut} onPress={() => void handleSignOut()} secondary />
             </View>
           </>

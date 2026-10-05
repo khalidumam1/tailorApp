@@ -5,11 +5,18 @@ import { normalizePakistanPhone, toE164Phone } from '@tailor/shared';
 import { env } from './config.js';
 import { prisma } from './db.js';
 import type { Logger } from 'pino';
+import {
+  isNotificationTemplate,
+  isNotificationTemplateMap,
+  renderNotificationTemplate,
+  type NotificationTemplateVariable,
+} from './domain/notification-templates.js';
 
 type NotificationTx = Prisma.TransactionClient;
 type NotificationSnapshot = Record<string, string>;
+type NotificationPayload = Record<string, Prisma.InputJsonValue>;
 
-function jsonInput(value: NotificationSnapshot): Prisma.InputJsonValue {
+function jsonInput(value: NotificationPayload): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
@@ -51,11 +58,54 @@ async function queueNotification(
   },
 ): Promise<void> {
   const phone = validatedPhone(input.customer.phone);
-  const notSentReason = !phone
+  let notSentReason = !phone
     ? 'Customer phone number is invalid'
     : input.customer.whatsappOptedOutAt || !input.customer.whatsappConsent
       ? 'Customer has not consented or has opted out'
       : null;
+  let templateName = templateFor(input.kind);
+  let payload: NotificationPayload = input.payload;
+  const configuration = await tx.businessConfiguration.findUnique({
+    where: { businessId: input.businessId },
+    select: { notificationTemplates: true },
+  });
+  const templates = isNotificationTemplateMap(configuration?.notificationTemplates)
+    ? configuration.notificationTemplates
+    : {};
+  if (Object.hasOwn(templates, input.kind)) {
+    const configured = templates[input.kind];
+    if (!isNotificationTemplate(configured)) {
+      notSentReason ??= 'Notification template configuration is invalid';
+    } else if (!configured.enabled) {
+      notSentReason ??= 'Notification event is disabled by business configuration';
+    } else {
+      try {
+        const values: Record<NotificationTemplateVariable, string> = {
+          'business.name': input.payload.businessName ?? '',
+          'business.phone': input.payload.businessPhone ?? '',
+          'customer.name': input.payload.customerName ?? '',
+          'customer.phone': phone ?? '',
+          'order.number': input.payload.orderNumber ?? '',
+          'order.total': input.payload.total ?? '',
+          'order.paid': input.payload.totalPaid ?? input.payload.advancePaid ?? '',
+          'order.balance': input.payload.remaining ?? input.payload.outstanding ?? '',
+          'order.status': input.payload.orderStatus ?? '',
+          'order.readyDate': input.payload.readyDate ?? '',
+          'item.name': input.payload.itemName ?? input.payload.garments ?? '',
+        };
+        const rendered = renderNotificationTemplate(configured.body, values);
+        templateName = configured.providerTemplateName ?? templateName;
+        payload = {
+          ...input.payload,
+          renderedBody: rendered.body,
+          templateParameters: rendered.parameters,
+          templateLanguage: configured.language ?? env.WHATSAPP_TEMPLATE_LANGUAGE,
+        };
+      } catch (error) {
+        notSentReason ??= error instanceof Error ? error.message.slice(0, 500) : 'Notification template is invalid';
+      }
+    }
+  }
   const now = new Date();
 
   await tx.whatsAppNotification.createMany({
@@ -68,8 +118,8 @@ async function queueNotification(
       status: notSentReason ? 'NOT_SENT' : 'QUEUED',
       idempotencyKey: input.idempotencyKey,
       recipientPhone: phone ?? '',
-      templateName: templateFor(input.kind),
-      payload: jsonInput(input.payload),
+      templateName,
+      payload: jsonInput(payload),
       lastError: notSentReason,
       updatedAt: now,
       ...(notSentReason ? { failedAt: now } : {}),
@@ -111,6 +161,8 @@ export async function queueOrderCreated(
       advancePaid: money(paid),
       outstanding: money(Prisma.Decimal.max(new Prisma.Decimal(0), order.total.minus(paid))),
       readyDate: dateLabel(order.promisedAt),
+      orderStatus: order.status,
+      itemName: order.items[0]?.itemName ?? order.items[0]?.garmentName ?? '',
     },
   });
 }
@@ -123,7 +175,7 @@ export async function queuePaymentReceived(
     where: { id: paymentId },
     include: {
       business: { select: { name: true } },
-      order: { include: { customer: true } },
+      order: { include: { customer: true, items: true } },
     },
   });
   if (payment.kind !== 'PAYMENT') return;
@@ -156,6 +208,8 @@ export async function queuePaymentReceived(
       paymentKind: payment.kind,
       paidAt: dateLabel(payment.createdAt),
       total: money(payment.order.total),
+      orderStatus: payment.order.status,
+      itemName: payment.order.items[0]?.itemName ?? payment.order.items[0]?.garmentName ?? '',
     },
   });
 }
@@ -192,6 +246,8 @@ export async function queueOrderReady(
       totalPaid: money(paid),
       remaining: money(Prisma.Decimal.max(new Prisma.Decimal(0), order.total.minus(paid))),
       readyDate: dateLabel(new Date()),
+      orderStatus: order.status,
+      itemName: order.items[0]?.itemName ?? order.items[0]?.garmentName ?? '',
     },
   });
 }
@@ -212,7 +268,7 @@ export async function generateReceiptPdf(
   kind: WhatsAppNotificationKind,
 ): Promise<Buffer> {
   const values = objectValue(payload);
-  const document = new PDFDocument({ size: 'A4', margin: 52, info: { Title: 'Tailoring Receipt', Author: values.businessName ?? 'Tailor Management System' } });
+  const document = new PDFDocument({ size: 'A4', margin: 52, info: { Title: 'Business Receipt', Author: values.businessName ?? 'Business' } });
   const chunks: Buffer[] = [];
   const output = new Promise<Buffer>((resolve, reject) => {
     document.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -220,13 +276,13 @@ export async function generateReceiptPdf(
     document.on('error', reject);
   });
 
-  document.fontSize(21).fillColor('#17324d').text(values.businessName ?? 'Tailor Management System');
+  document.fontSize(21).fillColor('#17324d').text(values.businessName ?? 'Business');
   document.moveDown(0.3).fontSize(10).fillColor('#68788a').text('CUSTOMER RECEIPT');
   document.moveDown(1).fontSize(12).fillColor('#17202a');
   document.text(`Customer: ${values.customerName ?? 'Customer'}`);
   document.text(`Order: ${values.orderNumber ?? '-'}`);
   document.text(`Date: ${values.paidAt ?? values.readyDate ?? dateLabel(new Date())}`);
-  document.moveDown(0.8).fontSize(10).fillColor('#52616f').text(`Garments: ${values.garments ?? '-'}`);
+  document.moveDown(0.8).fontSize(10).fillColor('#52616f').text(`Items: ${values.itemName ?? values.garments ?? '-'}`);
   document.moveDown(0.6).fillColor('#17202a');
 
   if (kind === 'PAYMENT_RECEIVED') {
@@ -334,11 +390,23 @@ async function sendNotification(
   },
 ): Promise<string> {
   const payload = objectValue(notification.payload);
-  const parameters = notification.kind === 'ORDER_CREATED'
+  const legacyParameters = notification.kind === 'ORDER_CREATED'
     ? ['orderNumber', 'garments', 'total', 'advancePaid', 'outstanding', 'readyDate']
     : notification.kind === 'PAYMENT_RECEIVED'
       ? ['orderNumber', 'amount', 'totalPaid', 'remaining', 'receiptReference']
       : ['orderNumber', 'readyDate'];
+  const rawPayload = notification.payload;
+  const configuredParameters = rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
+    ? rawPayload.templateParameters
+    : undefined;
+  const parameters = Array.isArray(configuredParameters)
+    && configuredParameters.every((value): value is string => typeof value === 'string')
+    ? configuredParameters.map((_, index) => `configured_${index}`)
+    : legacyParameters;
+  const parameterValues = Array.isArray(configuredParameters)
+    && configuredParameters.every((value): value is string => typeof value === 'string')
+    ? configuredParameters
+    : parameters.map((key) => payload[key] ?? '');
   const components: Array<Record<string, unknown>> = [];
   if (notification.kind !== 'ORDER_READY') {
     const mediaId = await uploadReceipt(notification.payload, notification.kind);
@@ -349,8 +417,9 @@ async function sendNotification(
   }
   components.push({
     type: 'body',
-    parameters: parameters.map((key) => ({ type: 'text', text: payload[key] ?? '' })),
+    parameters: parameterValues.map((text) => ({ type: 'text', text })),
   });
+  const templateLanguage = payload.templateLanguage ?? env.WHATSAPP_TEMPLATE_LANGUAGE;
   const result = await metaPost<MetaResponse>(
     `https://graph.facebook.com/${env.META_GRAPH_API_VERSION}/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
     JSON.stringify({
@@ -360,7 +429,7 @@ async function sendNotification(
       type: 'template',
       template: {
         name: notification.templateName,
-        language: { code: env.WHATSAPP_TEMPLATE_LANGUAGE },
+        language: { code: templateLanguage },
         components,
       },
       biz_opaque_callback_data: notification.id,

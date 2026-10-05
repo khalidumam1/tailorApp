@@ -12,6 +12,7 @@ const router = express.Router();
 const businessSchema = z.object({
   name: z.string().trim().min(1).max(160),
   slug: z.string().trim().toLowerCase().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(80),
+  templateKey: z.string().trim().regex(/^[a-z][a-z0-9-]{0,79}$/).default('tailor'),
 });
 const ownerSchema = z.object({
   name: z.string().trim().min(1).max(160),
@@ -79,7 +80,10 @@ router.get('/businesses', requirePlatformPermission('platform:businesses:read'),
       { name: { contains: query.q, mode: 'insensitive' } },
       { slug: { contains: query.q, mode: 'insensitive' } },
     ] } : {},
-    include: { _count: { select: { memberships: true } } },
+    include: {
+      _count: { select: { memberships: true } },
+      template: { select: { id: true, key: true, name: true } },
+    },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     take: query.limit + 1,
@@ -94,7 +98,21 @@ router.post('/businesses', requirePlatformPermission('platform:businesses:manage
   const input = businessSchema.parse(req.body);
   try {
     const business = await prisma.$transaction(async (tx) => {
-      const created = await tx.business.create({ data: { ...input, status: 'PENDING' } });
+      const template = await tx.businessTemplate.findUnique({
+        where: { key: input.templateKey },
+        select: { id: true, key: true },
+      });
+      if (!template) throw new HttpError(400, 'Choose an available business template', 'BUSINESS_TEMPLATE_NOT_FOUND');
+      const created = await tx.business.create({
+        data: {
+          name: input.name,
+          slug: input.slug,
+          businessType: template.key.toUpperCase(),
+          templateId: template.id,
+          status: 'PENDING',
+        },
+        include: { template: { select: { id: true, key: true, name: true } } },
+      });
       const defaultPlan = await tx.subscriptionPlan.findFirst({
         where: { active: true, isDefault: true },
       });
@@ -131,6 +149,7 @@ router.post('/businesses', requirePlatformPermission('platform:businesses:manage
       await writePlatformAudit(tx, actorId, 'platform.business_created', 'business', created.id, req.requestId, {
         name: created.name,
         slug: created.slug,
+        templateKey: template.key,
       });
       return created;
     });

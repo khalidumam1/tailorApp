@@ -48,6 +48,7 @@ router.get('/', requireBusinessPermission('notifications:read'), asyncHandler(as
       templateName: true,
       attemptCount: true,
       lastError: true,
+      payload: true,
       sentAt: true,
       deliveredAt: true,
       readAt: true,
@@ -62,8 +63,28 @@ router.get('/', requireBusinessPermission('notifications:read'), asyncHandler(as
   const hasMore = notifications.length > query.limit;
   const items = (hasMore ? notifications.slice(0, query.limit) : notifications)
     .map((notification) => ({
-      ...notification,
+      id: notification.id,
+      customerId: notification.customerId,
+      orderId: notification.orderId,
+      paymentId: notification.paymentId,
+      kind: notification.kind,
       status: notification.status === 'PROCESSING' ? 'QUEUED' : notification.status,
+      recipientPhone: notification.recipientPhone,
+      templateName: notification.templateName,
+      attemptCount: notification.attemptCount,
+      lastError: notification.lastError,
+      renderedMessage: notification.payload && typeof notification.payload === 'object'
+        && !Array.isArray(notification.payload)
+        && 'renderedBody' in notification.payload
+        && typeof notification.payload.renderedBody === 'string'
+        ? notification.payload.renderedBody
+        : null,
+      sentAt: notification.sentAt,
+      deliveredAt: notification.deliveredAt,
+      readAt: notification.readAt,
+      failedAt: notification.failedAt,
+      createdAt: notification.createdAt,
+      updatedAt: notification.updatedAt,
     }));
   res.json({ data: { items, nextCursor: hasMore ? items.at(-1)?.id ?? null : null } });
 }));

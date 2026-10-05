@@ -20,6 +20,7 @@ export const businessPermissions = [
 export const platformPermissions = [
   ['platform:businesses:read', 'View all businesses'],
   ['platform:businesses:manage', 'Create, activate and suspend businesses'],
+  ['platform:templates:manage', 'Create and customize business templates'],
   ['platform:staff:manage', 'Manage platform staff and their explicit grants'],
   ['platform:audit:read', 'View platform-wide audit history'],
   ['platform:system:health', 'View platform system health'],

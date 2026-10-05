@@ -1,4 +1,5 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, type CustomFieldDefinition } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import express from 'express';
 import {
   createCustomerSchema,
@@ -11,6 +12,7 @@ import {
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
+import { customFieldValueData, validateCustomFieldValues } from '../domain/custom-fields.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { assertSubscriptionAccess, authenticate } from '../middleware/auth.js';
 import { assertPlanLimit } from '../plan-limits.js';
@@ -18,6 +20,7 @@ import { queueOrderCreated } from '../whatsapp.js';
 
 const router = express.Router();
 const idSchema = z.string().uuid();
+const itemTypesSchema = z.array(z.object({ key: z.string(), label: z.string() }));
 const changesSchema = createCustomerSchema.partial().refine(
   (input) => Object.keys(input).length > 0,
   'At least one customer field must be provided',
@@ -126,6 +129,64 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+async function customerFieldDefinitions(
+  tx: Prisma.TransactionClient,
+  businessId: string,
+): Promise<CustomFieldDefinition[]> {
+  const business = await tx.business.findUnique({
+    where: { id: businessId },
+    include: {
+      configuration: true,
+      template: { include: { fields: { where: { active: true, module: 'customers' } } } },
+      customFields: { where: { active: true, module: 'customers' } },
+    },
+  });
+  if (!business) throw new HttpError(404, 'Business not found', 'BUSINESS_NOT_FOUND');
+  const enabledModules = business.configuration?.enabledModules ?? business.template?.enabledModules ?? ['customers'];
+  if (!enabledModules.includes('customers')) {
+    throw new HttpError(403, 'The customers module is disabled for this business', 'BUSINESS_MODULE_DISABLED');
+  }
+  const byKey = new Map((business.template?.fields ?? []).map((field) => [field.key, field]));
+  for (const field of business.customFields) byKey.set(field.key, field);
+  return [...byKey.values()].filter((field) => ['customer', 'customer-create'].includes(field.screen));
+}
+
+async function persistCustomerCustomFields(
+  tx: Prisma.TransactionClient,
+  businessId: string,
+  customerId: string,
+  values: ReturnType<typeof validateCustomFieldValues>,
+  create: boolean,
+): Promise<void> {
+  if (create) {
+    if (values.length) {
+      await tx.customFieldValue.createMany({
+        data: values.map((value) => ({
+          businessId,
+          customerId,
+          ...customFieldValueData(value),
+        })),
+      });
+    }
+    return;
+  }
+  for (const value of values) {
+    const valueData = {
+      valueText: null,
+      valueNumber: null,
+      valueBoolean: null,
+      valueDate: null,
+      valueJson: Prisma.DbNull,
+      ...customFieldValueData(value),
+    };
+    await tx.customFieldValue.upsert({
+      where: { customerId_fieldDefinitionId: { customerId, fieldDefinitionId: value.fieldDefinitionId } },
+      create: { businessId, customerId, ...valueData, fieldDefinitionId: value.fieldDefinitionId },
+      update: valueData,
+    });
+  }
+}
+
 async function applyOperation(
   tx: Prisma.TransactionClient,
   operation: OperationInput,
@@ -144,6 +205,10 @@ async function applyOperation(
       throw new HttpError(400, 'Operation action and entity type do not match', 'INVALID_SYNC_OPERATION');
     }
     if (payload.action === 'customer.create') {
+      const customValues = validateCustomFieldValues(
+        await customerFieldDefinitions(tx, businessId),
+        payload.customer.customFields ?? {},
+      );
       const exists = await tx.customer.findFirst({
         where: { businessId, OR: [{ id: operation.entityId }, { phoneNormalized: normalizePakistanPhone(payload.customer.phone) }] },
         select: { id: true, version: true },
@@ -159,6 +224,7 @@ async function applyOperation(
           notes: payload.customer.notes,
         },
       });
+      await persistCustomerCustomFields(tx, businessId, customer.id, customValues, true);
       await tx.auditEvent.create({
         data: {
           businessId,
@@ -177,6 +243,9 @@ async function applyOperation(
       throw new HttpError(400, 'Customer updates require a baseVersion', 'SYNC_BASE_VERSION_REQUIRED');
     }
     const input = changesSchema.parse(payload.changes);
+    const customValues = input.customFields !== undefined
+      ? validateCustomFieldValues(await customerFieldDefinitions(tx, businessId), input.customFields)
+      : [];
     if (input.phone !== undefined) {
       const duplicate = await tx.customer.findFirst({
         where: {
@@ -224,6 +293,9 @@ async function applyOperation(
         select: { version: true, updatedAt: true, deletedAt: true },
       });
       return conflict(current ? 'VERSION_CONFLICT' : 'CUSTOMER_NOT_FOUND', current ?? {});
+    }
+    if (input.customFields !== undefined) {
+      await persistCustomerCustomFields(tx, businessId, operation.entityId, customValues, false);
     }
     if (phoneChanged) {
       await tx.whatsAppNotification.updateMany({
@@ -329,6 +401,39 @@ async function applyOperation(
     return conflict('ORDER_ALREADY_EXISTS', { entityId: operation.entityId });
   }
   const input = payload.order;
+  const configuration = await tx.business.findUnique({
+    where: { id: businessId },
+    include: {
+      template: {
+        include: {
+          fields: { where: { active: true } },
+          workflowStages: { where: { active: true }, orderBy: { sortOrder: 'asc' } },
+          workflowTransitions: true,
+        },
+      },
+      customFields: { where: { active: true } },
+      workflowStages: { where: { active: true }, orderBy: { sortOrder: 'asc' } },
+      workflowTransitions: true,
+    },
+  });
+  if (!configuration?.template) return conflict('BUSINESS_TEMPLATE_MISSING');
+  if (!configuration.template.enabledModules.includes('orders')) {
+    throw new HttpError(403, 'The orders module is disabled for this business', 'BUSINESS_MODULE_DISABLED');
+  }
+  const itemTypes = itemTypesSchema.safeParse(configuration.template.itemTypes);
+  if (!itemTypes.success || !itemTypes.data.length) {
+    throw new HttpError(500, 'Business item types are invalid', 'INVALID_ITEM_TYPES');
+  }
+  const stages = configuration.workflowStages.length
+    ? configuration.workflowStages : configuration.template.workflowStages;
+  const initialStage = stages.find((stage) => stage.isInitial);
+  if (!initialStage) throw new HttpError(409, 'The business workflow has no initial stage', 'INVALID_BUSINESS_WORKFLOW');
+  const fieldsByKey = new Map(configuration.template.fields.map((field) => [field.key, field]));
+  for (const field of configuration.customFields) fieldsByKey.set(field.key, field);
+  const activeFields = [...fieldsByKey.values()].filter((field) => field.active && field.module === 'orders');
+  const orderFields = activeFields.filter((field) => field.screen === 'order' || field.screen === 'job');
+  const itemFields = activeFields.filter((field) => field.screen === 'order-item' || field.screen === 'item');
+  const orderFieldValues = validateCustomFieldValues(orderFields, input.customFields ?? {});
   const customer = await tx.customer.findFirst({
     where: { id: input.customerId, businessId, deletedAt: null },
     select: { id: true },
@@ -336,6 +441,16 @@ async function applyOperation(
   if (!customer) return conflict('CUSTOMER_NOT_FOUND', { customerId: input.customerId });
   let total = new Prisma.Decimal(0);
   const items = await Promise.all(input.items.map(async (item) => {
+    const itemTypeKey = item.itemTypeKey ?? itemTypes.data[0].key;
+    if (!itemTypes.data.some((type) => type.key === itemTypeKey)) {
+      throw new HttpError(400, 'Item type is not available for this business', 'INVALID_ITEM_TYPE');
+    }
+    const itemName = item.itemName ?? item.garmentName ?? '';
+    const customFieldValues = validateCustomFieldValues(itemFields, {
+      ...(item.customFields ?? {}),
+      garment_name: itemName,
+      quantity: item.quantity,
+    }, { itemTypeKey });
     const unitPrice = new Prisma.Decimal(item.unitPrice);
     total = total.plus(unitPrice.mul(item.quantity));
     let measurementSnapshot: Prisma.InputJsonObject = {};
@@ -362,12 +477,42 @@ async function applyOperation(
         values: revision.values as Prisma.InputJsonObject,
       };
     }
-    return { garmentName: item.garmentName, quantity: item.quantity, unitPrice, measurementSnapshot };
+    return {
+      id: randomUUID(),
+      businessId,
+      itemTypeKey,
+      itemName,
+      garmentName: itemName.slice(0, 120),
+      quantity: item.quantity,
+      unitPrice,
+      measurementSnapshot,
+      customFieldValues,
+    };
   }));
   if (items.some((item) => item === null)) return conflict('MEASUREMENT_PROFILE_NOT_FOUND');
   if (total.greaterThan(new Prisma.Decimal('9999999999.99'))) {
     throw new HttpError(400, 'Order total exceeds the supported amount', 'ORDER_TOTAL_TOO_LARGE');
   }
+  const catalogItems = await Promise.all(items.map(async (item) => {
+    if (!item) throw new HttpError(409, 'Order item is invalid', 'INVALID_ORDER_ITEM');
+    const catalogItem = await tx.businessItem.upsert({
+      where: {
+        businessId_typeKey_name: {
+          businessId,
+          typeKey: item.itemTypeKey,
+          name: item.itemName,
+        },
+      },
+      create: {
+        businessId,
+        typeKey: item.itemTypeKey,
+        name: item.itemName,
+      },
+      update: { active: true },
+      select: { id: true },
+    });
+    return { ...item, itemId: catalogItem.id };
+  }));
   const business = await tx.business.update({
     where: { id: businessId },
     data: { orderSequence: { increment: 1 } },
@@ -385,11 +530,34 @@ async function applyOperation(
       promisedAt: new Date(input.promisedAt),
       notes: input.notes,
       total,
-      items: { create: items.filter((item) => item !== null) },
+      workflowStageId: initialStage.id,
+      workflowStageKey: initialStage.key,
+      items: { create: catalogItems.map(({ customFieldValues: _customFieldValues, businessId: _itemBusinessId, ...item }) => item) },
+      workflowHistory: {
+        create: {
+          toStageId: initialStage.id,
+          toStageKey: initialStage.key,
+          toStageLabel: initialStage.label,
+          changedById: actorId,
+        },
+      },
       statusHistory: { create: { toStatus: 'NEW', changedById: actorId } },
     },
     select: { id: true, orderNumber: true, version: true, updatedAt: true },
   });
+  const customValues = [
+    ...orderFieldValues.map((value) => ({
+      businessId,
+      orderId: order.id,
+      ...customFieldValueData(value),
+    })),
+    ...catalogItems.flatMap((item) => item.customFieldValues.map((value) => ({
+      businessId,
+      orderItemId: item.id,
+      ...customFieldValueData(value),
+    }))),
+  ];
+  if (customValues.length) await tx.customFieldValue.createMany({ data: customValues });
   await tx.auditEvent.create({
     data: {
       businessId,

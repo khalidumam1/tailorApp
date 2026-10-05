@@ -13,6 +13,159 @@ export interface Session {
   permissions: string[];
 }
 
+export interface BusinessConfiguration {
+  business: { id: string; name: string; logoUrl: string | null; type: string; currency: string; timezone: string };
+  template: { id: string; key: string; name: string; category: string; itemTypes: Array<{ key: string; label: string }> };
+  availableModules: string[];
+  availablePaymentMethods: string[];
+  availableDashboardWidgets: string[];
+  terminology: Record<string, string>;
+  enabledModules: string[];
+  paymentMethods: string[];
+  dashboardWidgets: string[];
+  notificationTemplates: Record<string, unknown>;
+  fields: Array<{
+    id: string;
+    module: string;
+    screen: string;
+    key: string;
+    label: string;
+    type: string;
+    required: boolean;
+    defaultValue: unknown;
+    validation: unknown;
+    options: unknown;
+    visibility: unknown;
+    sortOrder: number;
+  }>;
+  workflow: {
+    stages: Array<{ id: string; key: string; label: string; sortOrder: number; isInitial: boolean; isTerminal: boolean }>;
+    transitions: Array<{ id: string; fromStageId: string; toStageId: string; allowedRoleKeys: string[] }>;
+  };
+  version: number;
+  publishedAt: string | null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+export function parseBusinessConfiguration(value: unknown): BusinessConfiguration {
+  if (!isRecord(value) || !isRecord(value.business) || !isRecord(value.template)
+    || !isRecord(value.workflow) || !isRecord(value.terminology)
+    || !Array.isArray(value.fields) || !Array.isArray(value.workflow.stages)
+    || !Array.isArray(value.workflow.transitions)
+    || !stringArray(value.availableModules) || !stringArray(value.availablePaymentMethods)
+    || !stringArray(value.availableDashboardWidgets) || !stringArray(value.enabledModules) || !stringArray(value.paymentMethods)
+    || !stringArray(value.dashboardWidgets) || typeof value.version !== 'number'
+    || (value.publishedAt !== null && typeof value.publishedAt !== 'string')) {
+    throw new Error('The server returned an invalid business configuration');
+  }
+  const business = value.business;
+  const template = value.template;
+  if (typeof business.id !== 'string' || typeof business.name !== 'string'
+    || !(business.logoUrl === null || typeof business.logoUrl === 'string')
+    || typeof business.type !== 'string' || typeof business.currency !== 'string'
+    || typeof business.timezone !== 'string' || typeof template.id !== 'string'
+    || typeof template.key !== 'string' || typeof template.name !== 'string'
+    || typeof template.category !== 'string' || !Array.isArray(template.itemTypes)) {
+    throw new Error('The server returned an invalid business configuration');
+  }
+  const terminology: Record<string, string> = {};
+  for (const [key, label] of Object.entries(value.terminology)) {
+    if (typeof label !== 'string') throw new Error('The server returned invalid business terminology');
+    terminology[key] = label;
+  }
+  const itemTypes = template.itemTypes.map((item) => {
+    if (!isRecord(item) || typeof item.key !== 'string' || typeof item.label !== 'string') {
+      throw new Error('The server returned invalid business item types');
+    }
+    return { key: item.key, label: item.label };
+  });
+  const fields = value.fields.map((item) => {
+    if (!isRecord(item) || typeof item.id !== 'string' || typeof item.module !== 'string'
+      || typeof item.screen !== 'string' || typeof item.key !== 'string' || typeof item.label !== 'string'
+      || typeof item.type !== 'string' || typeof item.required !== 'boolean') {
+      throw new Error('The server returned invalid business fields');
+    }
+    return {
+      id: item.id,
+      module: item.module,
+      screen: item.screen,
+      key: item.key,
+      label: item.label,
+      type: item.type,
+      required: item.required,
+      defaultValue: item.defaultValue ?? null,
+      validation: item.validation ?? null,
+      options: item.options ?? null,
+      visibility: item.visibility ?? null,
+      sortOrder: typeof item.sortOrder === 'number' ? item.sortOrder : 0,
+    };
+  });
+  const stages = value.workflow.stages.map((item) => {
+    if (!isRecord(item) || typeof item.id !== 'string' || typeof item.key !== 'string'
+      || typeof item.label !== 'string' || typeof item.sortOrder !== 'number'
+      || typeof item.isInitial !== 'boolean' || typeof item.isTerminal !== 'boolean') {
+      throw new Error('The server returned invalid workflow stages');
+    }
+    return {
+      id: item.id,
+      key: item.key,
+      label: item.label,
+      sortOrder: item.sortOrder,
+      isInitial: item.isInitial,
+      isTerminal: item.isTerminal,
+    };
+  });
+  const transitions = value.workflow.transitions.map((item) => {
+    if (!isRecord(item) || typeof item.id !== 'string' || typeof item.fromStageId !== 'string'
+      || typeof item.toStageId !== 'string' || !stringArray(item.allowedRoleKeys)) {
+      throw new Error('The server returned invalid workflow transitions');
+    }
+    return {
+      id: item.id,
+      fromStageId: item.fromStageId,
+      toStageId: item.toStageId,
+      allowedRoleKeys: item.allowedRoleKeys,
+    };
+  });
+  const notificationTemplates = isRecord(value.notificationTemplates) ? value.notificationTemplates : {};
+  return {
+    business: {
+      id: business.id,
+      name: business.name,
+      logoUrl: business.logoUrl,
+      type: business.type,
+      currency: business.currency,
+      timezone: business.timezone,
+    },
+    template: {
+      id: template.id,
+      key: template.key,
+      name: template.name,
+      category: template.category,
+      itemTypes,
+    },
+    availableModules: value.availableModules,
+    availablePaymentMethods: value.availablePaymentMethods,
+    availableDashboardWidgets: value.availableDashboardWidgets,
+    terminology,
+    enabledModules: value.enabledModules,
+    paymentMethods: value.paymentMethods,
+    dashboardWidgets: value.dashboardWidgets,
+    notificationTemplates,
+    fields,
+    workflow: { stages, transitions },
+    version: value.version,
+    publishedAt: value.publishedAt,
+  };
+}
+
 export class ApiError extends Error {
   status: number;
   code?: string;

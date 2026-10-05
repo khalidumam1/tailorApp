@@ -33,10 +33,20 @@ async function seed() {
   }
 
   const result = await prisma.$transaction(async (tx) => {
+    const tailorTemplate = await tx.businessTemplate.findUniqueOrThrow({
+      where: { key: 'tailor' },
+      select: { id: true },
+    });
     const business = await tx.business.upsert({
       where: { slug: 'karachi-demo-tailors' },
-      update: {},
-      create: { name: 'Karachi Demo Tailors', slug: 'karachi-demo-tailors', status: 'ACTIVE' },
+      update: { templateId: tailorTemplate.id, businessType: 'TAILOR' },
+      create: {
+        name: 'Karachi Demo Tailors',
+        slug: 'karachi-demo-tailors',
+        businessType: 'TAILOR',
+        templateId: tailorTemplate.id,
+        status: 'ACTIVE',
+      },
     });
     await tx.business.updateMany({
       where: { id: business.id, orderSequence: { lt: 2 } },

@@ -1,5 +1,9 @@
 import * as Crypto from 'expo-crypto';
-export { openLocalDatabase } from './database';
+export {
+  openLocalDatabase,
+  readBusinessConfigurationCache,
+  writeBusinessConfigurationCache,
+} from './database';
 
 export interface LocalCustomer {
   id: string;
@@ -7,6 +11,7 @@ export interface LocalCustomer {
   name: string;
   phone: string;
   notes: string;
+  custom_fields_json?: string | null;
   version: number;
   sync_state: string;
 }
@@ -17,10 +22,15 @@ export interface LocalOrder {
   customer_id: string;
   customer_name: string;
   garment_name: string;
+  item_type_key?: string | null;
+  item_name?: string | null;
   quantity: number;
   unit_price: string;
   promised_at: string;
   status: string;
+  workflow_stage_key?: string | null;
+  order_custom_fields_json?: string | null;
+  item_custom_fields_json?: string | null;
   total: string;
   version: number;
   sync_state: string;
@@ -56,7 +66,7 @@ export function amountToMinorUnits(value: string): bigint {
   return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'));
 }
 
-export function formatPkr(value: string | number): string {
+export function formatCurrency(value: string | number, currency = 'PKR'): string {
   const [whole = '0', fraction = '00'] = String(value).split('.');
-  return `PKR ${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${fraction.padEnd(2, '0').slice(0, 2)}`;
+  return `${currency} ${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${fraction.padEnd(2, '0').slice(0, 2)}`;
 }

@@ -25,6 +25,7 @@ export const createCustomerSchema = z.object({
       }
     }, 'Phone number must be valid in international format'),
   notes: z.string().trim().max(2000).optional(),
+  customFields: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const updateCustomerSchema = createCustomerSchema.partial().extend({
@@ -62,13 +63,19 @@ export const createOrderSchema = z.object({
   customerId: z.string().uuid(),
   promisedAt: z.string().datetime({ offset: true }),
   notes: z.string().trim().max(4000).optional(),
+  customFields: z.record(z.string(), z.unknown()).optional(),
   items: z.array(z.object({
-    garmentName: z.string().trim().min(1).max(120),
+    itemTypeKey: z.string().trim().regex(/^[a-z][a-z0-9_-]{0,79}$/).optional(),
+    itemName: z.string().trim().min(1).max(160).optional(),
+    garmentName: z.string().trim().min(1).max(120).optional(),
     quantity: z.number().int().min(1).max(100),
     unitPrice: z.string().regex(/^\d{1,8}(\.\d{1,2})?$/).refine((amount) => Number(amount) > 0),
     measurementProfileId: z.string().uuid().optional(),
+    customFields: z.record(z.string(), z.unknown()).optional(),
+  }).refine((item) => Boolean(item.itemName || item.garmentName), {
+    message: 'An item name is required',
   })).min(1).max(20),
-});
+}).strict();
 
 export const createPaymentSchema = z.object({
   amount: z.string().regex(/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/).refine((amount) => Number(amount) > 0),
@@ -89,6 +96,12 @@ export const transitionOrderSchema = z.object({
   version: z.number().int().positive(),
   note: z.string().trim().max(500).optional(),
 });
+
+export const transitionWorkflowSchema = z.object({
+  toStageKey: z.string().trim().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/),
+  version: z.number().int().positive(),
+  note: z.string().trim().max(500).optional(),
+}).strict();
 
 export const createAlterationSchema = z.object({
   description: z.string().trim().min(1).max(1000),

@@ -13,6 +13,10 @@ import {
   ApiError,
   type CurrentUser,
   type Customer,
+  type BusinessConfiguration,
+  type BusinessTemplate,
+  parseNotificationTemplates,
+  parseBusinessTemplateInput,
   type Dashboard,
   type GarmentTemplate,
   type LoginResult,
@@ -25,23 +29,25 @@ import {
 } from './api';
 import './styles.css';
 
-type View = 'dashboard' | 'orders' | 'customers' | 'measurements' | 'payments' | 'notifications' | 'subscription';
-type PlatformView = 'businesses' | 'staff' | 'audit' | 'health' | 'billing' | 'plans' | 'paymentQueue' | 'billingSettings' | 'reports';
+type View = 'dashboard' | 'orders' | 'catalog' | 'customers' | 'measurements' | 'payments' | 'notifications' | 'subscription' | 'configuration';
+type PlatformView = 'businesses' | 'templates' | 'staff' | 'audit' | 'health' | 'billing' | 'plans' | 'paymentQueue' | 'billingSettings' | 'reports';
 type Selection = Exclude<LoginResult, { accessToken: string }>;
 
-const navigation: Array<{ view: View; label: string; permission?: string }> = [
+const navigation: Array<{ view: View; label: string; permission?: string; module?: string }> = [
   { view: 'dashboard', label: 'Overview', permission: 'orders:read' },
-  { view: 'orders', label: 'Orders', permission: 'orders:read' },
-  { view: 'customers', label: 'Customers', permission: 'customers:read' },
-  { view: 'measurements', label: 'Measurements', permission: 'measurements:read' },
-  { view: 'payments', label: 'Payments', permission: 'payments:read' },
-  { view: 'notifications', label: 'WhatsApp notifications', permission: 'notifications:read' },
+  { view: 'orders', label: 'Orders', permission: 'orders:read', module: 'orders' },
+  { view: 'catalog', label: 'Catalog', permission: 'orders:read', module: 'catalog' },
+  { view: 'customers', label: 'Customers', permission: 'customers:read', module: 'customers' },
+  { view: 'measurements', label: 'Measurements', permission: 'measurements:read', module: 'measurements' },
+  { view: 'payments', label: 'Payments', permission: 'payments:read', module: 'payments' },
+  { view: 'notifications', label: 'WhatsApp notifications', permission: 'notifications:read', module: 'notifications' },
   { view: 'subscription', label: 'Subscription & billing', permission: 'subscriptions:read' },
+  { view: 'configuration', label: 'Business settings', permission: 'settings:manage' },
 ];
 
-function money(value: string | undefined): string {
+function money(value: string | undefined, currency = 'PKR'): string {
   if (value === undefined) return '—';
-  return new Intl.NumberFormat('en-PK', { style: 'currency', currency: 'PKR', maximumFractionDigits: 2 }).format(Number(value));
+  return new Intl.NumberFormat('en', { style: 'currency', currency, maximumFractionDigits: 2 }).format(Number(value));
 }
 
 function karachiDate(value: string): string {
@@ -82,7 +88,11 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [businessConfiguration, setBusinessConfiguration] = useState<BusinessConfiguration | null>(null);
+  const [businessConfigurationDraft, setBusinessConfigurationDraft] = useState<BusinessConfiguration | null>(null);
+  const [notificationTemplateJson, setNotificationTemplateJson] = useState('{}');
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [catalogItems, setCatalogItems] = useState<import('./api').CatalogItem[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [notifications, setNotifications] = useState<WhatsAppNotification[]>([]);
@@ -92,8 +102,21 @@ function App() {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerNotes, setCustomerNotes] = useState('');
+  const [customerCustomFields, setCustomerCustomFields] = useState<Record<string, unknown>>({});
+  const [catalogName, setCatalogName] = useState('');
+  const [catalogDescription, setCatalogDescription] = useState('');
+  const [catalogTypeKey, setCatalogTypeKey] = useState('');
+  const [catalogSku, setCatalogSku] = useState('');
+  const [catalogUnit, setCatalogUnit] = useState('unit');
+  const [catalogUnitPrice, setCatalogUnitPrice] = useState('');
+  const [catalogCustomFields, setCatalogCustomFields] = useState<Record<string, unknown>>({});
+  const [editingCatalogItemId, setEditingCatalogItemId] = useState<string | null>(null);
   const [orderCustomerId, setOrderCustomerId] = useState('');
+  const [orderCatalogItemId, setOrderCatalogItemId] = useState('');
   const [orderGarment, setOrderGarment] = useState('Shalwar Kameez');
+  const [orderItemTypeKey, setOrderItemTypeKey] = useState('');
+  const [orderCustomFields, setOrderCustomFields] = useState<Record<string, unknown>>({});
+  const [orderItemCustomFields, setOrderItemCustomFields] = useState<Record<string, unknown>>({});
   const [orderQuantity, setOrderQuantity] = useState('1');
   const [orderPrice, setOrderPrice] = useState('');
   const [orderDueAt, setOrderDueAt] = useState(dateTimeInput(7));
@@ -108,6 +131,10 @@ function App() {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [platformView, setPlatformView] = useState<PlatformView>('businesses');
   const [platformBusinesses, setPlatformBusinesses] = useState<import('./api').PlatformBusiness[]>([]);
+  const [platformTemplates, setPlatformTemplates] = useState<BusinessTemplate[]>([]);
+  const [platformTemplateKey, setPlatformTemplateKey] = useState('tailor');
+  const [platformTemplateDraft, setPlatformTemplateDraft] = useState('');
+  const [editingPlatformTemplateId, setEditingPlatformTemplateId] = useState<string | null>(null);
   const [platformStaff, setPlatformStaff] = useState<import('./api').PlatformStaff[]>([]);
   const [platformPermissions, setPlatformPermissions] = useState<import('./api').PlatformPermission[]>([]);
   const [platformAudit, setPlatformAudit] = useState<import('./api').AuditEvent[]>([]);
@@ -177,12 +204,18 @@ function App() {
       if (view === 'dashboard') {
         setDashboard(await withSession(api.dashboard));
       } else if (view === 'orders') {
-        const [orderResult, customerResult] = await Promise.all([
+        const [orderResult, customerResult, catalogResult] = await Promise.all([
           withSession((token) => api.orders(token, search)),
           withSession((token) => api.customers(token)),
+          businessConfiguration?.enabledModules.includes('catalog')
+            ? withSession((token) => api.catalog(token))
+            : Promise.resolve({ items: [], nextCursor: null }),
         ]);
         setOrders(orderResult.items);
         setCustomers(customerResult.items);
+        setCatalogItems(catalogResult.items);
+      } else if (view === 'catalog') {
+        setCatalogItems((await withSession((token) => api.catalog(token, search, true))).items);
       } else if (view === 'customers') {
         setCustomers((await withSession((token) => api.customers(token, search))).items);
       } else if (view === 'measurements') {
@@ -214,7 +247,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [currentUser?.context.scope, measurementCustomerId, measurementTemplateId, search, selectedSubscriptionPlanId, session, subscriptionPayment.method, view, withSession]);
+  }, [businessConfiguration?.enabledModules, currentUser?.context.scope, measurementCustomerId, measurementTemplateId, search, selectedSubscriptionPlanId, session, subscriptionPayment.method, view, withSession]);
 
   useEffect(() => {
     const onlineChanged = () => setOnline(navigator.onLine);
@@ -243,6 +276,28 @@ function App() {
 
   useEffect(() => {
     let active = true;
+    if (!session || currentUser?.context.scope !== 'business') {
+      setBusinessConfiguration(null);
+      setBusinessConfigurationDraft(null);
+      setNotificationTemplateJson('{}');
+      return () => { active = false; };
+    }
+    withSession(api.businessConfiguration)
+      .then((configuration) => {
+        if (active) {
+          setBusinessConfiguration(configuration);
+          setBusinessConfigurationDraft(configuration);
+          setNotificationTemplateJson(JSON.stringify(configuration.notificationTemplates, null, 2));
+        }
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(messageFor(cause));
+      });
+    return () => { active = false; };
+  }, [currentUser?.context.scope, session?.accessToken, withSession]);
+
+  useEffect(() => {
+    let active = true;
     if (view === 'measurements' && measurementCustomerId && currentUser?.context.permissions.includes('measurements:read')) {
       withSession((token) => api.measurements(token, measurementCustomerId))
         .then((result) => { if (active) setProfiles(result.items); })
@@ -260,6 +315,7 @@ function App() {
     if (!session || currentUser?.context.scope !== 'platform') return;
     const viewPermissions: Record<PlatformView, string> = {
       businesses: 'platform:businesses:read',
+      templates: 'platform:templates:manage',
       staff: 'platform:staff:manage',
       audit: 'platform:audit:read',
       health: 'platform:system:health',
@@ -281,8 +337,20 @@ function App() {
     setError(null);
     const loadPlatform = async () => {
       if (platformView === 'businesses' && currentUser.context.platformPermissions.includes('platform:businesses:read')) {
-        const result = await withSession(api.platformBusinesses);
-        if (active) setPlatformBusinesses(result.items);
+        const [result, templates] = await Promise.all([
+          withSession(api.platformBusinesses),
+          withSession(api.platformTemplates),
+        ]);
+        if (active) {
+          setPlatformBusinesses(result.items);
+          setPlatformTemplates(templates.items);
+          if (!templates.items.some((item) => item.key === platformTemplateKey) && templates.items[0]) {
+            setPlatformTemplateKey(templates.items[0].key);
+          }
+        }
+      } else if (platformView === 'templates' && currentUser.context.platformPermissions.includes('platform:templates:manage')) {
+        const result = await withSession(api.platformTemplates);
+        if (active) setPlatformTemplates(result.items);
       } else if (platformView === 'staff' && currentUser.context.platformPermissions.includes('platform:staff:manage')) {
         const [staff, permissions] = await Promise.all([
           withSession(api.platformStaff),
@@ -329,7 +397,7 @@ function App() {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [currentUser, platformView, session, withSession]);
+  }, [currentUser, platformTemplateKey, platformView, session, withSession]);
 
   useEffect(() => {
     let active = true;
@@ -359,6 +427,19 @@ function App() {
     () => templates.find((template) => template.id === measurementTemplateId),
     [measurementTemplateId, templates],
   );
+  const configuredItemTypes = businessConfiguration?.template.itemTypes ?? [];
+  const selectedOrderItemType = configuredItemTypes.find((type) => type.key === orderItemTypeKey)
+    ?? configuredItemTypes[0];
+  const orderFields = (businessConfiguration?.fields ?? [])
+    .filter((field) => field.module === 'orders' && ['order', 'job'].includes(field.screen));
+  const orderItemFields = (businessConfiguration?.fields ?? [])
+    .filter((field) => field.module === 'orders'
+      && ['order-item', 'item'].includes(field.screen)
+      && !['garment_name', 'quantity'].includes(field.key)
+      && isVisibleForItemType(field, selectedOrderItemType?.key));
+  const customerFields = (businessConfiguration?.fields ?? [])
+    .filter((field) => field.module === 'customers'
+      && ['customer', 'customer-create'].includes(field.screen));
 
   async function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -401,6 +482,7 @@ function App() {
     setSelection(null);
     setDashboard(null);
     setOrders([]);
+    setCatalogItems([]);
     setCustomers([]);
     setPayments([]);
     setNotifications([]);
@@ -417,17 +499,95 @@ function App() {
         name: customerName,
         phone: customerPhone,
         ...(customerNotes ? { notes: customerNotes } : {}),
+        customFields: customerCustomFields,
       });
       await withSession((token) => api.createCustomer(token, input));
       setCustomerName('');
       setCustomerPhone('');
       setCustomerNotes('');
+      setCustomerCustomFields({});
       setNotice('Customer saved.');
       await reloadCurrent();
     } catch (cause) {
       setError(messageFor(cause));
     } finally {
       setWorking(false);
+    }
+  }
+
+  async function addCatalogItem(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!session || !businessConfiguration) return;
+    setWorking(true);
+    setError(null);
+    try {
+      const typeKey = catalogTypeKey || businessConfiguration.template.itemTypes[0]?.key;
+      if (!typeKey) throw new Error('Configure at least one item type in the business template.');
+      if (editingCatalogItemId) {
+        const current = catalogItems.find((item) => item.id === editingCatalogItemId);
+        if (!current) throw new Error('Catalog item is no longer available; reload and try again.');
+        await withSession((token) => api.updateCatalogItem(token, current.id, {
+          version: current.version,
+          typeKey,
+          name: catalogName,
+          description: catalogDescription || null,
+          sku: catalogSku || null,
+          unit: catalogUnit,
+          unitPrice: catalogUnitPrice || null,
+          sortOrder: current.sortOrder,
+          customFields: catalogCustomFields,
+        }));
+      } else {
+        await withSession((token) => api.createCatalogItem(token, {
+          typeKey,
+          name: catalogName,
+          ...(catalogDescription ? { description: catalogDescription } : {}),
+          ...(catalogSku ? { sku: catalogSku } : {}),
+          unit: catalogUnit,
+          ...(catalogUnitPrice ? { unitPrice: catalogUnitPrice } : {}),
+          sortOrder: catalogItems.length,
+          customFields: catalogCustomFields,
+        }));
+      }
+      setCatalogName('');
+      setCatalogDescription('');
+      setCatalogSku('');
+      setCatalogUnitPrice('');
+      setCatalogCustomFields({});
+      setEditingCatalogItemId(null);
+      setNotice(`${businessConfiguration.terminology.item ?? 'Catalog item'} saved.`);
+      await reloadCurrent();
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function setCatalogItemActive(item: import('./api').CatalogItem, active: boolean) {
+    if (!session) return;
+    setWorking(true);
+    setError(null);
+    try {
+      await withSession((token) => api.updateCatalogItem(token, item.id, { version: item.version, active }));
+      setNotice(active ? `${item.name} activated.` : `${item.name} deactivated.`);
+      await reloadCurrent();
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+
+    function editCatalogItem(item: import('./api').CatalogItem) {
+      setEditingCatalogItemId(item.id);
+      setCatalogTypeKey(item.typeKey);
+      setCatalogName(item.name);
+      setCatalogDescription(item.description ?? '');
+      setCatalogSku(item.sku ?? '');
+      setCatalogUnit(item.unit);
+      setCatalogUnitPrice(item.unitPrice ?? '');
+      setCatalogCustomFields(item.customFields);
+      setError(null);
     }
   }
 
@@ -463,15 +623,21 @@ function App() {
         customerId: orderCustomerId,
         promisedAt: karachiInputToUtc(orderDueAt),
         items: [{
-          garmentName: orderGarment,
+          itemTypeKey: orderItemTypeKey || businessConfiguration?.template.itemTypes[0]?.key,
+          itemName: orderGarment,
           quantity: Number(orderQuantity),
           unitPrice: orderPrice,
           ...(orderMeasurementId ? { measurementProfileId: orderMeasurementId } : {}),
+          customFields: orderItemCustomFields,
         }],
+        customFields: orderCustomFields,
       });
       await withSession((token) => api.createOrder(token, input));
       setOrderPrice('');
       setOrderMeasurementId('');
+      setOrderCatalogItemId('');
+      setOrderCustomFields({});
+      setOrderItemCustomFields({});
       setNotice('Order created.');
       await reloadCurrent();
     } catch (cause) {
@@ -481,14 +647,15 @@ function App() {
     }
   }
 
-  async function changeStatus(order: Order, nextStatus: Order['status']) {
+  async function changeWorkflowStage(order: Order, nextStageKey: string) {
     if (!session) return;
-    if (nextStatus === 'CANCELLED' && !window.confirm(`Cancel order ${order.orderNumber}? This action cannot be undone.`)) return;
+    const nextStage = businessConfiguration?.workflow.stages.find((stage) => stage.key === nextStageKey);
+    if (nextStageKey === 'CANCELLED' && !window.confirm(`Cancel order ${order.orderNumber}? This action cannot be undone.`)) return;
     setWorking(true);
     setError(null);
     try {
-      await withSession((token) => api.transitionOrder(token, order, nextStatus));
-      setNotice(`Order ${order.orderNumber} updated.`);
+      await withSession((token) => api.transitionWorkflow(token, order, nextStageKey));
+      setNotice(`Order ${order.orderNumber} moved to ${nextStage?.label ?? nextStageKey}.`);
       await reloadCurrent();
     } catch (cause) {
       setError(messageFor(cause));
@@ -559,12 +726,136 @@ function App() {
     }
   }
 
+  async function saveBusinessConfiguration(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!businessConfigurationDraft) return;
+    setWorking(true);
+    setError(null);
+    try {
+      const notificationTemplates = parseNotificationTemplates(JSON.parse(notificationTemplateJson) as unknown);
+      await withSession((token) => api.updateBusinessConfiguration(token, {
+        version: businessConfigurationDraft.version,
+        business: {
+          name: businessConfigurationDraft.business.name,
+          logoUrl: businessConfigurationDraft.business.logoUrl || null,
+          currency: businessConfigurationDraft.business.currency,
+          timezone: businessConfigurationDraft.business.timezone,
+        },
+        terminologyOverrides: businessConfigurationDraft.terminology,
+        enabledModules: businessConfigurationDraft.enabledModules,
+        paymentMethods: businessConfigurationDraft.paymentMethods,
+        dashboardWidgets: businessConfigurationDraft.dashboardWidgets,
+        notificationTemplates,
+        publish: true,
+      }));
+      const configuration = await withSession(api.businessConfiguration);
+      setBusinessConfiguration(configuration);
+      setBusinessConfigurationDraft(configuration);
+      setNotificationTemplateJson(JSON.stringify(configuration.notificationTemplates, null, 2));
+      setNotice('Business configuration published.');
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  function editPlatformTemplate(template: BusinessTemplate) {
+    const stageKeys = new Map(template.workflowStages.map((stage) => [stage.id, stage.key]));
+    const draft = {
+      key: template.key,
+      name: template.name,
+      category: template.category,
+      ...(template.description ? { description: template.description } : {}),
+      terminology: template.terminology,
+      enabledModules: template.enabledModules,
+      itemTypes: template.itemTypes,
+      paymentMethods: template.paymentMethods,
+      dashboardWidgets: template.dashboardWidgets,
+      fields: template.fields.map((field) => ({
+        module: field.module,
+        screen: field.screen,
+        key: field.key,
+        label: field.label,
+        type: field.type,
+        required: field.required,
+        sortOrder: field.sortOrder,
+        ...(field.defaultValue !== null ? { defaultValue: field.defaultValue } : {}),
+        ...(field.validation !== null ? { validation: field.validation } : {}),
+        ...(field.options !== null ? { options: field.options } : {}),
+        ...(field.visibility !== null ? { visibility: field.visibility } : {}),
+      })),
+      stages: template.workflowStages.map((stage) => ({
+        key: stage.key,
+        label: stage.label,
+        sortOrder: stage.sortOrder,
+        isInitial: stage.isInitial,
+        isTerminal: stage.isTerminal,
+        actions: stage.actions,
+      })),
+      transitions: template.workflowTransitions.map((transition) => ({
+        from: stageKeys.get(transition.fromStageId) ?? '',
+        to: stageKeys.get(transition.toStageId) ?? '',
+        allowedRoleKeys: transition.allowedRoleKeys,
+        actions: transition.actions,
+      })),
+    };
+    setEditingPlatformTemplateId(template.id);
+    setPlatformTemplateDraft(JSON.stringify(draft, null, 2));
+  }
+
+  function startPlatformTemplate() {
+    setEditingPlatformTemplateId(null);
+    setPlatformTemplateDraft(JSON.stringify({
+      key: '',
+      name: '',
+      category: 'SERVICE',
+      description: '',
+      terminology: { customer: 'Customer', customers: 'Customers', item: 'Item', items: 'Items', order: 'Order', orders: 'Orders' },
+      enabledModules: ['customers', 'orders', 'payments'],
+      itemTypes: [{ key: 'item', label: 'Item' }],
+      paymentMethods: ['CASH'],
+      dashboardWidgets: ['newOrders'],
+      fields: [],
+      stages: [
+        { key: 'NEW', label: 'New', sortOrder: 0, isInitial: true, isTerminal: false, actions: [] },
+        { key: 'COMPLETED', label: 'Completed', sortOrder: 1, isInitial: false, isTerminal: true, actions: [] },
+      ],
+      transitions: [{ from: 'NEW', to: 'COMPLETED', allowedRoleKeys: [], actions: [] }],
+    }, null, 2));
+  }
+
+  async function savePlatformTemplate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWorking(true);
+    setError(null);
+    try {
+      const raw: unknown = JSON.parse(platformTemplateDraft);
+      const input = parseBusinessTemplateInput(raw);
+      const saved = editingPlatformTemplateId
+        ? await withSession((token) => api.updatePlatformTemplate(token, editingPlatformTemplateId, input))
+        : await withSession((token) => api.createPlatformTemplate(token, input));
+      const templates = await withSession(api.platformTemplates);
+      setPlatformTemplates(templates.items);
+      setEditingPlatformTemplateId(saved.id);
+      setNotice(`Template ${saved.name} saved.`);
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function createBusiness(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setWorking(true);
     setError(null);
     try {
-      await withSession((token) => api.createPlatformBusiness(token, { name: businessName, slug: businessSlug }));
+      await withSession((token) => api.createPlatformBusiness(token, {
+        name: businessName,
+        slug: businessSlug,
+        templateKey: platformTemplateKey,
+      }));
       setBusinessName('');
       setBusinessSlug('');
       setNotice('Business created in pending state. Assign an owner before activation.');
@@ -988,6 +1279,7 @@ function App() {
     const canApprovePayments = currentUser.user.platformRole === 'SUPER_ADMIN' && grants.has('platform:payments:review');
     const platformNavigation: Array<{ view: PlatformView; label: string; permission: string }> = [
       { view: 'businesses', label: 'Businesses', permission: 'platform:businesses:read' },
+      { view: 'templates', label: 'Business templates', permission: 'platform:templates:manage' },
       { view: 'billing', label: 'Subscriptions', permission: 'platform:subscriptions:read' },
       { view: 'plans', label: 'Plans', permission: 'platform:plans:manage' },
       { view: 'paymentQueue', label: 'Payment review', permission: 'platform:payments:review' },
@@ -1059,15 +1351,18 @@ function App() {
                 <div className="form-grid">
                   <label>Business name<input value={businessName} onChange={(event) => setBusinessName(event.target.value)} maxLength={160} required /></label>
                   <label>Unique URL slug<input value={businessSlug} onChange={(event) => setBusinessSlug(event.target.value)} pattern="[a-z0-9]+(-[a-z0-9]+)*" maxLength={80} required /></label>
+                  <label>Business template<select value={platformTemplateKey} onChange={(event) => setPlatformTemplateKey(event.target.value)} required>
+                    {platformTemplates.map((template) => <option key={template.id} value={template.key}>{template.name} · {template.category}</option>)}
+                  </select></label>
                 </div>
-                <div className="platform-form-footer"><p className="fine-print">The slug is used as a stable identifier and can’t be changed here.</p><button className="button button-primary" disabled={working || !online}>{working ? 'Creating…' : 'Create pending business'}</button></div>
+                <div className="platform-form-footer"><p className="fine-print">The business inherits this template’s terminology, fields, modules, and workflow. The slug is its stable identifier.</p><button className="button button-primary" disabled={working || !online || platformTemplates.length === 0}>{working ? 'Creating…' : 'Create pending business'}</button></div>
               </form>
             )}
             {loading ? <LoadingState /> : platformBusinesses.length ? (
               <div className="table-wrap"><table><thead><tr><th>Business</th><th>Slug</th><th>Members</th><th>Status</th><th>Actions</th></tr></thead>
                 <tbody>{platformBusinesses.map((business) => (
                   <tr key={business.id}>
-                    <td><strong>{business.name}</strong></td><td>{business.slug}</td><td>{business._count?.memberships ?? 0}</td>
+                    <td><strong>{business.name}</strong><small className="table-note">{business.template?.name ?? 'Tailor template'}</small></td><td>{business.slug}</td><td>{business._count?.memberships ?? 0}</td>
                     <td><StatusPill status={business.status} /></td>
                     <td><div className="row-actions">
                       {grants.has('platform:businesses:manage') && <button className="button button-secondary" onClick={() => setOwnerBusinessId(business.id)}>Assign owner</button>}
@@ -1078,6 +1373,59 @@ function App() {
                 ))}</tbody>
               </table></div>
             ) : !loading && <EmptyState title="No businesses registered" detail="Create a pending business to begin onboarding." />}
+          </section>
+        )}
+        {platformView === 'templates' && grants.has('platform:templates:manage') && (
+          <section className="content-stack">
+            <div className="section-heading">
+              <div><p className="eyebrow">Business builder</p><h2>Business templates</h2><p className="muted">Define terminology, modules, custom fields, item types, payment options, dashboard widgets, and workflow stages. Changes are validated and audited by the server.</p></div>
+              <button className="button button-primary" type="button" onClick={startPlatformTemplate}>New template</button>
+            </div>
+            <div className="panel form-panel">
+              <div className="form-grid">
+                <label>Template to edit<select value={editingPlatformTemplateId ?? ''} onChange={(event) => setEditingPlatformTemplateId(event.target.value || null)}>
+                  <option value="">Choose a template</option>
+                  {platformTemplates.map((template) => <option key={template.id} value={template.id}>{template.name} · {template.key}</option>)}
+                </select></label>
+                <div className="platform-form-footer">
+                  <button className="button button-secondary" type="button" disabled={!editingPlatformTemplateId} onClick={() => {
+                    const selected = platformTemplates.find((template) => template.id === editingPlatformTemplateId);
+                    if (selected) editPlatformTemplate(selected);
+                  }}>Load selected template</button>
+                </div>
+              </div>
+              {(() => {
+                const selected = platformTemplates.find((template) => template.id === editingPlatformTemplateId);
+                return selected ? (
+                  <div className="template-preview">
+                    <p><strong>{selected.name}</strong> · {selected.category} · {selected.isSystem ? 'System template' : 'Custom template'}</p>
+                    <p className="fine-print">Modules: {selected.enabledModules.join(', ')}</p>
+                    <p className="fine-print">Items: {selected.itemTypes.map((item) => item.label).join(', ')}</p>
+                    <p className="fine-print">Workflow: {selected.workflowStages.map((stage) => stage.label).join(' → ')}</p>
+                    <p className="fine-print">Custom fields: {selected.fields.length} · Allowed transitions: {selected.workflowTransitions.length}</p>
+                  </div>
+                ) : null;
+              })()}
+            </div>
+            {platformTemplateDraft ? (
+              <form className="panel form-panel" onSubmit={savePlatformTemplate}>
+                <div className="panel-heading"><h3>{editingPlatformTemplateId ? 'Customize template' : 'Create a template'}</h3><p className="muted">Edit the structured JSON below. Keys must be unique; workflows need one initial stage and at least one terminal stage. Businesses without tenant overrides inherit the saved template defaults.</p></div>
+                <label className="span-all">Template configuration (JSON)<textarea className="template-json-editor" rows={24} spellCheck={false} value={platformTemplateDraft} onChange={(event) => setPlatformTemplateDraft(event.target.value)} required /></label>
+                <button className="button button-primary" disabled={working || !online}>{working ? 'Saving…' : editingPlatformTemplateId ? 'Save template changes' : 'Create template'}</button>
+              </form>
+            ) : null}
+            {loading ? <LoadingState /> : platformTemplates.length ? (
+              <div className="template-card-grid">
+                {platformTemplates.map((template) => (
+                  <article className="panel template-summary" key={template.id}>
+                    <div className="section-heading"><div><h3>{template.name}</h3><p className="muted">{template.key} · {template.category}</p></div><span className="notification-pill">{template.isSystem ? 'System' : 'Custom'}</span></div>
+                    <p className="fine-print">{template.description ?? 'No description provided.'}</p>
+                    <p className="fine-print">{template.workflowStages.length} workflow stages · {template.fields.length} fields · {template.enabledModules.length} modules</p>
+                    <button className="button button-secondary" type="button" onClick={() => editPlatformTemplate(template)}>Edit template</button>
+                  </article>
+                ))}
+              </div>
+            ) : <EmptyState title="No templates available" />}
           </section>
         )}
         {platformView === 'staff' && grants.has('platform:staff:manage') && (
@@ -1287,7 +1635,23 @@ function App() {
   }
 
   const permissions = new Set(currentUser?.context.permissions ?? []);
-  const visibleNavigation = navigation.filter((item) => !item.permission || permissions.has(item.permission));
+  const term = (key: string, fallback: string) => businessConfiguration?.terminology[key] ?? fallback;
+  const catalogFields = businessConfiguration?.fields.filter((field) =>
+    field.module === 'catalog' && ['item', 'catalog-item'].includes(field.screen)) ?? [];
+  const moduleEnabled = (module: string | undefined) =>
+    !module || !businessConfiguration || businessConfiguration.enabledModules.includes(module);
+  const widgetEnabled = (widget: string) =>
+    !businessConfiguration || businessConfiguration.dashboardWidgets.includes(widget);
+  const visibleNavigation = navigation
+    .filter((item) => (!item.permission || permissions.has(item.permission)) && moduleEnabled(item.module))
+    .map((item) => ({
+      ...item,
+      label: item.view === 'orders' ? term('orders', item.label)
+        : item.view === 'catalog' ? term('items', item.label)
+        : item.view === 'customers' ? term('customers', item.label)
+          : item.view === 'measurements' ? term('measurements', item.label)
+            : item.view === 'payments' ? term('payments', item.label) : item.label,
+    }));
 
   return (
     <div className="app-shell">
@@ -1297,8 +1661,8 @@ function App() {
           <span><strong>TailorApp</strong><small>Workroom desk</small></span>
         </a>
         <div className="shop-switcher">
-          <span className="shop-avatar" aria-hidden="true">{currentUser?.context.business?.name.slice(0, 1) ?? 'S'}</span>
-          <span><strong>{currentUser?.context.business?.name ?? 'Business'}</strong><small>Business workspace</small></span>
+          <span className="shop-avatar" aria-hidden="true">{(businessConfiguration?.business.name ?? currentUser?.context.business?.name ?? 'S').slice(0, 1)}</span>
+          <span><strong>{businessConfiguration?.business.name ?? currentUser?.context.business?.name ?? 'Business'}</strong><small>{businessConfiguration?.template.name ?? 'Business workspace'}</small></span>
         </div>
         <nav aria-label="Main navigation" className="main-nav">
           {visibleNavigation.map((item) => (
@@ -1335,21 +1699,21 @@ function App() {
             {loading && !dashboard ? <LoadingState /> : dashboard ? (
               <>
                 <div className="metric-grid">
-                  <MetricCard label="New orders today" value={String(dashboard.newOrders)} icon="＋" />
-                  <MetricCard label="Due today" value={String(dashboard.dueToday)} icon="◷" tone="amber" />
-                  <MetricCard label="In progress" value={String(dashboard.inProgress)} icon="⌁" tone="blue" />
-                  <MetricCard label="Overdue" value={String(dashboard.overdue)} icon="!" tone="rose" />
-                  {permissions.has('payments:read') && <MetricCard label="Outstanding" value={money(dashboard.outstanding)} icon="₨" tone="violet" />}
-                  {permissions.has('payments:read') && <MetricCard label="Collected today" value={money(dashboard.collectedToday)} icon="↗" tone="green" />}
+                  {widgetEnabled('newOrders') && <MetricCard label={`New ${term('orders', 'orders').toLowerCase()} today`} value={String(dashboard.newOrders)} icon="＋" />}
+                  {widgetEnabled('dueToday') && <MetricCard label="Due today" value={String(dashboard.dueToday)} icon="◷" tone="amber" />}
+                  {widgetEnabled('inProgress') && <MetricCard label="In progress" value={String(dashboard.inProgress)} icon="⌁" tone="blue" />}
+                  {widgetEnabled('overdue') && <MetricCard label="Overdue" value={String(dashboard.overdue)} icon="!" tone="rose" />}
+                  {widgetEnabled('outstanding') && permissions.has('payments:read') && <MetricCard label="Outstanding" value={money(dashboard.outstanding, businessConfiguration?.business.currency)} icon="₨" tone="violet" />}
+                  {widgetEnabled('collectedToday') && permissions.has('payments:read') && <MetricCard label="Collected today" value={money(dashboard.collectedToday, businessConfiguration?.business.currency)} icon="↗" tone="green" />}
                 </div>
-                <section className="panel dashboard-note">
+                {businessConfiguration?.template.key === 'tailor' && <section className="panel dashboard-note">
                   <div>
                     <p className="eyebrow">Today at a glance</p>
                     <h2>{dashboard.alterations} open alteration{dashboard.alterations === 1 ? '' : 's'}</h2>
                     <p className="muted">Dashboard figures use the shop's Asia/Karachi business day.</p>
                   </div>
                   <button className="button button-primary" onClick={() => setView('orders')} disabled={!permissions.has('orders:read')}>View orders</button>
-                </section>
+                </section>}
               </>
             ) : <EmptyState title="Dashboard unavailable" action="Refresh" onAction={() => void reloadCurrent()} />}
           </section>
@@ -1358,7 +1722,7 @@ function App() {
         {view === 'customers' && (
           <section className="content-stack">
             <div className="section-heading">
-              <div><h2>Customer book</h2><p className="muted">Search customers by name or phone number.</p></div>
+              <div><h2>{term('customers', 'Customers')}</h2><p className="muted">Search by name or phone number.</p></div>
               <form className="search-form" onSubmit={(event) => { event.preventDefault(); void reloadCurrent(); }}>
                 <label className="visually-hidden" htmlFor="customer-search">Search customers</label>
                 <input id="customer-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name or phone" />
@@ -1367,11 +1731,19 @@ function App() {
             </div>
             {permissions.has('customers:write') && (
               <form className="panel form-panel" onSubmit={addCustomer}>
-                <div className="panel-heading"><h3>Add a customer</h3><p className="muted">The shop checks for an existing phone number before saving.</p></div>
+                <div className="panel-heading"><h3>Add {term('customer', 'customer').toLowerCase()}</h3><p className="muted">The shop checks for an existing phone number before saving.</p></div>
                 <div className="form-grid">
                   <label>Name<input value={customerName} onChange={(event) => setCustomerName(event.target.value)} maxLength={120} required /></label>
                   <label>Phone<input value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} placeholder="03xx xxx xxxx or +92…" maxLength={24} required /></label>
                   <label className="span-all">Notes<textarea value={customerNotes} onChange={(event) => setCustomerNotes(event.target.value)} rows={2} maxLength={2000} /></label>
+                  {customerFields.map((field) => (
+                    <DynamicFieldControl
+                      key={field.id}
+                      field={field}
+                      value={customerCustomFields[field.key] ?? field.defaultValue}
+                      onChange={(value) => setCustomerCustomFields((current) => ({ ...current, [field.key]: value }))}
+                    />
+                  ))}
                 </div>
                 <button className="button button-primary" type="submit" disabled={working || !online}>{working ? 'Saving…' : 'Save customer'}</button>
               </form>
@@ -1381,7 +1753,15 @@ function App() {
                 <table><thead><tr><th>Customer</th><th>Phone</th><th>WhatsApp consent</th><th>Added</th></tr></thead>
                   <tbody>{customers.map((customer) => (
                     <tr key={customer.id}>
-                      <td><strong>{customer.name}</strong>{customer.notes && <small className="table-note">{customer.notes}</small>}</td>
+                      <td>
+                        <strong>{customer.name}</strong>
+                        {customer.notes && <small className="table-note">{customer.notes}</small>}
+                        {Object.entries(customer.customFields ?? {}).map(([key, value]) => (
+                          <small className="table-note" key={key}>
+                            {businessConfiguration?.fields.find((field) => field.key === key)?.label ?? key}: {displayFieldValue(value)}
+                          </small>
+                        ))}
+                      </td>
                       <td>{customer.phone}</td>
                       <td>
                         <span className="notification-pill">{customer.whatsappConsent && !customer.whatsappOptedOutAt ? 'Opted in' : 'Not opted in'}</span>
@@ -1403,16 +1783,82 @@ function App() {
           </section>
         )}
 
+        {view === 'catalog' && (
+          <section className="content-stack">
+            <div className="section-heading">
+              <div><h2>{term('items', 'Catalog')}</h2><p className="muted">Manage reusable items and services for this business.</p></div>
+              <form className="search-form" onSubmit={(event) => { event.preventDefault(); void reloadCurrent(); }}>
+                <label className="visually-hidden" htmlFor="catalog-search">Search catalog</label>
+                <input id="catalog-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name or SKU" />
+                <button className="button button-secondary" type="submit">Search</button>
+              </form>
+            </div>
+            {permissions.has('settings:manage') && (
+              <form className="panel form-panel" onSubmit={addCatalogItem}>
+                <div className="panel-heading"><h3>{editingCatalogItemId ? 'Edit' : 'Add'} {term('item', 'item').toLowerCase()}</h3><p className="muted">Item types and additional fields come from the active business template.</p></div>
+                <div className="form-grid">
+                  <label>Type<select
+                    value={catalogTypeKey || businessConfiguration?.template.itemTypes[0]?.key || ''}
+                    onChange={(event) => { setCatalogTypeKey(event.target.value); setCatalogCustomFields({}); }}
+                    required
+                  >
+                    {businessConfiguration?.template.itemTypes.map((type) => <option key={type.key} value={type.key}>{type.label}</option>)}
+                  </select></label>
+                  <label>Name<input value={catalogName} onChange={(event) => setCatalogName(event.target.value)} maxLength={160} required /></label>
+                  <label className="span-all">Description<textarea rows={2} value={catalogDescription} onChange={(event) => setCatalogDescription(event.target.value)} maxLength={2000} /></label>
+                  <label>Code / SKU<input value={catalogSku} onChange={(event) => setCatalogSku(event.target.value)} maxLength={80} /></label>
+                  <label>Unit<input value={catalogUnit} onChange={(event) => setCatalogUnit(event.target.value)} maxLength={40} required /></label>
+                  <label>Unit price ({businessConfiguration?.business.currency ?? 'PKR'})<input type="number" min="0" step="0.01" value={catalogUnitPrice} onChange={(event) => setCatalogUnitPrice(event.target.value)} /></label>
+                  {catalogFields.filter((field) => isVisibleForItemType(field, catalogTypeKey || businessConfiguration?.template.itemTypes[0]?.key)).map((field) => (
+                    <DynamicFieldControl
+                      key={field.id}
+                      field={field}
+                      value={catalogCustomFields[field.key] ?? field.defaultValue}
+                      onChange={(value) => setCatalogCustomFields((current) => ({ ...current, [field.key]: value }))}
+                    />
+                  ))}
+                </div>
+                <button className="button button-primary" disabled={working || !online}>{working ? 'Saving…' : editingCatalogItemId ? 'Update catalog item' : 'Save catalog item'}</button>
+                {editingCatalogItemId && <button className="button button-secondary" type="button" onClick={() => { setEditingCatalogItemId(null); setCatalogName(''); setCatalogDescription(''); setCatalogSku(''); setCatalogUnitPrice(''); setCatalogCustomFields({}); }}>Cancel edit</button>}
+              </form>
+            )}
+            {loading ? <LoadingState /> : catalogItems.length ? (
+              <div className="table-wrap">
+                <table><thead><tr><th>{term('item', 'Item')}</th><th>Type</th><th>Code</th><th>Unit price</th><th>Status</th><th>Action</th></tr></thead>
+                  <tbody>{catalogItems.map((item) => (
+                    <tr key={item.id}>
+                      <td><strong>{item.name}</strong>{Object.entries(item.customFields).map(([key, value]) => (
+                        <small className="table-note" key={key}>{catalogFields.find((field) => field.key === key)?.label ?? key}: {displayFieldValue(value)}</small>
+                      ))}</td>
+                      <td>{businessConfiguration?.template.itemTypes.find((type) => type.key === item.typeKey)?.label ?? item.typeKey}</td>
+                      <td>{item.sku ?? '—'}</td>
+                      <td>{item.unitPrice ? `${money(item.unitPrice, businessConfiguration?.business.currency)} / ${item.unit}` : `— / ${item.unit}`}</td>
+                      <td><span className="notification-pill">{item.active ? 'Active' : 'Inactive'}</span></td>
+                      <td>{permissions.has('settings:manage') && <><button className="button button-quiet" disabled={working || !online} onClick={() => editCatalogItem(item)}>Edit</button><button className="button button-quiet" disabled={working || !online} onClick={() => void setCatalogItemActive(item, !item.active)}>{item.active ? 'Deactivate' : 'Activate'}</button></>}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            ) : <EmptyState title={`No ${term('items', 'catalog items').toLowerCase()} yet`} detail="Create a catalog item or search with a different term." />}
+          </section>
+        )}
+
         {view === 'orders' && (
           <section className="content-stack">
             <div className="section-heading">
-              <div><h2>Order book</h2><p className="muted">Follow each garment from measurement confirmation to pickup.</p></div>
+              <div><h2>{term('orders', 'Orders')}</h2><p className="muted">Follow each {term('item', 'garment').toLowerCase()} through the configured workflow.</p></div>
               <form className="search-form" onSubmit={(event) => { event.preventDefault(); void reloadCurrent(); }}>
                 <label className="visually-hidden" htmlFor="order-search">Search orders</label>
                 <input id="order-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Order number or customer" />
                 <button className="button button-secondary" type="submit">Search</button>
               </form>
             </div>
+            {businessConfiguration && (
+              <section className="panel template-preview">
+                <h3>Configured {term('order', 'Order').toLowerCase()} workflow</h3>
+                <p className="fine-print">{businessConfiguration.workflow.stages.map((stage) => stage.label).join(' → ')}</p>
+              </section>
+            )}
             {permissions.has('orders:write') && (
               <form className="panel form-panel" onSubmit={addOrder}>
                 <div className="panel-heading"><h3>Start a new order</h3><p className="muted">The server assigns the order number and calculates the total.</p></div>
@@ -1420,13 +1866,52 @@ function App() {
                   <label>Customer<select value={orderCustomerId} onChange={(event) => setOrderCustomerId(event.target.value)} required>
                     <option value="">Choose customer</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name} · {customer.phone}</option>)}
                   </select></label>
-                  <label>Garment<input value={orderGarment} onChange={(event) => setOrderGarment(event.target.value)} maxLength={120} required /></label>
+                  {configuredItemTypes.length > 1 ? (
+                    <label>{term('item', 'Item')} type<select
+                      value={selectedOrderItemType?.key ?? ''}
+                      onChange={(event) => { setOrderItemTypeKey(event.target.value); setOrderCatalogItemId(''); setOrderItemCustomFields({}); }}
+                      required
+                    >
+                      {configuredItemTypes.map((type) => <option key={type.key} value={type.key}>{type.label}</option>)}
+                    </select></label>
+                  ) : null}
+                  <label>{selectedOrderItemType?.label ?? term('item', 'Item')} name<input value={orderGarment} onChange={(event) => setOrderGarment(event.target.value)} maxLength={160} required /></label>
+                  {catalogItems.some((item) => item.active && item.typeKey === (selectedOrderItemType?.key ?? businessConfiguration?.template.itemTypes[0]?.key)) && (
+                    <label>Saved {selectedOrderItemType?.label.toLowerCase() ?? term('item', 'Item').toLowerCase()}<select
+                      value={orderCatalogItemId}
+                      onChange={(event) => {
+                        const item = catalogItems.find((entry) => entry.id === event.target.value);
+                        setOrderCatalogItemId(item?.id ?? '');
+                        if (item) {
+                          setOrderGarment(item.name);
+                          if (item.unitPrice) setOrderPrice(item.unitPrice);
+                        }
+                      }}
+                    >
+                      <option value="">Enter a new item</option>
+                      {catalogItems.filter((item) => item.active && item.typeKey === (selectedOrderItemType?.key ?? businessConfiguration?.template.itemTypes[0]?.key)).map((item) => (
+                        <option key={item.id} value={item.id}>{item.name}{item.sku ? ` · ${item.sku}` : ''}</option>
+                      ))}
+                    </select></label>
+                  )}
                   <label>Quantity<input type="number" min="1" max="100" value={orderQuantity} onChange={(event) => setOrderQuantity(event.target.value)} required /></label>
-                  <label>Unit price (PKR)<input type="number" min="0.01" step="0.01" value={orderPrice} onChange={(event) => setOrderPrice(event.target.value)} required /></label>
-                  <label>Promised ready date<input type="datetime-local" value={orderDueAt} onChange={(event) => setOrderDueAt(event.target.value)} required /></label>
-                  {profiles.length > 0 && <label>Measurement profile<select value={orderMeasurementId} onChange={(event) => setOrderMeasurementId(event.target.value)}>
+                  <label>Unit price ({businessConfiguration?.business.currency ?? 'PKR'})<input type="number" min="0.01" step="0.01" value={orderPrice} onChange={(event) => setOrderPrice(event.target.value)} required /></label>
+                  <label>Due date<input type="datetime-local" value={orderDueAt} onChange={(event) => setOrderDueAt(event.target.value)} required /></label>
+                  {moduleEnabled('measurements') && profiles.length > 0 && <label>{term('measurement', 'Measurement')} profile<select value={orderMeasurementId} onChange={(event) => setOrderMeasurementId(event.target.value)}>
                     <option value="">No saved profile</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.garmentTemplate.name}</option>)}
                   </select></label>}
+                  {orderItemFields.map((field) => <DynamicFieldControl
+                    key={field.id}
+                    field={field}
+                    value={orderItemCustomFields[field.key]}
+                    onChange={(value) => setOrderItemCustomFields((current) => ({ ...current, [field.key]: value }))}
+                  />)}
+                  {orderFields.map((field) => <DynamicFieldControl
+                    key={field.id}
+                    field={field}
+                    value={orderCustomFields[field.key]}
+                    onChange={(value) => setOrderCustomFields((current) => ({ ...current, [field.key]: value }))}
+                  />)}
                 </div>
                 <button className="button button-primary" type="submit" disabled={working || !online || !orderCustomerId}>{working ? 'Creating…' : 'Create order'}</button>
               </form>
@@ -1436,16 +1921,42 @@ function App() {
                 {orders.map((order) => (
                   <article className="order-card" key={order.id}>
                     <div className="order-card-main">
-                      <div className="order-heading"><span className="order-number">{order.orderNumber}</span><StatusPill status={order.status} /></div>
+                      <div className="order-heading"><span className="order-number">{order.orderNumber}</span><StatusPill status={order.currentWorkflowStage?.label ?? order.workflowStageKey ?? order.status} /></div>
                       <h3>{order.customer.name}</h3>
-                      <p className="muted">{order.customer.phone} · Ready by {karachiDate(order.promisedAt)}</p>
-                      <ul className="garment-list">{order.items.map((item) => <li key={item.id}>{item.quantity} × {item.garmentName}</li>)}</ul>
+                      <p className="muted">{order.customer.phone} · Due {karachiDate(order.promisedAt)}</p>
+                      <ul className="garment-list">{order.items.map((item) => (
+                        <li key={item.id}>
+                          {item.quantity} × {item.itemName ?? item.garmentName}
+                          {Object.entries(item.customFields ?? {}).map(([key, value]) => (
+                            <small className="table-note" key={key}>
+                              {businessConfiguration?.fields.find((field) => field.key === key)?.label ?? key}: {displayFieldValue(value)}
+                            </small>
+                          ))}
+                        </li>
+                      ))}</ul>
+                      {Object.entries(order.customFields ?? {}).map(([key, value]) => (
+                        <p className="fine-print" key={key}>
+                          {businessConfiguration?.fields.find((field) => field.key === key)?.label ?? key}: {displayFieldValue(value)}
+                        </p>
+                      ))}
                     </div>
                     <div className="order-card-side">
-                      <span className="money-total">{money(order.total)}</span>
-                      <span className="muted">{money(order.outstanding)} outstanding</span>
+                      <span className="money-total">{money(order.total, businessConfiguration?.business.currency)}</span>
+                      <span className="muted">{money(order.outstanding, businessConfiguration?.business.currency)} outstanding</span>
                       <div className="row-actions">
-                        {permissions.has('orders:transition') && <TransitionButton order={order} onChange={changeStatus} disabled={working || !online} />}
+                        {permissions.has('orders:transition') && businessConfiguration?.workflow.transitions
+                          .filter((transition) => transition.fromStageId === (order.workflowStageId
+                            ?? businessConfiguration.workflow.stages.find((stage) =>
+                              stage.key === (order.workflowStageKey ?? order.status))?.id))
+                          .map((transition) => {
+                            const stage = businessConfiguration.workflow.stages.find((item) => item.id === transition.toStageId);
+                            return stage ? <button
+                              className="button button-secondary"
+                              key={transition.id}
+                              disabled={working || !online}
+                              onClick={() => void changeWorkflowStage(order, stage.key)}
+                            >Move to {stage.label}</button> : null;
+                          })}
                         {permissions.has('payments:write') && Number(order.outstanding) > 0 && (
                           <button className="button button-secondary" onClick={() => { setPaymentOrderId(order.id); setPaymentAmount(order.outstanding); }}>Record payment</button>
                         )}
@@ -1535,12 +2046,95 @@ function App() {
                       <td>{notification.recipientPhone || 'Invalid number'}</td>
                       <td>{notification.kind.replaceAll('_', ' ').toLowerCase()}</td>
                       <td><NotificationPill status={notification.status} /></td>
-                      <td>{notification.lastError ?? (notification.readAt ? `Read ${karachiDate(notification.readAt)}` : notification.deliveredAt ? `Delivered ${karachiDate(notification.deliveredAt)}` : notification.sentAt ? `Sent ${karachiDate(notification.sentAt)}` : `Attempts: ${notification.attemptCount}`)}</td>
+                      <td>
+                        {notification.renderedMessage && <small className="table-note">{notification.renderedMessage}</small>}
+                        {notification.lastError ?? (notification.readAt ? `Read ${karachiDate(notification.readAt)}` : notification.deliveredAt ? `Delivered ${karachiDate(notification.deliveredAt)}` : notification.sentAt ? `Sent ${karachiDate(notification.sentAt)}` : `Attempts: ${notification.attemptCount}`)}
+                      </td>
                     </tr>
                   ))}</tbody>
                 </table>
               </div>
             ) : <EmptyState title="No WhatsApp notifications yet" detail="Order, payment and pickup notifications appear here after their changes commit." />}
+          </section>
+        )}
+        {view === 'configuration' && permissions.has('settings:manage') && (
+          <section className="content-stack">
+            <div className="section-heading"><div><p className="eyebrow">Business builder</p><h2>Business settings</h2><p className="muted">Customize your workspace appearance, terminology, enabled modules, payment methods, and dashboard without changing your business data.</p></div></div>
+            {businessConfigurationDraft ? (
+              <>
+                <form className="panel form-panel" onSubmit={saveBusinessConfiguration}>
+                  <div className="form-grid">
+                    <label>Business name<input value={businessConfigurationDraft.business.name} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, name: event.target.value } })} maxLength={160} required /></label>
+                    <label>Logo URL<input type="url" value={businessConfigurationDraft.business.logoUrl ?? ''} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, logoUrl: event.target.value || null } })} placeholder="https://…" /></label>
+                    <label>Currency<input value={businessConfigurationDraft.business.currency} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, currency: event.target.value.toUpperCase() } })} pattern="[A-Z]{3}" maxLength={3} required /></label>
+                    <label>Timezone<input value={businessConfigurationDraft.business.timezone} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, timezone: event.target.value } })} maxLength={100} required /></label>
+                  </div>
+                  <h3>Enabled modules</h3>
+                  <div className="configuration-options">
+                    {businessConfigurationDraft.availableModules.map((module) => (
+                      <label className="checkbox-row" key={module}>
+                        <input type="checkbox" checked={businessConfigurationDraft.enabledModules.includes(module)} onChange={(event) => setBusinessConfigurationDraft({
+                          ...businessConfigurationDraft,
+                          enabledModules: event.target.checked
+                            ? [...businessConfigurationDraft.enabledModules, module]
+                            : businessConfigurationDraft.enabledModules.filter((value) => value !== module),
+                        })} />
+                        {module}
+                      </label>
+                    ))}
+                  </div>
+                  <h3>Terminology</h3>
+                  <div className="form-grid">
+                    {Object.entries(businessConfigurationDraft.terminology).map(([key, label]) => (
+                      <label key={key}>{key.replaceAll('_', ' ')}<input value={label} onChange={(event) => setBusinessConfigurationDraft({
+                        ...businessConfigurationDraft,
+                        terminology: { ...businessConfigurationDraft.terminology, [key]: event.target.value },
+                      })} maxLength={120} required /></label>
+                    ))}
+                  </div>
+                  <h3>Payment methods</h3>
+                  <div className="configuration-options">
+                    {businessConfigurationDraft.availablePaymentMethods.map((method) => (
+                      <label className="checkbox-row" key={method}>
+                        <input type="checkbox" checked={businessConfigurationDraft.paymentMethods.includes(method)} disabled={businessConfigurationDraft.paymentMethods.length === 1 && businessConfigurationDraft.paymentMethods.includes(method)} onChange={(event) => setBusinessConfigurationDraft({
+                          ...businessConfigurationDraft,
+                          paymentMethods: event.target.checked
+                            ? [...businessConfigurationDraft.paymentMethods, method]
+                            : businessConfigurationDraft.paymentMethods.filter((value) => value !== method),
+                        })} />
+                        {method}
+                      </label>
+                    ))}
+                  </div>
+                  <h3>Dashboard widgets</h3>
+                  <div className="configuration-options">
+                    {businessConfigurationDraft.availableDashboardWidgets.map((widget) => (
+                      <label className="checkbox-row" key={widget}>
+                        <input type="checkbox" checked={businessConfigurationDraft.dashboardWidgets.includes(widget)} onChange={(event) => setBusinessConfigurationDraft({
+                          ...businessConfigurationDraft,
+                          dashboardWidgets: event.target.checked
+                            ? [...businessConfigurationDraft.dashboardWidgets, widget]
+                            : businessConfigurationDraft.dashboardWidgets.filter((value) => value !== widget),
+                        })} />
+                        {widget}
+                      </label>
+                    ))}
+                  </div>
+                  <h3>Notification templates</h3>
+                  <p className="muted">Configure event bodies and approved WhatsApp template names. Variable order must match the approved Meta template. Supported variables: {'{{business.name}}'}, {'{{customer.name}}'}, {'{{customer.phone}}'}, {'{{order.number}}'}, {'{{order.total}}'}, {'{{order.paid}}'}, {'{{order.balance}}'}, {'{{order.status}}'}, {'{{order.readyDate}}'}, {'{{item.name}}'}.</p>
+                  <label>Event templates (JSON)<textarea rows={10} spellCheck={false} value={notificationTemplateJson} onChange={(event) => setNotificationTemplateJson(event.target.value)} /></label>
+                  <div className="platform-form-footer"><p className="fine-print">Version {businessConfigurationDraft.version}. Saving publishes an audited configuration for this business only.</p><button className="button button-primary" disabled={working || !online}>{working ? 'Publishing…' : 'Publish settings'}</button></div>
+                </form>
+                <section className="panel">
+                  <h3>Current template preview</h3>
+                  <p className="muted">{businessConfigurationDraft.template.name} · {businessConfigurationDraft.template.category}</p>
+                  <p className="fine-print">Item types: {businessConfigurationDraft.template.itemTypes.map((item) => item.label).join(', ')}</p>
+                  <p className="fine-print">Configured fields: {businessConfigurationDraft.fields.length}</p>
+                  <p className="fine-print">Workflow: {businessConfigurationDraft.workflow.stages.map((stage) => stage.label).join(' → ')}</p>
+                  <p className="fine-print">Allowed transitions: {businessConfigurationDraft.workflow.transitions.length}</p>
+                </section>
+              </>
+            ) : <LoadingState />}
           </section>
         )}
         {view === 'subscription' && (
@@ -1648,9 +2242,103 @@ function MetricCard({ label, value, icon, tone = 'green' }: { label: string; val
   return <article className={`metric-card tone-${tone}`}><span className="metric-icon" aria-hidden="true">{icon}</span><span className="metric-label">{label}</span><strong>{value}</strong></article>;
 }
 
-function StatusPill({ status }: { status: Order['status'] | 'ACTIVE' | 'SUSPENDED' | 'PENDING' | 'TRIAL' | 'EXPIRED' | 'CANCELLED' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED' | 'ADJUSTED' }) {
+function StatusPill({ status }: { status: string }) {
   const label = status.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
   return <span className={`status-pill status-${status.toLowerCase()}`}>{label}</span>;
+}
+
+function isVisibleForItemType(
+  field: BusinessConfiguration['fields'][number],
+  itemTypeKey: string | undefined,
+): boolean {
+  if (!field.visibility || typeof field.visibility !== 'object' || Array.isArray(field.visibility)) return true;
+  const visibility = field.visibility as Record<string, unknown>;
+  const configuredTypes = visibility.itemTypes ?? visibility.garmentTypes;
+  if (!Array.isArray(configuredTypes) || configuredTypes.length === 0) return true;
+  return Boolean(itemTypeKey && configuredTypes.includes(itemTypeKey));
+}
+
+function displayFieldValue(value: unknown): string {
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return value === null || value === undefined ? '' : JSON.stringify(value);
+}
+
+function DynamicFieldControl({
+  field,
+  value,
+  onChange,
+}: {
+  field: BusinessConfiguration['fields'][number];
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  const options = Array.isArray(field.options)
+    ? field.options.flatMap((option) => {
+      if (typeof option === 'string') return [{ key: option, label: option }];
+      if (option && typeof option === 'object' && !Array.isArray(option)
+        && 'key' in option && 'label' in option
+        && typeof option.key === 'string' && typeof option.label === 'string') {
+        return [{ key: option.key, label: option.label }];
+      }
+      return [];
+    })
+    : [];
+  const required = field.required;
+  if (field.type === 'BOOLEAN') {
+    return (
+      <label className="checkbox-row">
+        <input type="checkbox" checked={value === true} onChange={(event) => onChange(event.target.checked)} />
+        {field.label}{required ? ' *' : ''}
+      </label>
+    );
+  }
+  if (field.type === 'DROPDOWN') {
+    return (
+      <label>{field.label}
+        <select value={typeof value === 'string' ? value : ''} onChange={(event) => onChange(event.target.value)} required={required}>
+          <option value="">Choose…</option>
+          {options.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+        </select>
+      </label>
+    );
+  }
+  if (field.type === 'MULTI_SELECT') {
+    const selected = Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+    return (
+      <label>{field.label}
+        <select
+          multiple
+          value={selected}
+          onChange={(event) => onChange(Array.from(event.target.selectedOptions, (option) => option.value))}
+          required={required}
+        >
+          {options.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+        </select>
+      </label>
+    );
+  }
+  if (field.type === 'LONG_TEXT' || field.type === 'NOTES') {
+    return (
+      <label className="span-all">{field.label}<textarea
+        rows={3}
+        value={typeof value === 'string' ? value : ''}
+        onChange={(event) => onChange(event.target.value)}
+        required={required}
+      /></label>
+    );
+  }
+  const inputType = field.type === 'DATE' ? 'date'
+    : field.type === 'DATETIME' ? 'datetime-local'
+      : ['NUMBER', 'CURRENCY', 'MEASUREMENT'].includes(field.type) ? 'number' : 'text';
+  return (
+    <label>{field.label}<input
+      type={inputType}
+      step={['CURRENCY', 'MEASUREMENT'].includes(field.type) ? '0.01' : field.type === 'NUMBER' ? 'any' : undefined}
+      value={value === undefined || value === null ? '' : String(value)}
+      onChange={(event) => onChange(event.target.value)}
+      required={required}
+    /></label>
+  );
 }
 
 function NotificationPill({ status }: { status: WhatsAppNotification['status'] }) {

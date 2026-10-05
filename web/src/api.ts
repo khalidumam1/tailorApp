@@ -15,15 +15,42 @@ const customerSchema = z.object({
   whatsappConsentAt: z.string().nullable(),
   whatsappOptedOutAt: z.string().nullable(),
   notes: z.string().nullable().optional(),
+  customFields: z.record(z.string(), z.unknown()).optional(),
   version: z.number().int(),
   createdAt: z.string(),
 });
 
 const customerSummarySchema = customerSchema.pick({ id: true, name: true, phone: true });
+const catalogItemSchema = z.object({
+  id: z.string().uuid(),
+  businessId: z.string().uuid(),
+  typeKey: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  sku: z.string().nullable(),
+  unit: z.string(),
+  unitPrice: z.string().nullable(),
+  sortOrder: z.number().int(),
+  version: z.number().int(),
+  active: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  customFields: z.record(z.string(), z.unknown()),
+});
 const orderSchema = z.object({
   id: z.string().uuid(),
   orderNumber: z.string(),
   status: z.enum(orderStatuses),
+  workflowStageId: z.string().uuid().nullable().optional(),
+  workflowStageKey: z.string().nullable().optional(),
+  currentWorkflowStage: z.object({
+    id: z.string().uuid(),
+    key: z.string(),
+    label: z.string(),
+    sortOrder: z.number().int(),
+    isInitial: z.boolean(),
+    isTerminal: z.boolean(),
+  }).nullable().optional(),
   version: z.number().int(),
   total: z.string(),
   paid: z.string(),
@@ -31,12 +58,16 @@ const orderSchema = z.object({
   promisedAt: z.string(),
   createdAt: z.string(),
   customer: customerSummarySchema,
+  customFields: z.record(z.string(), z.unknown()).optional(),
   items: z.array(z.object({
     id: z.string().uuid(),
     garmentName: z.string(),
+    itemName: z.string().nullable().optional(),
+    itemTypeKey: z.string().optional(),
     quantity: z.number().int(),
     unitPrice: z.string(),
     measurementSnapshot: z.record(z.string(), z.unknown()),
+    customFields: z.record(z.string(), z.unknown()).optional(),
   })),
 });
 
@@ -129,6 +160,7 @@ const notificationSchema = z.object({
   templateName: z.string(),
   attemptCount: z.number().int(),
   lastError: z.string().nullable(),
+  renderedMessage: z.string().nullable(),
   sentAt: z.string().nullable(),
   deliveredAt: z.string().nullable(),
   readAt: z.string().nullable(),
@@ -158,8 +190,158 @@ const platformBusinessSchema = z.object({
   slug: z.string(),
   status: z.enum(['ACTIVE', 'SUSPENDED', 'PENDING']),
   createdAt: z.string(),
+  template: z.object({ id: z.string().uuid(), key: z.string(), name: z.string() }).optional(),
   _count: z.object({ memberships: z.number().int() }).optional(),
 });
+
+const customFieldSchema = z.object({
+  id: z.string().uuid(),
+  templateId: z.string().uuid().nullable(),
+  businessId: z.string().uuid().nullable(),
+  module: z.string(),
+  screen: z.string(),
+  key: z.string(),
+  label: z.string(),
+  type: z.string(),
+  required: z.boolean(),
+  defaultValue: z.unknown().nullable(),
+  validation: z.unknown().nullable(),
+  options: z.unknown().nullable(),
+  visibility: z.unknown().nullable(),
+  sortOrder: z.number().int(),
+  active: z.boolean(),
+});
+const workflowStageSchema = z.object({
+  id: z.string().uuid(),
+  templateId: z.string().uuid().nullable(),
+  businessId: z.string().uuid().nullable(),
+  key: z.string(),
+  label: z.string(),
+  sortOrder: z.number().int(),
+  isInitial: z.boolean(),
+  isTerminal: z.boolean(),
+  actions: z.array(z.string()),
+});
+const workflowTransitionSchema = z.object({
+  id: z.string().uuid(),
+  templateId: z.string().uuid().nullable(),
+  businessId: z.string().uuid().nullable(),
+  fromStageId: z.string().uuid(),
+  toStageId: z.string().uuid(),
+  allowedRoleKeys: z.array(z.string()),
+  actions: z.array(z.string()),
+});
+const templateItemTypeSchema = z.object({ key: z.string(), label: z.string() });
+const notificationTemplateSchema = z.object({
+  enabled: z.boolean(),
+  body: z.string(),
+  providerTemplateName: z.string().optional(),
+  language: z.string().optional(),
+});
+const notificationTemplatesSchema = z.record(
+  z.enum(['ORDER_CREATED', 'PAYMENT_RECEIVED', 'ORDER_READY']),
+  notificationTemplateSchema,
+);
+export function parseNotificationTemplates(value: unknown) {
+  return notificationTemplatesSchema.parse(value);
+}
+const businessTemplateSchema = z.object({
+  id: z.string().uuid(),
+  key: z.string(),
+  name: z.string(),
+  category: z.string(),
+  description: z.string().nullable(),
+  terminology: z.record(z.string(), z.string()),
+  enabledModules: z.array(z.string()),
+  itemTypes: z.array(templateItemTypeSchema),
+  paymentMethods: z.array(z.string()),
+  dashboardWidgets: z.array(z.string()),
+  isSystem: z.boolean(),
+  active: z.boolean(),
+  fields: z.array(customFieldSchema),
+  workflowStages: z.array(workflowStageSchema),
+  workflowTransitions: z.array(workflowTransitionSchema),
+});
+const businessConfigurationSchema = z.object({
+  business: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    logoUrl: z.string().nullable(),
+    type: z.string(),
+    currency: z.string(),
+    timezone: z.string(),
+  }),
+  template: z.object({
+    id: z.string().uuid(),
+    key: z.string(),
+    name: z.string(),
+    category: z.string(),
+    itemTypes: z.array(templateItemTypeSchema),
+  }),
+  availableModules: z.array(z.string()),
+  availablePaymentMethods: z.array(z.string()),
+  availableDashboardWidgets: z.array(z.string()),
+  terminology: z.record(z.string(), z.string()),
+  enabledModules: z.array(z.string()),
+  paymentMethods: z.array(z.string()),
+  dashboardWidgets: z.array(z.string()),
+  notificationTemplates: notificationTemplatesSchema,
+  fields: z.array(customFieldSchema),
+  workflow: z.object({
+    stages: z.array(workflowStageSchema),
+    transitions: z.array(workflowTransitionSchema),
+  }),
+  version: z.number().int(),
+  publishedAt: z.string().nullable(),
+});
+const templateFieldInputSchema = z.object({
+  module: z.string(),
+  screen: z.string(),
+  key: z.string(),
+  label: z.string(),
+  type: z.enum([
+    'TEXT', 'LONG_TEXT', 'NUMBER', 'CURRENCY', 'DATE', 'DATETIME', 'DROPDOWN',
+    'MULTI_SELECT', 'BOOLEAN', 'MEASUREMENT', 'REFERENCE', 'NOTES',
+  ]),
+  required: z.boolean(),
+  defaultValue: z.unknown().optional(),
+  validation: z.unknown().optional(),
+  options: z.unknown().optional(),
+  visibility: z.unknown().optional(),
+  sortOrder: z.number().int(),
+});
+const templateEditSchema = z.object({
+  key: z.string(),
+  name: z.string(),
+  category: z.string(),
+  description: z.string().optional(),
+  terminology: z.record(z.string(), z.string()),
+  enabledModules: z.array(z.string()),
+  itemTypes: z.array(templateItemTypeSchema),
+  paymentMethods: z.array(z.string()),
+  dashboardWidgets: z.array(z.string()),
+  fields: z.array(templateFieldInputSchema),
+  stages: z.array(z.object({
+    key: z.string(),
+    label: z.string(),
+    sortOrder: z.number().int(),
+    isInitial: z.boolean(),
+    isTerminal: z.boolean(),
+    actions: z.array(z.string()),
+  })),
+  transitions: z.array(z.object({
+    from: z.string(),
+    to: z.string(),
+    allowedRoleKeys: z.array(z.string()),
+    actions: z.array(z.string()),
+  })),
+});
+export type BusinessConfiguration = z.infer<typeof businessConfigurationSchema>;
+export type BusinessTemplate = z.infer<typeof businessTemplateSchema>;
+export type BusinessTemplateInput = z.infer<typeof templateEditSchema>;
+export function parseBusinessTemplateInput(value: unknown): BusinessTemplateInput {
+  return templateEditSchema.parse(value);
+}
 
 const platformStaffSchema = z.object({
   id: z.string().uuid(),
@@ -266,6 +448,7 @@ const errorSchema = z.object({
 });
 
 export type Customer = z.infer<typeof customerSchema>;
+export type CatalogItem = z.infer<typeof catalogItemSchema>;
 export type Order = z.infer<typeof orderSchema>;
 export type LoginResult = z.infer<typeof loginResponseSchema>;
 export type Dashboard = z.infer<typeof dashboardSchema>;
@@ -386,6 +569,45 @@ export const api = {
     if (query) params.set('q', query);
     return request(`/customers?${params}`, z.object({ items: z.array(customerSchema), nextCursor: z.string().nullable() }), { token });
   },
+  catalog(token: string, query = '', includeInactive = false) {
+    const params = new URLSearchParams({ limit: '100' });
+    if (query) params.set('q', query);
+    if (includeInactive) params.set('includeInactive', 'true');
+    return request(`/catalog?${params}`, z.object({
+      items: z.array(catalogItemSchema),
+      nextCursor: z.string().nullable(),
+    }), { token });
+  },
+  createCatalogItem(token: string, input: {
+    typeKey: string;
+    name: string;
+    description?: string;
+    sku?: string;
+    unit: string;
+    unitPrice?: string;
+    sortOrder: number;
+    customFields: Record<string, unknown>;
+  }) {
+    return request('/catalog', z.object({ data: catalogItemSchema }), { token, method: 'POST', body: input });
+  },
+  updateCatalogItem(token: string, itemId: string, input: {
+    version: number;
+    typeKey?: string;
+    name?: string;
+    description?: string | null;
+    sku?: string | null;
+    unit?: string;
+    unitPrice?: string | null;
+    sortOrder?: number;
+    active?: boolean;
+    customFields?: Record<string, unknown>;
+  }) {
+    return request(`/catalog/${itemId}`, z.object({ data: catalogItemSchema }), {
+      token,
+      method: 'PATCH',
+      body: input,
+    });
+  },
   createCustomer(token: string, input: CustomerInput) {
     return request('/customers', customerSchema, { token, method: 'POST', body: input });
   },
@@ -421,8 +643,30 @@ export const api = {
       body: { toStatus, version: order.version },
     });
   },
+  transitionWorkflow(token: string, order: Order, toStageKey: string) {
+    return request(`/orders/${order.id}/workflow`, orderSchema.partial(), {
+      token,
+      method: 'POST',
+      body: { toStageKey, version: order.version },
+    });
+  },
   templates(token: string) {
     return request('/measurements/templates', z.object({ items: z.array(templateSchema) }), { token });
+  },
+  businessConfiguration(token: string) {
+    return request('/business/configuration', businessConfigurationSchema, { token });
+  },
+  updateBusinessConfiguration(token: string, input: {
+    version: number;
+    business?: Partial<BusinessConfiguration['business']>;
+    terminologyOverrides?: Record<string, string>;
+    enabledModules?: string[];
+    paymentMethods?: string[];
+    notificationTemplates?: z.infer<typeof notificationTemplatesSchema>;
+    dashboardWidgets?: string[];
+    publish?: boolean;
+  }) {
+    return request('/business/configuration', z.unknown(), { token, method: 'PUT', body: input });
   },
   measurements(token: string, customerId: string) {
     return request(`/measurements/customers/${customerId}`, z.object({ items: z.array(profileSchema) }), { token });
@@ -453,7 +697,16 @@ export const api = {
       nextCursor: z.string().nullable(),
     }), { token });
   },
-  createPlatformBusiness(token: string, input: { name: string; slug: string }) {
+  platformTemplates(token: string) {
+    return request('/platform/templates', z.object({ items: z.array(businessTemplateSchema) }), { token });
+  },
+  createPlatformTemplate(token: string, input: BusinessTemplateInput) {
+    return request('/platform/templates', businessTemplateSchema, { token, method: 'POST', body: input });
+  },
+  updatePlatformTemplate(token: string, templateId: string, input: BusinessTemplateInput) {
+    return request(`/platform/templates/${templateId}`, businessTemplateSchema, { token, method: 'PUT', body: input });
+  },
+  createPlatformBusiness(token: string, input: { name: string; slug: string; templateKey?: string }) {
     return request('/platform/businesses', platformBusinessSchema, { token, method: 'POST', body: input });
   },
   assignBusinessOwner(token: string, businessId: string, input: { name: string; email: string; initialPassword: string }) {
