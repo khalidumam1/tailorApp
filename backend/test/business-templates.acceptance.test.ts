@@ -352,7 +352,11 @@ test('all five business templates work through scoped configuration, catalog, or
         : itemType),
       publish: true,
     });
-    assert.equal(savedConfigurationResponse.status, 200, 'the Owner role can publish business configuration');
+    assert.equal(
+      savedConfigurationResponse.status,
+      200,
+      `the Owner role can publish business configuration: ${await savedConfigurationResponse.text()}`,
+    );
     const effectiveConfigurationResponse = await apiRequest('/api/v1/business/configuration', ownerToken);
     assert.equal(effectiveConfigurationResponse.status, 200);
     const effectiveConfiguration = await responseData<ConfigurationResponse>(effectiveConfigurationResponse);
@@ -489,7 +493,11 @@ test('all five business templates work through scoped configuration, catalog, or
         customFields: customFieldInput(orderItemFields),
       }],
     });
-    assert.equal(orderResponse.status, 201, `${template.key} order API accepts the configured fields`);
+    assert.equal(
+      orderResponse.status,
+      201,
+      `${template.key} order API accepts the configured fields: ${await orderResponse.clone().text()}`,
+    );
     const createdOrder = await responseData<{
       id: string;
       version: number;

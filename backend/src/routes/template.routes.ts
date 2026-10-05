@@ -9,6 +9,8 @@ import { authenticate, requirePlatformPermission } from '../middleware/auth.js';
 const router = express.Router();
 const idSchema = z.string().uuid();
 const keySchema = z.string().trim().regex(/^[a-z][a-z0-9_-]{0,79}$/);
+const paymentMethodSchema = z.string().trim().regex(/^[A-Z][A-Z0-9_-]{0,79}$/);
+const dashboardWidgetSchema = z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,79}$/);
 const fieldTypes = [
   'TEXT', 'LONG_TEXT', 'NUMBER', 'CURRENCY', 'DATE', 'DATETIME', 'DROPDOWN',
   'MULTI_SELECT', 'BOOLEAN', 'MEASUREMENT', 'REFERENCE', 'NOTES',
@@ -65,8 +67,8 @@ const templateSchema = z.object({
     key: keySchema,
     label: z.string().trim().min(1).max(120),
   }).strict()).min(1).max(100),
-  paymentMethods: z.array(keySchema).min(1).max(30),
-  dashboardWidgets: z.array(keySchema).max(60),
+  paymentMethods: z.array(paymentMethodSchema).min(1).max(30),
+  dashboardWidgets: z.array(dashboardWidgetSchema).max(60),
   fields: z.array(fieldSchema).max(300),
   stages: z.array(stageSchema).min(2).max(100),
   transitions: z.array(transitionSchema).max(300),

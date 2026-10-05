@@ -13,6 +13,8 @@ const historyQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 const keySchema = z.string().trim().regex(/^[a-z][a-z0-9_-]{0,79}$/);
+const paymentMethodSchema = z.string().trim().regex(/^[A-Z][A-Z0-9_-]{0,79}$/);
+const dashboardWidgetSchema = z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,79}$/);
 const itemTypesSchema = z.array(z.object({
   key: keySchema,
   label: z.string().trim().min(1).max(120),
@@ -29,7 +31,7 @@ const configurationSchema = z.object({
   terminologyOverrides: z.record(keySchema, z.string().trim().min(1).max(120)).optional(),
   enabledModules: z.array(keySchema).max(40).optional(),
   itemTypes: itemTypesSchema.optional(),
-  paymentMethods: z.array(keySchema).min(1).max(30).optional(),
+  paymentMethods: z.array(paymentMethodSchema).min(1).max(30).optional(),
   notificationTemplates: z.record(z.enum([
     'ORDER_CREATED',
     'PAYMENT_RECEIVED',
@@ -62,7 +64,7 @@ const configurationSchema = z.object({
     }
   })).optional(),
   contactPhone: z.string().trim().min(6).max(32).regex(/^\+?[0-9][0-9\s().-]*$/).nullable().optional(),
-  dashboardWidgets: z.array(keySchema).max(60).optional(),
+  dashboardWidgets: z.array(dashboardWidgetSchema).max(60).optional(),
   publish: z.boolean().default(true),
 }).strict().refine((input) =>
   Object.keys(input).some((key) => key !== 'version' && key !== 'publish'),

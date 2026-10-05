@@ -324,7 +324,11 @@ router.post('/', requireBusinessPermission('orders:write'), asyncHandler(async (
       });
       await queueOrderCreated(tx, created.id);
       return created;
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 20_000,
+      timeout: 30_000,
+    });
     res.status(201).json({ data: order });
   } catch (error) {
     mapOrderWriteError(error);
