@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { HttpError } from '../src/errors.js';
-import { validateCustomFieldValues } from '../src/domain/custom-fields.js';
+import { validateCustomFieldValues, withBuiltInOrderItemFields } from '../src/domain/custom-fields.js';
 
 const field = (key: string, type: string, additional: Record<string, unknown> = {}) => ({
   id: `id-${key}`,
@@ -58,4 +58,15 @@ test('enforces required fields, visibility, unknown keys, defaults, and configur
   );
   const values = validateCustomFieldValues(definitions, { serial: 'AB12' });
   assert.equal(values.find((value) => value.key === 'warranty')?.value, 12);
+});
+
+test('only projects built-in order item values into configured legacy-compatible fields', () => {
+  assert.deepEqual(
+    withBuiltInOrderItemFields([{ key: 'material' }], { material: 'wood' }, 'Dining table', 2),
+    { material: 'wood' },
+  );
+  assert.deepEqual(
+    withBuiltInOrderItemFields([{ key: 'garment_name' }, { key: 'quantity' }], {}, 'Jacket', 3),
+    { garment_name: 'Jacket', quantity: 3 },
+  );
 });

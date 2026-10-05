@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
+import { businessRoleKey } from '../domain/orders.js';
 
 const router = express.Router();
 const keySchema = z.string().trim().regex(/^[a-z][a-z0-9_-]{0,79}$/);
@@ -77,7 +78,38 @@ export function validateBusinessStructure(input: StructureInput): void {
     || stageByKey.get(transition.from)?.isTerminal)) {
     throw new HttpError(400, 'Transitions must connect known non-terminal stages exactly once', 'INVALID_BUSINESS_WORKFLOW_TRANSITION');
   }
+  const outgoing = new Map(input.stages.map((stage) => [stage.key, [] as string[]]));
+  for (const transition of input.transitions) outgoing.get(transition.from)?.push(transition.to);
+  const initial = input.stages.find((stage) => stage.isInitial)!;
+  if (input.stages.some((stage) => !stage.isTerminal && !outgoing.get(stage.key)?.length)) {
+    throw new HttpError(400, 'Every non-terminal workflow stage needs an outgoing transition', 'INVALID_BUSINESS_WORKFLOW_GRAPH');
+  }
+  const reachable = new Set<string>([initial.key]);
+  const pending = [initial.key];
+  while (pending.length) {
+    for (const next of outgoing.get(pending.pop()!) ?? []) {
+      if (!reachable.has(next)) {
+        reachable.add(next);
+        pending.push(next);
+      }
+    }
+  }
+  if (input.stages.some((stage) => !reachable.has(stage.key))
+    || !input.stages.some((stage) => stage.isTerminal && reachable.has(stage.key))) {
+    throw new HttpError(400, 'Every workflow stage must be reachable from the initial stage and lead to a terminal stage', 'INVALID_BUSINESS_WORKFLOW_GRAPH');
+  }
   for (const field of input.fields) {
+    if (field.visibility !== undefined && field.visibility !== null) {
+      if (typeof field.visibility !== 'object' || Array.isArray(field.visibility)) {
+        throw new HttpError(400, `Visibility rules for "${field.key}" must be an object`, 'INVALID_BUSINESS_FIELD_VISIBILITY');
+      }
+      const visibility = field.visibility as Record<string, unknown>;
+      const visibleItemTypes = visibility.itemTypes ?? visibility.garmentTypes;
+      if (visibleItemTypes !== undefined
+        && (!Array.isArray(visibleItemTypes) || !visibleItemTypes.every((key) => typeof key === 'string'))) {
+        throw new HttpError(400, `Item type visibility for "${field.key}" must be a list of keys`, 'INVALID_BUSINESS_FIELD_VISIBILITY');
+      }
+    }
     if (field.validation !== undefined && field.validation !== null) {
       if (typeof field.validation !== 'object' || Array.isArray(field.validation)) {
         throw new HttpError(400, `Validation rules for "${field.key}" must be an object`, 'INVALID_BUSINESS_FIELD_VALIDATION');
@@ -156,6 +188,7 @@ router.put('/configuration/structure', authenticate, requireBusinessPermission('
             select: {
               id: true,
               version: true,
+              itemTypes: true,
               enabledModules: true,
               paymentMethods: true,
               dashboardWidgets: true,
@@ -170,6 +203,15 @@ router.put('/configuration/structure', authenticate, requireBusinessPermission('
       });
       if (!business) throw new HttpError(404, 'Business not found', 'BUSINESS_NOT_FOUND');
       if (!business.template) throw new HttpError(409, 'Business has no assigned template', 'BUSINESS_TEMPLATE_MISSING');
+      const businessRoles = await tx.role.findMany({
+        where: { businessId },
+        select: { name: true },
+      });
+      const roleKeys = new Set(businessRoles.map((role) => businessRoleKey(role.name)));
+      if (input.transitions.some((transition) =>
+        transition.allowedRoleKeys.some((key) => !roleKeys.has(key)))) {
+        throw new HttpError(400, 'Workflow transition role keys must match a role configured for this business', 'INVALID_BUSINESS_WORKFLOW_ROLE');
+      }
       if (business.template.version !== input.templateVersion
         || (business.configuration?.version ?? 0) !== input.version) {
         throw new HttpError(409, 'Business configuration or template changed; reload before saving', 'CONFIGURATION_VERSION_CONFLICT');
@@ -177,6 +219,20 @@ router.put('/configuration/structure', authenticate, requireBusinessPermission('
 
       const effectiveModules = business.configuration?.enabledModules ?? business.template.enabledModules;
       const templateModules = new Set(business.template.enabledModules);
+      const itemTypeValue = business.configuration?.itemTypes ?? business.template.itemTypes;
+      const itemTypeKeys = new Set(Array.isArray(itemTypeValue)
+        ? itemTypeValue.flatMap((item) => item && typeof item === 'object' && !Array.isArray(item)
+          && 'key' in item && typeof item.key === 'string' ? [item.key] : [])
+        : []);
+      for (const field of input.fields) {
+        const visibility = field.visibility && typeof field.visibility === 'object' && !Array.isArray(field.visibility)
+          ? field.visibility as Record<string, unknown> : {};
+        const visibleItemTypes = visibility.itemTypes ?? visibility.garmentTypes;
+        if (Array.isArray(visibleItemTypes)
+          && visibleItemTypes.some((key) => typeof key !== 'string' || !itemTypeKeys.has(key))) {
+          throw new HttpError(400, `Visibility rules for "${field.key}" must reference configured item types`, 'INVALID_BUSINESS_FIELD_VISIBILITY');
+        }
+      }
       if (input.fields.some((field) => !templateModules.has(field.module)
         || (!effectiveModules.includes(field.module)
           && !business.customFields.some((existing) => existing.key === field.key && existing.module === field.module)))) {

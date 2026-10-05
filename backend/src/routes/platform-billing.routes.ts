@@ -5,7 +5,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requirePlatformPermission, requireSuperAdminPermission } from '../middleware/auth.js';
-import { generateSubscriptionReceiptPdf } from '../whatsapp.js';
+import { generateSubscriptionReceiptPdf, queueSubscriptionPaymentNotification } from '../whatsapp.js';
 
 const router = express.Router();
 const idSchema = z.string().uuid();
@@ -323,6 +323,7 @@ router.patch('/payments/:paymentId/review', requireSuperAdminPermission('platfor
       await tx.auditEvent.create({
         data: { businessId: payment.businessId, actorId: actor, action: 'platform.subscription_payment_under_review', entityType: 'subscription_payment', entityId: payment.id, requestId: req.requestId, metadata: {} },
       });
+      await queueSubscriptionPaymentNotification(tx, payment.id, 'SUBSCRIPTION_PAYMENT_UNDER_REVIEW');
       return { payment: updated, subscription: null };
     }
     if (input.decision === 'REJECT') {
@@ -337,6 +338,7 @@ router.patch('/payments/:paymentId/review', requireSuperAdminPermission('platfor
       await tx.auditEvent.create({
         data: { businessId: payment.businessId, actorId: actor, action: 'platform.subscription_payment_rejected', entityType: 'subscription_payment', entityId: payment.id, requestId: req.requestId, metadata: { reason: input.reason } },
       });
+      await queueSubscriptionPaymentNotification(tx, payment.id, 'SUBSCRIPTION_PAYMENT_REJECTED', input.reason);
       return { payment: updated, subscription: null };
     }
     const changed = await tx.subscriptionPayment.updateMany({
@@ -403,6 +405,7 @@ router.patch('/payments/:paymentId/review', requireSuperAdminPermission('platfor
     await tx.auditEvent.create({
       data: { businessId: payment.businessId, actorId: actor, action: 'platform.subscription_payment_approved', entityType: 'subscription_payment', entityId: payment.id, requestId: req.requestId, metadata: { subscriptionId: subscription.id, invoiceNumber } },
     });
+    await queueSubscriptionPaymentNotification(tx, payment.id, 'SUBSCRIPTION_PAYMENT_APPROVED');
     return { payment: updated, subscription };
   }, { maxWait: 10_000, timeout: 30_000 });
   res.json({ data: result });

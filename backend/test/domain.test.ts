@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { calculateNetPaid, calculateOutstanding } from '../src/domain/finance.js';
-import { isAllowedOrderTransition } from '../src/domain/orders.js';
+import { businessRoleKey, isAllowedOrderTransition } from '../src/domain/orders.js';
 
 test('financial balance arithmetic uses decimal values including reversals', () => {
   const ledger = [
@@ -19,4 +19,9 @@ test('workflow transitions allow only the next stage or cancellation before term
   assert.equal(isAllowedOrderTransition('READY_FOR_PICKUP', 'COLLECTED'), true);
   assert.equal(isAllowedOrderTransition('COLLECTED', 'CANCELLED'), false);
   assert.equal(isAllowedOrderTransition('CANCELLED', 'NEW'), false);
+});
+
+test('business role keys normalize to stable workflow keys', () => {
+  assert.equal(businessRoleKey('Quality Control'), 'quality_control');
+  assert.equal(businessRoleKey(' Owner '), 'owner');
 });

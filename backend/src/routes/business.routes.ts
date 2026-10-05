@@ -13,6 +13,11 @@ const historyQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 const keySchema = z.string().trim().regex(/^[a-z][a-z0-9_-]{0,79}$/);
+const itemTypesSchema = z.array(z.object({
+  key: keySchema,
+  label: z.string().trim().min(1).max(120),
+}).strict()).min(1).max(100).refine((items) =>
+  new Set(items.map((item) => item.key)).size === items.length, 'Item type keys must be unique');
 const configurationSchema = z.object({
   version: z.number().int().min(0),
   business: z.object({
@@ -23,12 +28,28 @@ const configurationSchema = z.object({
   }).strict().optional(),
   terminologyOverrides: z.record(keySchema, z.string().trim().min(1).max(120)).optional(),
   enabledModules: z.array(keySchema).max(40).optional(),
+  itemTypes: itemTypesSchema.optional(),
   paymentMethods: z.array(keySchema).min(1).max(30).optional(),
-  notificationTemplates: z.record(z.enum(['ORDER_CREATED', 'PAYMENT_RECEIVED', 'ORDER_READY', 'STATUS_CHANGED', 'PAYMENT_DUE', 'SUBSCRIPTION_EXPIRING']), z.object({
+  notificationTemplates: z.record(z.enum([
+    'ORDER_CREATED',
+    'PAYMENT_RECEIVED',
+    'ORDER_READY',
+    'STATUS_CHANGED',
+    'PAYMENT_DUE',
+    'SUBSCRIPTION_EXPIRING',
+    'CUSTOMER_CREATED',
+    'CUSTOMER_UPDATED',
+    'MEASUREMENT_APPENDED',
+    'SUBSCRIPTION_PAYMENT_SUBMITTED',
+    'SUBSCRIPTION_PAYMENT_UNDER_REVIEW',
+    'SUBSCRIPTION_PAYMENT_APPROVED',
+    'SUBSCRIPTION_PAYMENT_REJECTED',
+  ]), z.object({
     enabled: z.boolean(),
     body: z.string().trim().min(1).max(2000),
     providerTemplateName: z.string().regex(/^[a-z0-9_]{1,128}$/).optional(),
     language: z.string().regex(/^[a-z]{2}(?:_[A-Z]{2})?$/).optional(),
+    recipientPolicy: z.enum(['CUSTOMER', 'BUSINESS_CONTACT']).optional(),
   }).strict().superRefine((template, context) => {
     try {
       validateNotificationTemplateBody(template.body);
@@ -46,7 +67,14 @@ const configurationSchema = z.object({
 }).strict().refine((input) =>
   Object.keys(input).some((key) => key !== 'version' && key !== 'publish'),
   'Provide at least one configuration value to update',
-);
+).superRefine((input, context) => {
+  for (const key of ['enabledModules', 'paymentMethods', 'dashboardWidgets'] as const) {
+    const values = input[key];
+    if (values && new Set(values).size !== values.length) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} must not contain duplicates` });
+    }
+  }
+});
 
 function getBusinessId(req: express.Request): string {
   if (req.auth?.scope !== 'business' || !req.auth.business) {
@@ -126,8 +154,8 @@ router.get('/configuration', asyncHandler(async (req, res) => {
         key: business.template.key,
         name: business.template.name,
         category: business.template.category,
-        itemTypes: business.template.itemTypes,
       },
+      itemTypes: business.configuration?.itemTypes ?? business.template.itemTypes,
       availableModules: business.template.enabledModules,
       availablePaymentMethods: business.template.paymentMethods,
       availableDashboardWidgets: business.template.dashboardWidgets,
@@ -202,12 +230,40 @@ router.put('/configuration', requireBusinessPermission('settings:manage'), async
       });
       if (!business) throw new HttpError(404, 'Business not found', 'BUSINESS_NOT_FOUND');
       if (!business.template) throw new HttpError(409, 'Business has no assigned template', 'BUSINESS_TEMPLATE_MISSING');
+      const template = business.template;
       if ((business.configuration?.version ?? 0) !== input.version) {
         throw new HttpError(409, 'Configuration changed since it was loaded; reload before saving', 'CONFIGURATION_VERSION_CONFLICT');
       }
-      const templateModules = new Set(business.template.enabledModules);
+      const templateModules = new Set(template.enabledModules);
       if (input.enabledModules?.some((module) => !templateModules.has(module))) {
         throw new HttpError(400, 'Only modules provided by this business template can be enabled', 'INVALID_BUSINESS_MODULE');
+      }
+      if (input.paymentMethods?.some((method) => !template.paymentMethods.includes(method))) {
+        throw new HttpError(400, 'Payment methods must be supported by the assigned business template', 'INVALID_BUSINESS_PAYMENT_METHOD');
+      }
+      if (input.dashboardWidgets?.some((widget) => !template.dashboardWidgets.includes(widget))) {
+        throw new HttpError(400, 'Dashboard widgets must be supported by the assigned business template', 'INVALID_BUSINESS_DASHBOARD_WIDGET');
+      }
+      const knownTerminology = new Set(Object.keys(jsonObject(template.terminology)));
+      if (input.terminologyOverrides && Object.keys(input.terminologyOverrides).some((key) => !knownTerminology.has(key))) {
+        throw new HttpError(400, 'Terminology overrides must use keys from the assigned business template', 'INVALID_BUSINESS_TERMINOLOGY');
+      }
+      if (input.itemTypes) {
+        const nextTypeKeys = input.itemTypes.map((item) => item.key);
+        const [usedOrderItem, usedCatalogItem] = await Promise.all([
+          tx.orderItem.findFirst({
+            where: { businessId, itemTypeKey: { notIn: nextTypeKeys } },
+            select: { itemTypeKey: true },
+          }),
+          tx.businessItem.findFirst({
+            where: { businessId, active: true, typeKey: { notIn: nextTypeKeys } },
+            select: { typeKey: true },
+          }),
+        ]);
+        if (usedOrderItem || usedCatalogItem) {
+          const removedKey = usedOrderItem?.itemTypeKey ?? usedCatalogItem?.typeKey;
+          throw new HttpError(409, `Reassign existing orders and catalog items before removing item type "${removedKey}"`, 'BUSINESS_ITEM_TYPE_IN_USE');
+        }
       }
 
       const terminologyOverrides = {
@@ -216,11 +272,12 @@ router.put('/configuration', requireBusinessPermission('settings:manage'), async
       };
       const configurationData = {
         terminologyOverrides,
-        enabledModules: input.enabledModules ?? business.configuration?.enabledModules ?? business.template.enabledModules,
-        paymentMethods: input.paymentMethods ?? business.configuration?.paymentMethods ?? business.template.paymentMethods,
+        enabledModules: input.enabledModules ?? business.configuration?.enabledModules ?? template.enabledModules,
+        ...(input.itemTypes !== undefined ? { itemTypes: jsonSnapshot(input.itemTypes) } : {}),
+        paymentMethods: input.paymentMethods ?? business.configuration?.paymentMethods ?? template.paymentMethods,
         notificationTemplates: input.notificationTemplates ?? business.configuration?.notificationTemplates ?? {},
         contactPhone: input.contactPhone !== undefined ? input.contactPhone : business.configuration?.contactPhone ?? null,
-        dashboardWidgets: input.dashboardWidgets ?? business.configuration?.dashboardWidgets ?? business.template.dashboardWidgets,
+        dashboardWidgets: input.dashboardWidgets ?? business.configuration?.dashboardWidgets ?? template.dashboardWidgets,
         publishedAt: input.publish ? new Date() : business.configuration?.publishedAt ?? null,
         version: { increment: 1 },
       };
@@ -285,6 +342,7 @@ router.put('/configuration', requireBusinessPermission('settings:manage'), async
           version: configuration.version,
           terminologyOverrides: configuration.terminologyOverrides,
           enabledModules: configuration.enabledModules,
+          itemTypes: configuration.itemTypes,
           paymentMethods: configuration.paymentMethods,
           notificationTemplates: configuration.notificationTemplates,
           dashboardWidgets: configuration.dashboardWidgets,

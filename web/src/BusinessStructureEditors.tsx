@@ -48,6 +48,18 @@ function validationRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function visibilityRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function visibleTypeKeys(value: unknown): string[] {
+  const visibility = visibilityRecord(value);
+  const keys = visibility.itemTypes ?? visibility.garmentTypes;
+  return Array.isArray(keys) ? keys.filter((key): key is string => typeof key === 'string') : [];
+}
+
 function jsonValue(value: unknown, key: string): string {
   if (typeof value !== 'object' || value === null || !(key in value)) return '';
   const current = (value as Record<string, unknown>)[key];
@@ -57,6 +69,7 @@ function jsonValue(value: unknown, key: string): string {
 type Props = {
   fields: BusinessFieldInput[];
   inheritedFields: BusinessConfiguration['fields'];
+  itemTypes: BusinessConfiguration['itemTypes'];
   availableModules: string[];
   workflowEnabled: boolean;
   stages: BusinessStageInput[];
@@ -68,6 +81,7 @@ type Props = {
 export function BusinessStructureEditors({
   fields,
   inheritedFields,
+  itemTypes,
   availableModules,
   workflowEnabled,
   stages,
@@ -182,6 +196,22 @@ export function BusinessStructureEditors({
                     })(),
                   })} maxLength={300} /></label>
                 )}
+                <label className="span-all">Visible for item/service types (comma-separated keys; blank means all)
+                  <input
+                    value={visibleTypeKeys(field.visibility).join(', ')}
+                    onChange={(event) => {
+                      const visibility = { ...visibilityRecord(field.visibility) };
+                      const keys = event.target.value.split(',').map((key) => key.trim()).filter(Boolean);
+                      if (keys.length) visibility.itemTypes = [...new Set(keys)];
+                      else {
+                        delete visibility.itemTypes;
+                        delete visibility.garmentTypes;
+                      }
+                      updateField(index, { visibility });
+                    }}
+                    placeholder={itemTypes.map((itemType) => itemType.key).join(', ')}
+                  />
+                </label>
               </div>
               <button className="button button-quiet" type="button" onClick={() => onFieldsChange(fields.filter((_, fieldIndex) => fieldIndex !== index))}>Remove field</button>
             </article>
@@ -235,7 +265,7 @@ export function BusinessStructureEditors({
           </article>
         ))}
         <div className="section-heading transition-editor-heading">
-          <div><h4>Allowed transitions</h4><p className="muted">Role keys are compared to the member’s business role name.</p></div>
+          <div><h4>Allowed transitions</h4><p className="muted">Allowed role keys use lower-case role names with spaces replaced by underscores.</p></div>
           <button className="button button-secondary" type="button" onClick={addTransition}>Add transition</button>
         </div>
         {transitions.map((transition, index) => (

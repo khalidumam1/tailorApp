@@ -122,7 +122,7 @@ export const paymentQuerySchema = z.object({
 
 export const syncOperationSchema = z.object({
   clientOperationId: z.string().uuid(),
-  entityType: z.enum(['customer', 'measurement', 'order']),
+  entityType: z.enum(['customer', 'measurement', 'order', 'catalog_item']),
   entityId: z.string().uuid(),
   baseVersion: z.number().int().positive().optional(),
   payload: z.record(z.string(), z.unknown()),

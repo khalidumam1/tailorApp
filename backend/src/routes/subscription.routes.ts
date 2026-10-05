@@ -5,7 +5,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
-import { generateSubscriptionReceiptPdf } from '../whatsapp.js';
+import { generateSubscriptionReceiptPdf, queueSubscriptionPaymentNotification } from '../whatsapp.js';
 
 const router = express.Router();
 const paymentSchema = z.object({
@@ -160,6 +160,7 @@ router.post('/payments', requireBusinessPermission('subscriptions:manage'), asyn
           metadata: { amount: amount.toFixed(2), method: input.method },
         },
       });
+      await queueSubscriptionPaymentNotification(tx, created.id, 'SUBSCRIPTION_PAYMENT_SUBMITTED');
       return tx.subscriptionPayment.findUniqueOrThrow({
         where: { id: created.id },
         include: { plan: { select: { name: true } } },

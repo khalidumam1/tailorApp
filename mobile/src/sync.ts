@@ -1,8 +1,9 @@
 import { Q, type Collection, type Model } from '@nozbe/watermelondb';
-import type { Session } from './api';
+import { ApiError, type Session } from './api';
 import { apiRequest } from './api';
 import {
   CustomerRecord,
+  CatalogItemRecord,
   MeasurementRecord,
   OrderRecord,
   OutboxRecord,
@@ -15,15 +16,16 @@ import {
   createClientId,
   normalizePhone,
   type LocalCustomer,
+  type LocalCatalogItem,
   type LocalOrder,
   type LocalTemplate,
 } from './local';
 import { toE164Phone } from '@tailor/shared';
 
-type EntityType = 'customer' | 'measurement' | 'order';
+type EntityType = 'customer' | 'measurement' | 'order' | 'catalog_item';
 type SyncOperationResult = {
   clientOperationId: string;
-  status: 'APPLIED' | 'CONFLICT';
+  status: string;
   response: Record<string, unknown>;
 };
 
@@ -33,8 +35,53 @@ export interface LocalPaymentAttempt {
   method: string;
 }
 
-function retryDelay(attempts: number): number {
-  return Math.min(60_000, 1_000 * 2 ** Math.min(attempts, 6));
+function retryDelay(attempts: number, retryAfterMs = 0): number {
+  const exponential = Math.min(5 * 60_000, 1_000 * 2 ** Math.min(Math.max(0, attempts - 1), 8));
+  const jittered = exponential * (0.75 + Math.random() * 0.5);
+  return Math.max(jittered, Math.min(Math.max(0, retryAfterMs), 60 * 60_000));
+}
+
+function isRetryable(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return true;
+  return error.status === 401 || error.status === 408 || error.status === 425
+    || error.status === 429 || error.status >= 500;
+}
+
+function responseErrorMessage(value: unknown, fallback: string): string {
+  if (typeof value === 'string' && value.trim()) return value;
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const response = value as Record<string, unknown>;
+    const error = response.error && typeof response.error === 'object'
+      ? response.error as Record<string, unknown>
+      : {};
+    for (const candidate of [error.message, response.message, response.detail]) {
+      if (typeof candidate === 'string' && candidate.trim()) return candidate;
+    }
+  }
+  return fallback;
+}
+
+function customFieldsObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (!Array.isArray(value)) return {};
+  const fields: Record<string, unknown> = {};
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const item = entry as Record<string, unknown>;
+    const definition = item.fieldDefinition && typeof item.fieldDefinition === 'object'
+      ? item.fieldDefinition as Record<string, unknown>
+      : item.definition && typeof item.definition === 'object'
+        ? item.definition as Record<string, unknown>
+        : {};
+    const key = item.key ?? item.fieldKey ?? definition.key;
+    if (typeof key !== 'string' || !key) continue;
+    const fieldValue = item.value ?? item.valueJson ?? item.valueText ?? item.valueNumber
+      ?? item.valueBoolean ?? item.valueDate;
+    if (fieldValue !== undefined && fieldValue !== null) fields[key] = fieldValue;
+  }
+  return fields;
 }
 
 function timestampToMilliseconds(value: unknown): number {
@@ -47,7 +94,27 @@ function timestampToMilliseconds(value: unknown): number {
     const parsed = Date.parse(value);
     if (Number.isFinite(parsed)) return parsed;
   }
-  return Date.now();
+  throw new Error('The server returned an invalid timestamp');
+}
+
+function serializeSyncCursor(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object' && !Array.isArray(value)) return JSON.stringify(value);
+  throw new Error('The server returned an invalid sync cursor');
+}
+
+function parseCatalogChangesPage(value: unknown): { items: unknown[]; hasMore: boolean } {
+  if (value === undefined || value === null) return { items: [], hasMore: false };
+  if (Array.isArray(value)) return { items: value, hasMore: false };
+  if (!value || typeof value !== 'object') {
+    throw new Error('The server returned an invalid catalog change page');
+  }
+  const page = value as Record<string, unknown>;
+  if (!Array.isArray(page.items) || typeof page.hasMore !== 'boolean') {
+    throw new Error('The server returned an invalid catalog change page');
+  }
+  return { items: page.items, hasMore: page.hasMore };
 }
 
 async function findRecord<T extends Model>(
@@ -97,6 +164,116 @@ function mapOrder(record: OrderRecord): LocalOrder {
   };
 }
 
+type CatalogItemSnapshot = Omit<LocalCatalogItem, 'business_id' | 'syncState'> & { updatedAt: number };
+
+function parseRemoteCatalogItems(value: unknown): CatalogItemSnapshot[] {
+  if (!Array.isArray(value)) throw new Error('The server returned an invalid catalog list');
+  return value.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error('The server returned an invalid catalog item');
+    }
+    const record = item as Record<string, unknown>;
+    if (typeof record.id !== 'string' || typeof record.typeKey !== 'string'
+      || typeof record.name !== 'string' || typeof record.unit !== 'string'
+      || typeof record.sortOrder !== 'number' || typeof record.version !== 'number'
+      || typeof record.active !== 'boolean'
+      || (typeof record.updatedAt !== 'string' && typeof record.updatedAt !== 'number')
+      || (record.description !== undefined && record.description !== null && typeof record.description !== 'string')
+      || (record.sku !== undefined && record.sku !== null && typeof record.sku !== 'string')
+      || (record.unitPrice !== undefined && record.unitPrice !== null
+        && typeof record.unitPrice !== 'string' && typeof record.unitPrice !== 'number')) {
+      throw new Error('The server returned an invalid catalog item');
+    }
+    let customFields: unknown = record.customFields ?? {};
+    if (typeof customFields === 'string') {
+      try {
+        customFields = JSON.parse(customFields) as unknown;
+      } catch {
+        throw new Error('The server returned invalid catalog custom fields');
+      }
+    }
+    if (Array.isArray(customFields)) customFields = customFieldsObject(customFields);
+    if (!customFields || typeof customFields !== 'object' || Array.isArray(customFields)) {
+      throw new Error('The server returned invalid catalog custom fields');
+    }
+    return {
+      id: record.id,
+      typeKey: record.typeKey,
+      name: record.name,
+      description: typeof record.description === 'string' ? record.description : null,
+      sku: typeof record.sku === 'string' ? record.sku : null,
+      unit: record.unit,
+      unitPrice: typeof record.unitPrice === 'string' || typeof record.unitPrice === 'number'
+        ? String(record.unitPrice)
+        : null,
+      sortOrder: typeof record.sortOrder === 'number' ? record.sortOrder : 0,
+      version: typeof record.version === 'number' ? record.version : 1,
+      active: typeof record.active === 'boolean' ? record.active : true,
+      customFields: customFields as Record<string, unknown>,
+      updatedAt: timestampToMilliseconds(record.updatedAt),
+    };
+  });
+}
+
+async function findCatalogRecord(
+  collection: Collection<CatalogItemRecord>,
+  id: string,
+): Promise<CatalogItemRecord | null> {
+  const byLocalId = await findRecord(collection, id);
+  if (byLocalId) return byLocalId;
+  const records = await collection.query(Q.where('remote_id', id)).fetch();
+  return records[0] ?? null;
+}
+
+function assignCatalogSnapshot(
+  record: CatalogItemRecord,
+  businessId: string,
+  item: CatalogItemSnapshot,
+): void {
+  record.businessId = businessId;
+  record.remoteId = item.id;
+  record.typeKey = item.typeKey;
+  record.name = item.name;
+  record.description = item.description;
+  record.sku = item.sku;
+  record.unit = item.unit;
+  record.unitPrice = item.unitPrice;
+  record.sortOrder = item.sortOrder;
+  record.version = item.version;
+  record.active = item.active;
+  record.customFieldsJson = JSON.stringify(item.customFields);
+  record.syncState = 'synced';
+  record.updatedAt = item.updatedAt;
+}
+
+async function upsertCatalogItemsInWrite(
+  database: Awaited<ReturnType<typeof openLocalDatabase>>,
+  businessId: string,
+  items: CatalogItemSnapshot[],
+): Promise<void> {
+  const collection = database.get<CatalogItemRecord>('catalog_items');
+  for (const item of items) {
+    const existing = await findCatalogRecord(collection, item.id);
+    if (existing && existing.syncState !== 'synced') continue;
+    if (existing) {
+      await existing.update((record) => assignCatalogSnapshot(record, businessId, item));
+    } else {
+      await collection.create((record) => {
+        record._raw.id = item.id;
+        assignCatalogSnapshot(record, businessId, item);
+      });
+    }
+  }
+}
+
+async function upsertCatalogItems(
+  businessId: string,
+  items: CatalogItemSnapshot[],
+): Promise<void> {
+  const database = await openLocalDatabase();
+  await database.write(async () => upsertCatalogItemsInWrite(database, businessId, items));
+}
+
 export async function enqueueOperation(input: {
   businessId: string;
   entityType: EntityType;
@@ -129,6 +306,87 @@ export async function enqueueOperation(input: {
     });
   });
   return operationId;
+}
+
+export async function saveCatalogItemOffline(input: {
+  businessId: string;
+  typeKey: string;
+  name: string;
+  description?: string;
+  sku?: string;
+  unit: string;
+  unitPrice?: string;
+  sortOrder: number;
+  customFields: Record<string, unknown>;
+}): Promise<void> {
+  const typeKey = input.typeKey.trim();
+  const name = input.name.trim();
+  const description = input.description?.trim() || null;
+  const sku = input.sku?.trim() || null;
+  const unit = input.unit.trim() || 'unit';
+  const unitPrice = input.unitPrice?.trim() || null;
+  if (!typeKey) throw new Error('Choose an item type');
+  if (!name) throw new Error('Enter an item name');
+  if (unitPrice && !/^\d{1,10}(\.\d{1,2})?$/.test(unitPrice)) {
+    throw new Error('Enter a valid unit price');
+  }
+  if (!Number.isInteger(input.sortOrder) || input.sortOrder < 0) {
+    throw new Error('The catalog sort order is invalid');
+  }
+
+  const database = await openLocalDatabase();
+  const itemId = createClientId();
+  const operationId = createClientId();
+  const itemPayload = {
+    typeKey,
+    name,
+    ...(description ? { description } : {}),
+    ...(sku ? { sku } : {}),
+    unit,
+    ...(unitPrice ? { unitPrice } : {}),
+    sortOrder: input.sortOrder,
+    customFields: input.customFields,
+  };
+  const operation = {
+    clientOperationId: operationId,
+    entityType: 'catalog_item',
+    entityId: itemId,
+    payload: { action: 'catalog.create', item: itemPayload },
+  };
+
+  await database.write(async () => {
+    const item = database.get<CatalogItemRecord>('catalog_items').prepareCreate((record) => {
+      record._raw.id = itemId;
+      record.businessId = input.businessId;
+      record.remoteId = null;
+      record.typeKey = typeKey;
+      record.name = name;
+      record.description = description;
+      record.sku = sku;
+      record.unit = unit;
+      record.unitPrice = unitPrice;
+      record.sortOrder = input.sortOrder;
+      record.version = 0;
+      record.active = true;
+      record.customFieldsJson = JSON.stringify(input.customFields);
+      record.syncState = 'pending';
+      record.updatedAt = Date.now();
+    });
+    const outbox = database.get<OutboxRecord>('outbox').prepareCreate((record) => {
+      record._raw.id = operationId;
+      record.businessId = input.businessId;
+      record.entityType = 'catalog_item';
+      record.entityId = itemId;
+      record.baseVersion = null;
+      record.payloadJson = JSON.stringify(operation);
+      record.status = 'pending';
+      record.attempts = 0;
+      record.nextRetryAt = 0;
+      record.lastError = null;
+      record.createdAt = Date.now();
+    });
+    await database.batch(item, outbox);
+  });
 }
 
 export async function saveCustomerOffline(input: {
@@ -375,6 +633,15 @@ async function markEntitySyncState(
     });
     return;
   }
+  if (entityType === 'catalog_item') {
+    const record = await findRecord(database.get<CatalogItemRecord>('catalog_items'), entityId);
+    if (!record) throw new Error('The local catalog item for a queued change is missing');
+    await record.update((item) => {
+      item.syncState = status;
+      if (version !== undefined) item.version = version;
+    });
+    return;
+  }
   if (entityType === 'measurement') {
     const record = await findRecord(database.get<MeasurementRecord>('measurements'), entityId);
     if (!record) throw new Error('The local measurement for a queued change is missing');
@@ -387,7 +654,7 @@ async function markEntitySyncState(
 }
 
 async function pushOutbox(
-  session: Session,
+  getSession: () => Session,
   businessId: string,
   updateSession: (session: Session) => void,
 ): Promise<void> {
@@ -426,7 +693,7 @@ async function pushOutbox(
       const request = JSON.parse(record.payloadJson) as Record<string, unknown>;
       const result = await apiRequest<{
         data: { results: SyncOperationResult[] };
-      }>(session, '/api/v1/sync/operations', {
+      }>(getSession(), '/api/v1/sync/operations', {
         method: 'POST',
         body: { operations: [request] },
       }, updateSession);
@@ -444,28 +711,68 @@ async function pushOutbox(
         continue;
       }
 
+      if (outcome.status === 'REJECTED') {
+        await database.write(async () => {
+          await record.update((item) => {
+            item.status = 'rejected';
+            item.lastError = JSON.stringify(outcome.response);
+          });
+          await markEntitySyncState(database, record.entityType, record.entityId, 'rejected');
+        });
+        continue;
+      }
+
+      if (outcome.status !== 'APPLIED') {
+        throw new Error(`The server returned an unsupported sync result: ${outcome.status}`);
+      }
+
+      const catalogSnapshot = record.entityType === 'catalog_item'
+        ? parseRemoteCatalogItems([outcome.response])[0]
+        : undefined;
       const serverVersion = Number(outcome.response.version ?? 1);
+      if (!Number.isFinite(serverVersion) || serverVersion < 1) {
+        throw new Error('The server returned an invalid version for the queued change');
+      }
       await database.write(async () => {
-        await markEntitySyncState(database, record.entityType, record.entityId, 'synced', serverVersion);
+        if (catalogSnapshot) {
+          const catalogRecord = await findRecord(database.get<CatalogItemRecord>('catalog_items'), record.entityId);
+          if (!catalogRecord) throw new Error('The local catalog item for a confirmed change is missing');
+          await catalogRecord.update((item) => assignCatalogSnapshot(item, businessId, catalogSnapshot));
+        } else {
+          await markEntitySyncState(database, record.entityType, record.entityId, 'synced', serverVersion);
+        }
         await record.destroyPermanently();
       });
     } catch (error) {
+      const retryable = isRetryable(error);
+      const isConflict = error instanceof ApiError && error.status === 409;
       const attempts = record.attempts + 1;
+      const message = error instanceof Error ? error.message : 'Sync failed';
       await database.write(async () => {
         await record.update((item) => {
-          item.status = 'retry';
+          item.status = isConflict ? 'conflict' : retryable ? 'retry' : 'rejected';
           item.attempts = attempts;
-          item.nextRetryAt = Date.now() + retryDelay(attempts);
-          item.lastError = error instanceof Error ? error.message : 'Sync failed';
+          item.nextRetryAt = retryable && !isConflict
+            ? Date.now() + retryDelay(attempts, error instanceof ApiError ? error.retryAfterMs : undefined)
+            : 0;
+          item.lastError = message;
         });
+        if (isConflict || !retryable) {
+          await markEntitySyncState(
+            database,
+            record.entityType,
+            record.entityId,
+            isConflict ? 'conflict' : 'rejected',
+          );
+        }
       });
-      throw error;
+      if (retryable && !isConflict) throw error;
     }
   }
 }
 
 async function pullChanges(
-  session: Session,
+  getSession: () => Session,
   businessId: string,
   updateSession: (session: Session) => void,
 ): Promise<void> {
@@ -482,15 +789,20 @@ async function pullChanges(
         customers: { items: Array<Record<string, unknown>>; hasMore: boolean };
         orders: { items: Array<Record<string, unknown>>; hasMore: boolean };
         measurements: { items: Array<Record<string, unknown>>; hasMore: boolean };
-        nextCursor: string | null;
+        catalogItems?: unknown;
+        nextCursor: unknown;
       };
-    }>(session, `/api/v1/sync/changes?${params.toString()}`, {}, updateSession);
+    }>(getSession(), `/api/v1/sync/changes?${params.toString()}`, {}, updateSession);
     const data = response.data;
+    const nextCursor = serializeSyncCursor(data.nextCursor);
+    const catalogPage = parseCatalogChangesPage(data.catalogItems);
+    const catalogSnapshots = parseRemoteCatalogItems(catalogPage.items);
 
     await database.write(async () => {
       const customers = database.get<CustomerRecord>('customers');
       const orders = database.get<OrderRecord>('orders');
       const measurements = database.get<MeasurementRecord>('measurements');
+      await upsertCatalogItemsInWrite(database, businessId, catalogSnapshots);
 
       for (const customer of data.customers.items) {
         const id = String(customer.id);
@@ -501,6 +813,7 @@ async function pullChanges(
           name: String(customer.name ?? ''),
           phone: String(customer.phone ?? ''),
           notes: String(customer.notes ?? ''),
+          customFieldsJson: JSON.stringify(customFieldsObject(customer.customFieldValues ?? customer.customFields)),
           version: Number(customer.version ?? 1),
           syncState: 'synced',
           updatedAt: timestampToMilliseconds(customer.updatedAt),
@@ -519,8 +832,28 @@ async function pullChanges(
         const id = String(order.id);
         const local = await findRecord(orders, id);
         if (local && local.syncState !== 'synced') continue;
-        const items = Array.isArray(order.items) ? order.items as Array<Record<string, unknown>> : [];
+         const items = Array.isArray(order.items) ? order.items as Array<Record<string, unknown>> : [];
         const firstItem = items[0] ?? {};
+         if (items.length === 0) throw new Error('The server returned an order without any items');
+         const itemName = typeof firstItem.itemName === 'string'
+           ? firstItem.itemName
+           : typeof firstItem.garmentName === 'string' ? firstItem.garmentName : '';
+         if (!itemName) throw new Error('The server returned an order without an item name');
+         const promisedAt = typeof order.promisedAt === 'string' ? order.promisedAt : '';
+         if (!promisedAt) throw new Error('The server returned an order without a promised date');
+         const quantity = firstItem.quantity;
+         if (typeof quantity !== 'number' || !Number.isInteger(quantity) || quantity < 1) {
+           throw new Error('The server returned an order with an invalid item quantity');
+         }
+         const unitPriceValue = firstItem.unitPrice;
+         if (typeof unitPriceValue !== 'string' && typeof unitPriceValue !== 'number') {
+           throw new Error('The server returned an order without an item price');
+         }
+         const totalValue = order.total;
+         if (typeof totalValue !== 'string' && typeof totalValue !== 'number') {
+           throw new Error('The server returned an order without a total');
+         }
+         if (typeof order.status !== 'string') throw new Error('The server returned an order without a status');
         const customer = order.customer && typeof order.customer === 'object'
           ? order.customer as Record<string, unknown>
           : {};
@@ -530,17 +863,17 @@ async function pullChanges(
           businessId,
           customerId,
           customerName: String(customer.name ?? localCustomer?.name ?? ''),
-          garmentName: String(firstItem.garmentName ?? 'Garment'),
-          itemTypeKey: String(firstItem.itemTypeKey ?? 'garment'),
-          itemName: String(firstItem.itemName ?? firstItem.garmentName ?? 'Item'),
-          quantity: Number(firstItem.quantity ?? 1),
-          unitPrice: String(firstItem.unitPrice ?? '0.00'),
-          promisedAt: String(order.promisedAt ?? new Date().toISOString()),
-          status: String(order.status ?? 'NEW'),
-          workflowStageKey: String(order.workflowStageKey ?? order.status ?? 'NEW'),
-          orderCustomFieldsJson: JSON.stringify(order.customFieldValues ?? []),
-          itemCustomFieldsJson: JSON.stringify(firstItem.customFieldValues ?? []),
-          total: String(order.total ?? '0.00'),
+          garmentName: itemName,
+          itemTypeKey: typeof firstItem.itemTypeKey === 'string' ? firstItem.itemTypeKey : null,
+          itemName,
+          quantity,
+          unitPrice: String(unitPriceValue),
+          promisedAt,
+          status: order.status,
+          workflowStageKey: String(order.workflowStageKey ?? order.status),
+          orderCustomFieldsJson: JSON.stringify(customFieldsObject(order.customFieldValues ?? order.customFields)),
+          itemCustomFieldsJson: JSON.stringify(customFieldsObject(firstItem.customFieldValues ?? firstItem.customFields)),
+          total: String(totalValue),
           notes: String(order.notes ?? ''),
           version: Number(order.version ?? 1),
           syncState: 'synced',
@@ -565,21 +898,27 @@ async function pullChanges(
         const template = profile.garmentTemplate && typeof profile.garmentTemplate === 'object'
           ? profile.garmentTemplate as Record<string, unknown>
           : {};
+        const templateName = typeof template.name === 'string' ? template.name : '';
+        const measuredAt = typeof measurement.measuredAt === 'string'
+          ? measurement.measuredAt
+          : typeof measurement.createdAt === 'string' ? measurement.createdAt : '';
+        if (!templateName || !measuredAt) {
+          throw new Error('The server returned an incomplete measurement revision');
+        }
         await measurements.create((record) => {
           record._raw.id = id;
           record.businessId = businessId;
           record.customerId = String(profile.customerId ?? '');
           record.templateId = String(profile.garmentTemplateId ?? template.id ?? '');
-          record.templateName = String(template.name ?? 'Garment');
+          record.templateName = templateName;
           record.valuesJson = JSON.stringify(measurement.values ?? {});
           record.notes = String(measurement.notes ?? '');
-          record.measuredAt = String(measurement.measuredAt ?? measurement.createdAt ?? new Date().toISOString());
+          record.measuredAt = measuredAt;
           record.syncState = 'synced';
         });
       }
 
       const currentState = await findRecord(syncState, businessId);
-      const nextCursor = data.nextCursor;
       const lastSuccessfulSync = new Date().toISOString();
       if (currentState) {
         await currentState.update((record) => {
@@ -597,12 +936,12 @@ async function pullChanges(
       }
     });
 
-    const more = data.customers.hasMore || data.orders.hasMore || data.measurements.hasMore;
+    const more = data.customers.hasMore || data.orders.hasMore || data.measurements.hasMore || catalogPage.hasMore;
     if (!more) return;
-    if (!data.nextCursor || data.nextCursor === cursor) {
+    if (!nextCursor || nextCursor === cursor) {
       throw new Error('The server returned a sync cursor that did not advance');
     }
-    cursor = data.nextCursor;
+    cursor = nextCursor;
   }
   throw new Error('Sync is still catching up; retry to continue downloading changes');
 }
@@ -610,16 +949,26 @@ async function pullChanges(
 export async function synchronize(
   session: Session,
   updateSession: (session: Session) => void,
+  catalogEnabled = false,
 ): Promise<void> {
   const businessId = session.business.id;
-  await pushOutbox(session, businessId, updateSession);
-  await pullChanges(session, businessId, updateSession);
+  let activeSession = session;
+  const refreshSession = (nextSession: Session) => {
+    activeSession = nextSession;
+    updateSession(nextSession);
+  };
+  const getSession = () => activeSession;
+  await pushOutbox(getSession, businessId, refreshSession);
+  await pullChanges(getSession, businessId, refreshSession);
+  if (catalogEnabled && session.permissions.includes('orders:read')) {
+    await refreshCatalogItems(getSession(), businessId, refreshSession);
+  }
   if (session.permissions.includes('measurements:read')) {
     const templates = await apiRequest<{ data: { items: Array<Record<string, unknown>> } }>(
-      session,
+      getSession(),
       '/api/v1/measurements/templates',
       {},
-      updateSession,
+      refreshSession,
     );
     const database = await openLocalDatabase();
     const collection = database.get<TemplateRecord>('templates');
@@ -648,6 +997,21 @@ export async function synchronize(
   }
 }
 
+export async function refreshCatalogItems(
+  session: Session,
+  businessId: string,
+  updateSession: (session: Session) => void,
+): Promise<LocalCatalogItem[]> {
+  const response = await apiRequest<{ data?: { items?: unknown } }>(
+    session,
+    '/api/v1/catalog?limit=100',
+    {},
+    updateSession,
+  );
+  await upsertCatalogItems(businessId, parseRemoteCatalogItems(response.data?.items));
+  return loadCatalogItems(businessId);
+}
+
 export async function loadCustomers(businessId: string): Promise<LocalCustomer[]> {
   const database = await openLocalDatabase();
   const records = await database.get<CustomerRecord>('customers').query(
@@ -664,6 +1028,30 @@ export async function loadOrders(businessId: string): Promise<LocalOrder[]> {
     Q.sortBy('promised_at', Q.asc),
   ).fetch();
   return records.map(mapOrder);
+}
+
+export async function loadCatalogItems(businessId: string): Promise<LocalCatalogItem[]> {
+  const database = await openLocalDatabase();
+  const records = await database.get<CatalogItemRecord>('catalog_items').query(
+    Q.where('business_id', businessId),
+    Q.sortBy('sort_order', Q.asc),
+    Q.sortBy('name', Q.asc),
+  ).fetch();
+  return records.map((record) => ({
+    id: record.remoteId ?? record.id,
+    business_id: record.businessId,
+    typeKey: record.typeKey,
+    name: record.name,
+    description: record.description,
+    sku: record.sku,
+    unit: record.unit,
+    unitPrice: record.unitPrice,
+    sortOrder: record.sortOrder,
+    version: record.version,
+    active: record.active,
+    customFields: JSON.parse(record.customFieldsJson) as Record<string, unknown>,
+    syncState: record.syncState,
+  }));
 }
 
 export async function loadTemplates(businessId: string): Promise<LocalTemplate[]> {
@@ -706,6 +1094,8 @@ export async function loadMeasurements(businessId: string, customerId?: string):
 export async function loadSyncState(businessId: string): Promise<{
   pending: number;
   attention: number;
+  next_retry_at: number | null;
+  attention_details: Array<{ id: string; entity_type: string; message: string }>;
   last_successful_sync: string | null;
   last_error: string | null;
 }> {
@@ -714,9 +1104,27 @@ export async function loadSyncState(businessId: string): Promise<{
     Q.where('business_id', businessId),
   ).fetch();
   const syncState = await findRecord(database.get<SyncStateRecord>('sync_states'), businessId);
+  const retryable = queue.filter((record) => ['pending', 'retry', 'sending'].includes(record.status));
+  const attentionRecords = queue.filter((record) => ['conflict', 'rejected'].includes(record.status));
   return {
-    pending: queue.filter((record) => ['pending', 'retry', 'sending'].includes(record.status)).length,
-    attention: queue.filter((record) => ['conflict', 'rejected'].includes(record.status)).length,
+    pending: retryable.length,
+    attention: attentionRecords.length,
+    next_retry_at: retryable.length ? Math.min(...retryable.map((record) => record.nextRetryAt || 0)) : null,
+    attention_details: attentionRecords.map((record) => {
+      let response: unknown;
+      try {
+        response = JSON.parse(record.lastError ?? '');
+      } catch {
+        response = record.lastError;
+      }
+      return {
+        id: record.id,
+        entity_type: record.entityType,
+        message: responseErrorMessage(response, record.status === 'conflict'
+          ? 'This change conflicts with a newer server version.'
+          : 'The server rejected this change.'),
+      };
+    }),
     last_successful_sync: syncState?.lastSuccessfulSync ?? null,
     last_error: syncState?.lastError ?? null,
   };

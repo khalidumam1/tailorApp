@@ -47,5 +47,11 @@ test('offline sync operations require UUID operation and entity identifiers', ()
     payload: { action: 'customer.create' },
   };
   assert.equal(syncOperationSchema.safeParse(validOperation).success, true);
+  assert.equal(syncOperationSchema.safeParse({
+    ...validOperation,
+    entityType: 'catalog_item',
+    entityId: '73f44483-0ec1-4219-bd6a-6a8227f1239e',
+    payload: { action: 'catalog.create', item: { typeKey: 'chair', name: 'Chair' } },
+  }).success, true);
   assert.equal(syncOperationSchema.safeParse({ ...validOperation, clientOperationId: 'duplicate' }).success, false);
 });

@@ -96,8 +96,42 @@ export function validateTemplate(input: TemplateInput): void {
     || stageByKey.get(transition.from)?.isTerminal)) {
     throw new HttpError(400, 'Workflow transitions must connect known non-terminal stages exactly once', 'INVALID_TEMPLATE_TRANSITION');
   }
+  const outgoing = new Map(input.stages.map((stage) => [stage.key, [] as string[]]));
+  for (const transition of input.transitions) outgoing.get(transition.from)?.push(transition.to);
+  const initial = input.stages.find((stage) => stage.isInitial)!;
+  if (input.stages.some((stage) => !stage.isTerminal && !outgoing.get(stage.key)?.length)) {
+    throw new HttpError(400, 'Every non-terminal workflow stage needs an outgoing transition', 'INVALID_TEMPLATE_WORKFLOW_GRAPH');
+  }
+  const reachable = new Set<string>([initial.key]);
+  const pending = [initial.key];
+  while (pending.length) {
+    for (const next of outgoing.get(pending.pop()!) ?? []) {
+      if (!reachable.has(next)) {
+        reachable.add(next);
+        pending.push(next);
+      }
+    }
+  }
+  if (input.stages.some((stage) => !reachable.has(stage.key))
+    || !input.stages.some((stage) => stage.isTerminal && reachable.has(stage.key))) {
+    throw new HttpError(400, 'Every workflow stage must be reachable from the initial stage and lead to a terminal stage', 'INVALID_TEMPLATE_WORKFLOW_GRAPH');
+  }
   if (input.fields.some((field) => !input.enabledModules.includes(field.module))) {
     throw new HttpError(400, 'Every custom field must belong to an enabled module', 'INVALID_TEMPLATE_FIELD_MODULE');
+  }
+  const itemTypeKeys = new Set(input.itemTypes.map((itemType) => itemType.key));
+  for (const field of input.fields) {
+    if (field.visibility === undefined || field.visibility === null) continue;
+    if (typeof field.visibility !== 'object' || Array.isArray(field.visibility)) {
+      throw new HttpError(400, `Visibility rules for "${field.key}" must be an object`, 'INVALID_TEMPLATE_FIELD_VISIBILITY');
+    }
+    const visibility = field.visibility as Record<string, unknown>;
+    const visibleItemTypes = visibility.itemTypes ?? visibility.garmentTypes;
+    if (visibleItemTypes !== undefined
+      && (!Array.isArray(visibleItemTypes)
+        || !visibleItemTypes.every((key) => typeof key === 'string' && itemTypeKeys.has(key)))) {
+      throw new HttpError(400, `Visibility rules for "${field.key}" must reference configured item types`, 'INVALID_TEMPLATE_FIELD_VISIBILITY');
+    }
   }
 }
 

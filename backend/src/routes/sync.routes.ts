@@ -12,15 +12,25 @@ import {
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
-import { customFieldValueData, validateCustomFieldValues } from '../domain/custom-fields.js';
+import { customFieldValueData, validateCustomFieldValues, withBuiltInOrderItemFields } from '../domain/custom-fields.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { assertSubscriptionAccess, authenticate } from '../middleware/auth.js';
 import { assertPlanLimit } from '../plan-limits.js';
-import { queueOrderCreated } from '../whatsapp.js';
+import { queueCustomerNotification, queueMeasurementAppended, queueOrderCreated } from '../whatsapp.js';
 
 const router = express.Router();
 const idSchema = z.string().uuid();
 const itemTypesSchema = z.array(z.object({ key: z.string(), label: z.string() }));
+const catalogItemSchema = z.object({
+  typeKey: z.string().trim().regex(/^[a-z][a-z0-9_-]{0,79}$/),
+  name: z.string().trim().min(1).max(160),
+  description: z.string().trim().max(2000).nullable().optional(),
+  sku: z.string().trim().max(80).nullable().optional(),
+  unit: z.string().trim().min(1).max(40).default('unit'),
+  unitPrice: z.string().regex(/^\d{1,10}(?:\.\d{1,2})$/).nullable().optional(),
+  sortOrder: z.number().int().min(0).max(100000).default(0),
+  customFields: z.record(z.string(), z.unknown()).default({}),
+}).strict();
 const changesSchema = createCustomerSchema.partial().refine(
   (input) => Object.keys(input).length > 0,
   'At least one customer field must be provided',
@@ -36,6 +46,7 @@ const syncPayloadSchema = z.discriminatedUnion('action', [
     notes: z.string().trim().max(2000).optional(),
     measuredAt: z.string().datetime({ offset: true }),
   }),
+  z.object({ action: z.literal('catalog.create'), item: catalogItemSchema }),
   z.object({ action: z.literal('order.create'), order: createOrderSchema }),
 ]);
 const batchSchema = z.object({
@@ -46,6 +57,7 @@ const cursorSchema = z.object({
   customers: cursorEntrySchema.nullable().optional(),
   orders: cursorEntrySchema.nullable().optional(),
   measurements: cursorEntrySchema.nullable().optional(),
+  catalogItems: cursorEntrySchema.nullable().optional(),
 }).strict();
 const changesQuerySchema = z.object({
   cursor: z.string().max(2048).optional(),
@@ -93,6 +105,12 @@ function cursorWhere(entry: CursorEntry | null | undefined): Prisma.CustomerWher
 }
 
 function cursorOrderWhere(entry: CursorEntry | null | undefined): Prisma.OrderWhereInput {
+  if (!entry) return {};
+  const at = new Date(entry.at);
+  return { OR: [{ updatedAt: { gt: at } }, { updatedAt: at, id: { gt: entry.id } }] };
+}
+
+function cursorCatalogItemWhere(entry: CursorEntry | null | undefined): Prisma.BusinessItemWhereInput {
   if (!entry) return {};
   const at = new Date(entry.at);
   return { OR: [{ updatedAt: { gt: at } }, { updatedAt: at, id: { gt: entry.id } }] };
@@ -149,6 +167,38 @@ async function customerFieldDefinitions(
   const byKey = new Map((business.template?.fields ?? []).map((field) => [field.key, field]));
   for (const field of business.customFields) byKey.set(field.key, field);
   return [...byKey.values()].filter((field) => ['customer', 'customer-create'].includes(field.screen));
+}
+
+async function catalogFieldDefinitions(
+  tx: Prisma.TransactionClient,
+  businessId: string,
+): Promise<{ fields: CustomFieldDefinition[]; itemTypes: Set<string> }> {
+  const business = await tx.business.findUnique({
+    where: { id: businessId },
+    include: {
+      configuration: true,
+      template: { include: { fields: { where: { active: true, module: 'catalog' } } } },
+      customFields: { where: { active: true, module: 'catalog' } },
+    },
+  });
+  if (!business) throw new HttpError(404, 'Business not found', 'BUSINESS_NOT_FOUND');
+  if (!business.template) throw new HttpError(409, 'Business has no assigned template', 'BUSINESS_TEMPLATE_MISSING');
+  const modules = business.configuration?.enabledModules ?? business.template.enabledModules;
+  if (!modules.includes('catalog')) {
+    throw new HttpError(403, 'The catalog module is disabled for this business', 'BUSINESS_MODULE_DISABLED');
+  }
+  const types = itemTypesSchema.safeParse(business.configuration?.itemTypes ?? business.template.itemTypes);
+  if (!types.success || !types.data.length) {
+    throw new HttpError(500, 'Business item types are invalid', 'INVALID_ITEM_TYPES');
+  }
+  const byKey = new Map<string, CustomFieldDefinition>();
+  for (const field of business.template.fields) {
+    if (['item', 'catalog-item'].includes(field.screen)) byKey.set(field.key, field);
+  }
+  for (const field of business.customFields) {
+    if (['item', 'catalog-item'].includes(field.screen)) byKey.set(field.key, field);
+  }
+  return { fields: [...byKey.values()], itemTypes: new Set(types.data.map((type) => type.key)) };
 }
 
 async function persistCustomerCustomFields(
@@ -225,6 +275,7 @@ async function applyOperation(
         },
       });
       await persistCustomerCustomFields(tx, businessId, customer.id, customValues, true);
+      await queueCustomerNotification(tx, customer.id, 'CUSTOMER_CREATED');
       await tx.auditEvent.create({
         data: {
           businessId,
@@ -306,6 +357,7 @@ async function applyOperation(
     const customer = await tx.customer.findFirstOrThrow({
       where: { id: operation.entityId, businessId },
     });
+    await queueCustomerNotification(tx, customer.id, 'CUSTOMER_UPDATED');
     await tx.auditEvent.create({
       data: {
         businessId,
@@ -380,6 +432,7 @@ async function applyOperation(
         measuredAt: new Date(payload.measuredAt),
       },
     });
+    await queueMeasurementAppended(tx, revision.id);
     await tx.auditEvent.create({
       data: {
         businessId,
@@ -394,6 +447,81 @@ async function applyOperation(
     return { status: 'APPLIED', response: { profileId: profile.id, revisionId: revision.id, version: revision.version } };
   }
 
+  if (payload.action === 'catalog.create') {
+    if (operation.entityType !== 'catalog_item') {
+      throw new HttpError(400, 'Operation action and entity type do not match', 'INVALID_SYNC_OPERATION');
+    }
+    const { fields, itemTypes } = await catalogFieldDefinitions(tx, businessId);
+    if (!itemTypes.has(payload.item.typeKey)) {
+      throw new HttpError(400, 'Item type is not available for this business', 'INVALID_ITEM_TYPE');
+    }
+    const existing = await tx.businessItem.findFirst({
+      where: {
+        businessId,
+        OR: [
+          { id: operation.entityId },
+          { typeKey: payload.item.typeKey, name: payload.item.name },
+          ...(payload.item.sku ? [{ sku: payload.item.sku }] : []),
+        ],
+      },
+      select: { id: true, version: true },
+    });
+    if (existing) return conflict('CATALOG_ITEM_ALREADY_EXISTS', { entityId: existing.id, version: existing.version });
+    const customValues = validateCustomFieldValues(fields, payload.item.customFields, {
+      itemTypeKey: payload.item.typeKey,
+    });
+    const item = await tx.businessItem.create({
+      data: {
+        id: operation.entityId,
+        businessId,
+        typeKey: payload.item.typeKey,
+        name: payload.item.name,
+        description: payload.item.description,
+        sku: payload.item.sku,
+        unit: payload.item.unit,
+        unitPrice: payload.item.unitPrice ? new Prisma.Decimal(payload.item.unitPrice) : null,
+        sortOrder: payload.item.sortOrder,
+      },
+    });
+    if (customValues.length) {
+      await tx.customFieldValue.createMany({
+        data: customValues.map((value) => ({
+          businessId,
+          itemId: item.id,
+          ...customFieldValueData(value),
+        })),
+      });
+    }
+    await tx.auditEvent.create({
+      data: {
+        businessId,
+        actorId,
+        action: 'catalog_item.created',
+        entityType: 'business_item',
+        entityId: item.id,
+        metadata: { source: 'offline_sync', clientOperationId: operation.clientOperationId },
+        requestId,
+      },
+    });
+    return {
+      status: 'APPLIED',
+      response: {
+        id: item.id,
+        typeKey: item.typeKey,
+        name: item.name,
+        description: item.description,
+        sku: item.sku,
+        unit: item.unit,
+        unitPrice: item.unitPrice?.toFixed(2) ?? null,
+        sortOrder: item.sortOrder,
+        active: item.active,
+        version: item.version,
+        updatedAt: item.updatedAt,
+        customFields: Object.fromEntries(customValues.map((field) => [field.key, field.value])),
+      },
+    };
+  }
+
   if (operation.entityType !== 'order' || payload.action !== 'order.create') {
     throw new HttpError(400, 'Operation action and entity type do not match', 'INVALID_SYNC_OPERATION');
   }
@@ -404,6 +532,7 @@ async function applyOperation(
   const configuration = await tx.business.findUnique({
     where: { id: businessId },
     include: {
+      configuration: true,
       template: {
         include: {
           fields: { where: { active: true } },
@@ -417,10 +546,11 @@ async function applyOperation(
     },
   });
   if (!configuration?.template) return conflict('BUSINESS_TEMPLATE_MISSING');
-  if (!configuration.template.enabledModules.includes('orders')) {
+  const enabledModules = configuration.configuration?.enabledModules ?? configuration.template.enabledModules;
+  if (!enabledModules.includes('orders')) {
     throw new HttpError(403, 'The orders module is disabled for this business', 'BUSINESS_MODULE_DISABLED');
   }
-  const itemTypes = itemTypesSchema.safeParse(configuration.template.itemTypes);
+  const itemTypes = itemTypesSchema.safeParse(configuration.configuration?.itemTypes ?? configuration.template.itemTypes);
   if (!itemTypes.success || !itemTypes.data.length) {
     throw new HttpError(500, 'Business item types are invalid', 'INVALID_ITEM_TYPES');
   }
@@ -446,11 +576,11 @@ async function applyOperation(
       throw new HttpError(400, 'Item type is not available for this business', 'INVALID_ITEM_TYPE');
     }
     const itemName = item.itemName ?? item.garmentName ?? '';
-    const customFieldValues = validateCustomFieldValues(itemFields, {
-      ...(item.customFields ?? {}),
-      garment_name: itemName,
-      quantity: item.quantity,
-    }, { itemTypeKey });
+    const customFieldValues = validateCustomFieldValues(
+      itemFields,
+      withBuiltInOrderItemFields(itemFields, item.customFields ?? {}, itemName, item.quantity),
+      { itemTypeKey },
+    );
     const unitPrice = new Prisma.Decimal(item.unitPrice);
     total = total.plus(unitPrice.mul(item.quantity));
     let measurementSnapshot: Prisma.InputJsonObject = {};
@@ -580,15 +710,25 @@ router.get('/changes', asyncHandler(async (req, res) => {
   const query = changesQuerySchema.parse(req.query);
   const cursor = decodeCursor(query.cursor);
   const permissions = new Set(req.auth?.permissions ?? []);
-  const [customerRows, orderRows, measurementRows] = await Promise.all([
-    permissions.has('customers:read')
+  const businessModules = await prisma.business.findUnique({
+    where: { id: businessId },
+    select: {
+      configuration: { select: { enabledModules: true } },
+      template: { select: { enabledModules: true } },
+    },
+  });
+  const enabledModules = businessModules?.configuration?.enabledModules
+    ?? businessModules?.template?.enabledModules
+    ?? [];
+  const [customerRows, orderRows, measurementRows, catalogItemRows] = await Promise.all([
+    permissions.has('customers:read') && enabledModules.includes('customers')
       ? prisma.customer.findMany({
         where: { businessId, ...cursorWhere(cursor.customers) },
         orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
         take: query.limit + 1,
       })
       : Promise.resolve([]),
-    permissions.has('orders:read')
+    permissions.has('orders:read') && enabledModules.includes('orders')
       ? prisma.order.findMany({
         where: { businessId, ...cursorOrderWhere(cursor.orders) },
         include: { items: true, statusHistory: { orderBy: { createdAt: 'asc' } } },
@@ -596,7 +736,7 @@ router.get('/changes', asyncHandler(async (req, res) => {
         take: query.limit + 1,
       })
       : Promise.resolve([]),
-    permissions.has('measurements:read')
+    permissions.has('measurements:read') && enabledModules.includes('measurements')
       ? prisma.measurementRevision.findMany({
         where: {
           ...cursorMeasurementWhere(cursor.measurements),
@@ -607,21 +747,32 @@ router.get('/changes', asyncHandler(async (req, res) => {
         take: query.limit + 1,
       })
       : Promise.resolve([]),
+    permissions.has('orders:read') && enabledModules.includes('catalog')
+      ? prisma.businessItem.findMany({
+        where: { businessId, ...cursorCatalogItemWhere(cursor.catalogItems) },
+        include: { customFieldValues: { include: { fieldDefinition: { select: { key: true } } } } },
+        orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+        take: query.limit + 1,
+      })
+      : Promise.resolve([]),
   ]);
   const customers = customerRows.slice(0, query.limit);
   const orders = orderRows.slice(0, query.limit);
   const measurements = measurementRows.slice(0, query.limit);
+  const catalogItems = catalogItemRows.slice(0, query.limit);
   const nextCursor: SyncCursor = {
     customers: nextEntry(customers, cursor.customers),
     orders: nextEntry(orders, cursor.orders),
     measurements: measurements.at(-1)
       ? { id: measurements.at(-1)!.id, at: measurements.at(-1)!.createdAt.toISOString() }
       : cursor.measurements ?? null,
+    catalogItems: nextEntry(catalogItems, cursor.catalogItems),
   };
   const hasMore = {
     customers: customerRows.length > query.limit,
     orders: orderRows.length > query.limit,
     measurements: measurementRows.length > query.limit,
+    catalogItems: catalogItemRows.length > query.limit,
   };
   const cursorValue = Object.values(nextCursor).some(Boolean) ? encodeCursor(nextCursor) : null;
   res.json({
@@ -629,6 +780,21 @@ router.get('/changes', asyncHandler(async (req, res) => {
       customers: { items: customers, hasMore: hasMore.customers },
       orders: { items: orders, hasMore: hasMore.orders },
       measurements: { items: measurements, hasMore: hasMore.measurements },
+      catalogItems: {
+        items: catalogItems.map((item) => {
+          const customFields = Object.fromEntries(item.customFieldValues.map((field) => [
+            field.fieldDefinition.key,
+            field.valueText
+              ?? field.valueNumber?.toString()
+              ?? field.valueBoolean
+              ?? field.valueDate?.toISOString()
+              ?? field.valueJson,
+          ]));
+          const { customFieldValues: _values, ...data } = item;
+          return { ...data, unitPrice: item.unitPrice?.toFixed(2) ?? null, customFields };
+        }),
+        hasMore: hasMore.catalogItems,
+      },
       nextCursor: cursorValue,
     },
   });
@@ -647,7 +813,9 @@ router.post('/operations', asyncHandler(async (req, res) => {
       ? 'customer'
       : payload.action === 'measurement.revision'
         ? 'measurement'
-        : 'order';
+        : payload.action === 'catalog.create'
+          ? 'catalog_item'
+          : 'order';
     if (operation.entityType !== expectedType) {
       throw new HttpError(400, 'Operation action and entity type do not match', 'INVALID_SYNC_OPERATION');
     }
@@ -655,7 +823,9 @@ router.post('/operations', asyncHandler(async (req, res) => {
       ? 'customers:write'
       : expectedType === 'measurement'
         ? 'measurements:write'
-        : 'orders:write';
+        : expectedType === 'catalog_item'
+          ? 'settings:manage'
+          : 'orders:write';
     if (!permissions.has(requiredPermission)) {
       throw new HttpError(403, 'Permission is not granted', 'PERMISSION_DENIED');
     }
@@ -668,11 +838,18 @@ router.post('/operations', asyncHandler(async (req, res) => {
       ? 'customers:write'
       : payload.action === 'measurement.revision'
         ? 'measurements:write'
-        : 'orders:write';
+        : payload.action === 'catalog.create'
+          ? 'settings:manage'
+          : 'orders:write';
     writePermissions.add(permission);
   }
   for (const permission of writePermissions) {
-    await assertSubscriptionAccess(businessId, permission, true);
+    await assertSubscriptionAccess(
+      businessId,
+      permission,
+      true,
+      permission === 'settings:manage' ? 'catalog' : undefined,
+    );
   }
   const results: OperationResult[] = [];
 
@@ -696,6 +873,7 @@ router.post('/operations', asyncHandler(async (req, res) => {
       const payload = syncPayloadSchema.parse(operation.payload);
       if (payload.action === 'customer.create') await assertPlanLimit(tx, businessId, 'customers:write');
       if (payload.action === 'order.create') await assertPlanLimit(tx, businessId, 'orders:write');
+      if (payload.action === 'catalog.create') await assertPlanLimit(tx, businessId, 'catalog:write');
       const applied = await applyOperation(tx, operation, businessId, actorId, req.requestId);
       const recorded = await tx.syncOperation.create({
         data: {

@@ -35,12 +35,14 @@ import {
   readBusinessConfigurationCache,
   writeBusinessConfigurationCache,
   type LocalCustomer,
+  type LocalCatalogItem,
   type LocalOrder,
   type LocalTemplate,
 } from './src/local';
 import { getCopy, languageOptions, type Language } from './src/i18n';
 import {
   loadCustomers,
+  loadCatalogItems,
   loadMeasurements,
   loadOrders,
   loadSyncState,
@@ -48,24 +50,15 @@ import {
   createPaymentAttempt,
   findPendingPaymentAttempt,
   saveCustomerOffline,
+  saveCatalogItemOffline,
   saveMeasurementOffline,
   saveOrderOffline,
   synchronize,
+  refreshCatalogItems,
   updatePaymentAttempt,
 } from './src/sync';
 
 type Page = 'home' | 'orders' | 'catalog' | 'customers' | 'measurements' | 'notifications' | 'subscription' | 'settings';
-type CatalogItem = {
-  id: string;
-  typeKey: string;
-  name: string;
-  sku: string | null;
-  unit: string;
-  unitPrice: string | null;
-  version: number;
-  active: boolean;
-  customFields: Record<string, unknown>;
-};
 type WhatsAppNotification = {
   id: string;
   customerId: string | null;
@@ -73,7 +66,7 @@ type WhatsAppNotification = {
   paymentId: string | null;
   recipientName: string | null;
   kind: string;
-  status: 'QUEUED' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'NOT_SENT';
+  status: 'QUEUED' | 'PROCESSING' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'NOT_SENT';
   recipientPhone: string;
   lastError: string | null;
   renderedMessage?: string | null;
@@ -124,7 +117,7 @@ function mobileFieldVisible(
 ): boolean {
   if (!field.visibility || typeof field.visibility !== 'object' || Array.isArray(field.visibility)) return true;
   const visibility = field.visibility as Record<string, unknown>;
-  const types = visibility.itemTypes ?? visibility.garmentTypes;
+  const types = visibility.itemTypes ?? visibility.itemTypeKeys ?? visibility.garmentTypes;
   if (!Array.isArray(types) || types.length === 0) return true;
   return Boolean(itemTypeKey && types.includes(itemTypeKey));
 }
@@ -141,31 +134,84 @@ function mobileFieldOptions(field: BusinessConfiguration['fields'][number]): Arr
   });
 }
 
-function parseCatalogItems(value: unknown): CatalogItem[] {
-  if (!Array.isArray(value)) throw new Error('The server returned an invalid catalog list');
-  return value.map((item) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)
-      || !('id' in item) || typeof item.id !== 'string'
-      || !('typeKey' in item) || typeof item.typeKey !== 'string'
-      || !('name' in item) || typeof item.name !== 'string'
-      || !('unit' in item) || typeof item.unit !== 'string'
-      || !('version' in item) || typeof item.version !== 'number'
-      || !('active' in item) || typeof item.active !== 'boolean'
-      || !('customFields' in item) || !isRecord(item.customFields)) {
-      throw new Error('The server returned an invalid catalog item');
+function fieldValueIsEmpty(value: unknown): boolean {
+  return value === undefined || value === null || value === ''
+    || (Array.isArray(value) && value.length === 0);
+}
+
+function configuredFieldValues(
+  fields: BusinessConfiguration['fields'],
+  values: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const field of fields) {
+    const value = Object.hasOwn(values, field.key) ? values[field.key] : field.defaultValue;
+    if (!fieldValueIsEmpty(value)) {
+      result[field.key] = ['NUMBER', 'CURRENCY', 'MEASUREMENT'].includes(field.type)
+        ? Number(value)
+        : value;
     }
-    return {
-      id: item.id,
-      typeKey: item.typeKey,
-      name: item.name,
-      sku: 'sku' in item && typeof item.sku === 'string' ? item.sku : null,
-      unit: item.unit,
-      unitPrice: 'unitPrice' in item && typeof item.unitPrice === 'string' ? item.unitPrice : null,
-      version: item.version,
-      active: item.active,
-      customFields: item.customFields,
-    };
-  });
+  }
+  return result;
+}
+
+function validateConfiguredFields(
+  fields: BusinessConfiguration['fields'],
+  values: Record<string, unknown>,
+): string | null {
+  for (const field of fields) {
+    const value = Object.hasOwn(values, field.key) ? values[field.key] : field.defaultValue;
+    if (field.required && fieldValueIsEmpty(value)) return `${field.label} is required`;
+    if (fieldValueIsEmpty(value)) continue;
+
+    if (['NUMBER', 'CURRENCY', 'MEASUREMENT'].includes(field.type)) {
+      const number = typeof value === 'number' ? value : Number(value);
+      if (!Number.isFinite(number)) return `${field.label} must be a valid number`;
+      if (isRecord(field.validation)) {
+        if (typeof field.validation.min === 'number' && number < field.validation.min) {
+          return `${field.label} must be at least ${field.validation.min}`;
+        }
+        if (typeof field.validation.max === 'number' && number > field.validation.max) {
+          return `${field.label} must be no more than ${field.validation.max}`;
+        }
+      }
+    }
+
+    if (field.type === 'DATE' || field.type === 'DATETIME') {
+      if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
+        return `${field.label} must be a valid ${field.type === 'DATE' ? 'date' : 'date and time'}`;
+      }
+    }
+
+    if (field.type === 'DROPDOWN' && !mobileFieldOptions(field).some((option) => option.key === value)) {
+      return `Choose a valid option for ${field.label}`;
+    }
+    if (field.type === 'MULTI_SELECT'
+      && (!Array.isArray(value) || value.some((item) =>
+        !mobileFieldOptions(field).some((option) => option.key === item)))) {
+      return `Choose valid options for ${field.label}`;
+    }
+    if (field.type === 'BOOLEAN' && typeof value !== 'boolean') {
+      return `${field.label} must be true or false`;
+    }
+
+    if (isRecord(field.validation) && typeof value === 'string') {
+      if (typeof field.validation.minLength === 'number' && value.length < field.validation.minLength) {
+        return `${field.label} must contain at least ${field.validation.minLength} characters`;
+      }
+      if (typeof field.validation.maxLength === 'number' && value.length > field.validation.maxLength) {
+        return `${field.label} must contain no more than ${field.validation.maxLength} characters`;
+      }
+      if (typeof field.validation.pattern === 'string') {
+        try {
+          if (!new RegExp(field.validation.pattern).test(value)) return `${field.label} has an invalid format`;
+        } catch {
+          return `${field.label} has an invalid configured validation rule`;
+        }
+      }
+    }
+  }
+  return null;
 }
 
 function karachiDateInput(): string {
@@ -293,12 +339,19 @@ function AppContent() {
   const [pendingCredentials, setPendingCredentials] = useState<{ email: string; password: string } | null>(null);
   const [customers, setCustomers] = useState<LocalCustomer[]>([]);
   const [orders, setOrders] = useState<LocalOrder[]>([]);
-  const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
+  const [catalogItems, setCatalogItems] = useState<LocalCatalogItem[]>([]);
   const [templates, setTemplates] = useState<LocalTemplate[]>([]);
   const [measurements, setMeasurements] = useState<Array<{
     id: string; customer_id: string; template_name: string; values_json: string; measured_at: string; sync_state: string;
   }>>([]);
-  const [syncState, setSyncState] = useState<SyncState>({ pending: 0, attention: 0, last_successful_sync: null, last_error: null });
+  const [syncState, setSyncState] = useState<SyncState>({
+    pending: 0,
+    attention: 0,
+    next_retry_at: null,
+    attention_details: [],
+    last_successful_sync: null,
+    last_error: null,
+  });
   const [syncError, setSyncError] = useState('');
   const [syncing, setSyncing] = useState(false);
   const syncLock = useRef(false);
@@ -322,6 +375,7 @@ function AppContent() {
   const [customerCustomFields, setCustomerCustomFields] = useState<Record<string, unknown>>({});
   const [catalogForm, setCatalogForm] = useState(false);
   const [catalogName, setCatalogName] = useState('');
+  const [catalogDescription, setCatalogDescription] = useState('');
   const [catalogTypeKey, setCatalogTypeKey] = useState('');
   const [catalogSku, setCatalogSku] = useState('');
   const [catalogUnit, setCatalogUnit] = useState('unit');
@@ -330,7 +384,7 @@ function AppContent() {
   const [search, setSearch] = useState('');
   const [orderForm, setOrderForm] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState('');
-  const [garmentName, setGarmentName] = useState('');
+  const [itemName, setItemName] = useState('');
   const [orderItemTypeKey, setOrderItemTypeKey] = useState('');
   const [orderCustomFields, setOrderCustomFields] = useState<Record<string, unknown>>({});
   const [orderItemCustomFields, setOrderItemCustomFields] = useState<Record<string, unknown>>({});
@@ -345,7 +399,7 @@ function AppContent() {
   const [measurementNotes, setMeasurementNotes] = useState('');
   const [paymentOrder, setPaymentOrder] = useState<LocalOrder | null>(null);
   const [paymentAmount, setPaymentAmount] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'BANK' | 'DIGITAL'>('CASH');
+  const [paymentMethod, setPaymentMethod] = useState('');
   const [paymentAttempt, setPaymentAttempt] = useState<{ idempotency_key: string; amount: string; method: string } | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -369,6 +423,8 @@ function AppContent() {
         if (parsed.business.id !== session.business.id) {
           throw new Error('Saved business configuration does not match the signed-in business');
         }
+        const normalized = JSON.stringify(parsed);
+        if (normalized !== cached) await writeBusinessConfigurationCache(session.business.id, normalized);
         if (active) setBusinessConfiguration(parsed);
       }
       if (online !== true) return;
@@ -414,13 +470,12 @@ function AppContent() {
     if (!['catalog', 'orders'].includes(page) || !session || online !== true
       || !businessConfiguration?.enabledModules.includes('catalog')) return;
     let active = true;
-    void apiRequest<{ data?: { items?: unknown } }>(
+    void refreshCatalogItems(
       session,
-      '/api/v1/catalog?limit=100',
-      {},
+      session.business.id,
       updateSession,
-    ).then((response) => {
-      if (active) setCatalogItems(parseCatalogItems(response.data?.items));
+    ).then((items) => {
+      if (active) setCatalogItems(items);
     }).catch((catalogError: unknown) => {
       if (active) setError(catalogError instanceof Error ? catalogError.message : copy.error);
     });
@@ -429,37 +484,38 @@ function AppContent() {
 
   const saveCatalogItem = async () => {
     if (!session || !businessConfiguration) return;
-    const typeKey = catalogTypeKey || businessConfiguration.template.itemTypes[0]?.key;
+    const typeKey = selectedCatalogTypeKey;
     if (!typeKey) {
       setError('Configure an item type before adding catalog entries.');
+      return;
+    }
+    const fieldError = validateConfiguredFields(visibleCatalogFields, catalogCustomFields);
+    if (fieldError) {
+      setError(fieldError);
       return;
     }
     setSaving(true);
     setError('');
     try {
-      await apiRequest(session, '/api/v1/catalog', {
-        method: 'POST',
-        body: {
-          typeKey,
-          name: catalogName,
-          ...(catalogSku ? { sku: catalogSku } : {}),
-          unit: catalogUnit,
-          ...(catalogUnitPrice ? { unitPrice: catalogUnitPrice } : {}),
-          sortOrder: catalogItems.length,
-          customFields: catalogCustomFields,
-        },
-      }, updateSession);
+      await saveCatalogItemOffline({
+        businessId: session.business.id,
+        typeKey,
+        name: catalogName,
+        description: catalogDescription,
+        sku: catalogSku,
+        unit: catalogUnit,
+        unitPrice: catalogUnitPrice,
+        sortOrder: catalogItems.length,
+        customFields: configuredFieldValues(visibleCatalogFields, catalogCustomFields),
+      });
+      await refreshLocal(session.business.id);
       setCatalogName('');
+      setCatalogDescription('');
       setCatalogSku('');
       setCatalogUnitPrice('');
       setCatalogCustomFields({});
-      const refreshed = await apiRequest<{ data?: { items?: unknown } }>(
-        session,
-        '/api/v1/catalog?limit=100',
-        {},
-        updateSession,
-      );
-      setCatalogItems(parseCatalogItems(refreshed.data?.items));
+      setCatalogForm(false);
+      if (online === true) void runSync();
     } catch (catalogError) {
       setError(catalogError instanceof Error ? catalogError.message : copy.error);
     } finally {
@@ -467,7 +523,7 @@ function AppContent() {
     }
   };
 
-  const toggleCatalogItem = async (item: CatalogItem) => {
+  const toggleCatalogItem = async (item: LocalCatalogItem) => {
     if (!session) return;
     setSaving(true);
     setError('');
@@ -476,13 +532,12 @@ function AppContent() {
         method: 'PATCH',
         body: { version: item.version, active: !item.active },
       }, updateSession);
-      const refreshed = await apiRequest<{ data?: { items?: unknown } }>(
+      const refreshed = await refreshCatalogItems(
         session,
-        '/api/v1/catalog?limit=100',
-        {},
+        session.business.id,
         updateSession,
       );
-      setCatalogItems(parseCatalogItems(refreshed.data?.items));
+      setCatalogItems(refreshed);
     } catch (catalogError) {
       setError(catalogError instanceof Error ? catalogError.message : copy.error);
     } finally {
@@ -521,15 +576,17 @@ function AppContent() {
   }, [page, refreshSubscriptionBilling]);
 
   const refreshLocal = useCallback(async (businessId: string) => {
-    const [nextCustomers, nextOrders, nextTemplates, nextMeasurements, nextSyncState] = await Promise.all([
+    const [nextCustomers, nextOrders, nextCatalogItems, nextTemplates, nextMeasurements, nextSyncState] = await Promise.all([
       loadCustomers(businessId),
       loadOrders(businessId),
+      loadCatalogItems(businessId),
       loadTemplates(businessId),
       loadMeasurements(businessId),
       loadSyncState(businessId),
     ]);
     setCustomers(nextCustomers);
     setOrders(nextOrders);
+    setCatalogItems(nextCatalogItems);
     setTemplates(nextTemplates);
     setMeasurements(nextMeasurements);
     setSyncState(nextSyncState);
@@ -596,7 +653,11 @@ function AppContent() {
     setSyncing(true);
     setSyncError('');
     try {
-      await synchronize(session, updateSession);
+      await synchronize(
+        session,
+        updateSession,
+        businessConfiguration?.enabledModules.includes('catalog') === true,
+      );
       await refreshLocal(session.business.id);
       if (session.permissions.includes('orders:read')) {
         const result = await apiRequest<{ data: Record<string, unknown> }>(
@@ -616,30 +677,53 @@ function AppContent() {
       setSyncing(false);
       await refreshLocal(session.business.id).catch(() => undefined);
     }
-  }, [session, online, updateSession, refreshLocal, copy.syncError]);
+  }, [businessConfiguration?.enabledModules, session, online, updateSession, refreshLocal, copy.syncError]);
 
   useEffect(() => {
     if (!session || online !== true) return;
     void runSync();
   }, [session?.business.id, online, runSync]);
 
+  useEffect(() => {
+    if (!session || online !== true || syncState.pending === 0) return undefined;
+    const dueAt = syncState.next_retry_at ?? Date.now();
+    const delay = Math.max(1_000, Math.min(60_000, dueAt - Date.now()));
+    const timeout = setTimeout(() => { void runSync(); }, delay);
+    return () => clearTimeout(timeout);
+  }, [online, runSync, session?.business.id, syncState.next_retry_at, syncState.pending]);
+
   const membership = session?.permissions ?? [];
   const can = (permission: string) => membership.includes(permission);
   const term = (key: string, fallback: string) => businessConfiguration?.terminology[key] ?? fallback;
-  const moduleEnabled = (module: string) => !businessConfiguration || businessConfiguration.enabledModules.includes(module);
-  const currentItemType = businessConfiguration?.template.itemTypes.find((item) => item.key === orderItemTypeKey)
-    ?? businessConfiguration?.template.itemTypes[0];
-  const orderItemFields = (businessConfiguration?.fields ?? []).filter((field) =>
+  const moduleEnabled = (module: string) => Boolean(businessConfiguration?.enabledModules.includes(module));
+  const paymentMethodOptions = businessConfiguration?.paymentMethods ?? [];
+  const paymentMethodLabel = (method: string) => {
+    const defaultMethods = ['CASH', 'BANK', 'DIGITAL'];
+    const index = defaultMethods.indexOf(method);
+    return index >= 0 ? copy.paymentMethods[index] : method.replaceAll('_', ' ').toLocaleLowerCase()
+      .replace(/\b\w/g, (letter) => letter.toLocaleUpperCase());
+  };
+  const currentItemType = businessConfiguration?.itemTypes.find((item) => item.key === orderItemTypeKey)
+    ?? businessConfiguration?.itemTypes[0];
+  const orderItemFieldDefinitions = (businessConfiguration?.fields ?? []).filter((field) =>
     field.module === 'orders'
     && ['order-item', 'item'].includes(field.screen)
-    && !['garment_name', 'quantity'].includes(field.key)
-    && mobileFieldVisible(field, currentItemType?.key));
+    && mobileFieldVisible(field, currentItemType?.key))
+    .sort((left, right) => left.sortOrder - right.sortOrder);
+  const orderItemFields = orderItemFieldDefinitions
+    .filter((field) => !['item_name', 'garment_name', 'quantity'].includes(field.key));
   const orderFields = (businessConfiguration?.fields ?? []).filter((field) =>
-    field.module === 'orders' && ['order', 'job'].includes(field.screen));
+    field.module === 'orders' && ['order', 'job'].includes(field.screen))
+    .sort((left, right) => left.sortOrder - right.sortOrder);
   const customerFields = (businessConfiguration?.fields ?? []).filter((field) =>
-    field.module === 'customers' && ['customer', 'customer-create'].includes(field.screen));
+    field.module === 'customers' && ['customer', 'customer-create'].includes(field.screen))
+    .sort((left, right) => left.sortOrder - right.sortOrder);
   const catalogFields = (businessConfiguration?.fields ?? []).filter((field) =>
-    field.module === 'catalog' && ['item', 'catalog-item'].includes(field.screen));
+    field.module === 'catalog' && ['item', 'catalog-item'].includes(field.screen))
+    .sort((left, right) => left.sortOrder - right.sortOrder);
+  const selectedCatalogTypeKey = catalogTypeKey || businessConfiguration?.itemTypes[0]?.key;
+  const visibleCatalogFields = catalogFields.filter((field) =>
+    mobileFieldVisible(field, selectedCatalogTypeKey));
   const stageLabel = (key: string) => businessConfiguration?.workflow.stages
     .find((stage) => stage.key === key)?.label ?? key.replaceAll('_', ' ');
   const pages: Array<{ id: Page; label: string }> = [
@@ -665,7 +749,7 @@ function AppContent() {
         return;
       }
       if (result.requiresScopeSelection === true) {
-        throw new Error('This account needs a business membership before it can use the tailor app.');
+        throw new Error('This account needs a business membership before it can use the business app.');
       }
       const nextSession = await createSession(result);
       setNotificationHistory([]);
@@ -752,14 +836,9 @@ function AppContent() {
 
   const saveCustomer = async () => {
     if (!session) return;
-    const missingField = customerFields.find((field) => {
-      const value = Object.hasOwn(customerCustomFields, field.key)
-        ? customerCustomFields[field.key] : field.defaultValue;
-      return field.required && (value === undefined || value === null || value === ''
-        || (Array.isArray(value) && value.length === 0));
-    });
-    if (missingField) {
-      setError(`${missingField.label} is required`);
+    const fieldError = validateConfiguredFields(customerFields, customerCustomFields);
+    if (fieldError) {
+      setError(fieldError);
       return;
     }
     setSaving(true);
@@ -770,7 +849,7 @@ function AppContent() {
         name: customerName,
         phone: customerPhone,
         notes: customerNotes,
-        customFields: customerCustomFields,
+        customFields: configuredFieldValues(customerFields, customerCustomFields),
       });
       await refreshLocal(session.business.id);
       setCustomerName('');
@@ -788,20 +867,29 @@ function AppContent() {
 
   const saveOrder = async () => {
     if (!session) return;
+    if (!businessConfiguration?.itemTypes.length || !currentItemType) {
+      setError('Business item types are missing from the cached configuration. Reconnect or ask an administrator to configure item types before creating an order.');
+      return;
+    }
+    const initialStage = businessConfiguration.workflow.stages.find((stage) => stage.isInitial);
+    if (!initialStage) {
+      setError('The cached business workflow has no initial stage. Reconnect or ask an administrator to configure the workflow.');
+      return;
+    }
     const customer = customers.find((item) => item.id === selectedCustomer);
     if (!customer) {
       setError(copy.chooseCustomer);
       return;
     }
-    const missingField = [...orderFields, ...orderItemFields].find((field) => {
-      const values = field.module === 'orders' && ['order', 'job'].includes(field.screen)
-        ? orderCustomFields : orderItemCustomFields;
-      const value = Object.hasOwn(values, field.key) ? values[field.key] : field.defaultValue;
-      return field.required && (value === undefined || value === null || value === ''
-        || (Array.isArray(value) && value.length === 0));
-    });
-    if (missingField) {
-      setError(`${missingField.label} is required`);
+    const itemFieldValues = { ...orderItemCustomFields };
+    for (const field of orderItemFieldDefinitions) {
+      if (field.key === 'item_name' || field.key === 'garment_name') itemFieldValues[field.key] = itemName.trim();
+      if (field.key === 'quantity') itemFieldValues[field.key] = Number(quantity);
+    }
+    const fieldError = validateConfiguredFields(orderItemFieldDefinitions, itemFieldValues)
+      ?? validateConfiguredFields(orderFields, orderCustomFields);
+    if (fieldError) {
+      setError(fieldError);
       return;
     }
     setSaving(true);
@@ -811,11 +899,11 @@ function AppContent() {
       await saveOrderOffline({
         businessId: session.business.id,
         customer,
-        itemName: garmentName,
-        itemTypeKey: currentItemType?.key ?? 'garment',
-        orderCustomFields,
-        itemCustomFields: orderItemCustomFields,
-        initialStageKey: businessConfiguration?.workflow.stages.find((stage) => stage.isInitial)?.key ?? 'NEW',
+        itemName,
+        itemTypeKey: currentItemType.key,
+        orderCustomFields: configuredFieldValues(orderFields, orderCustomFields),
+        itemCustomFields: configuredFieldValues(orderItemFieldDefinitions, itemFieldValues),
+        initialStageKey: initialStage.key,
         quantity: Number(quantity),
         unitPrice,
         promisedAt: dueDate,
@@ -823,7 +911,7 @@ function AppContent() {
       });
       await refreshLocal(session.business.id);
       setOrderForm(false);
-      setGarmentName('');
+      setItemName('');
       setOrderCustomFields({});
       setOrderItemCustomFields({});
       setQuantity('1');
@@ -899,7 +987,7 @@ function AppContent() {
     setPaymentOrder(order);
     setPaymentAttempt(existing ?? null);
     setPaymentAmount(existing?.amount ?? '');
-    setPaymentMethod((existing?.method as 'CASH' | 'BANK' | 'DIGITAL') ?? 'CASH');
+    setPaymentMethod(existing?.method ?? paymentMethodOptions[0] ?? '');
     setError('');
   };
 
@@ -912,6 +1000,10 @@ function AppContent() {
     try {
       if (paymentAttempt && (paymentAmount !== paymentAttempt.amount || paymentMethod !== paymentAttempt.method)) {
         throw new Error(copy.paymentUnconfirmed);
+      }
+      const selectedMethod = paymentAttempt?.method ?? paymentMethod;
+      if (!selectedMethod || (!paymentAttempt && !paymentMethodOptions.includes(selectedMethod))) {
+        throw new Error('Select a configured payment method before recording payment.');
       }
       amountToMinorUnits(paymentAmount);
       amount = paymentAmount;
@@ -1013,6 +1105,7 @@ function AppContent() {
         onChangeText={(text) => updateValue(text)}
         keyboardType={['NUMBER', 'CURRENCY', 'MEASUREMENT'].includes(field.type) ? 'decimal-pad' : 'default'}
         multiline={['LONG_TEXT', 'NOTES'].includes(field.type)}
+        placeholder={field.type === 'DATE' ? 'YYYY-MM-DD' : field.type === 'DATETIME' ? 'YYYY-MM-DD HH:mm' : field.label}
       />
     );
   };
@@ -1092,7 +1185,11 @@ function AppContent() {
     return !query || customer.name.toLocaleLowerCase().includes(query) || customer.phone.includes(query);
   });
   const selectedTemplate = templates.find((item) => item.id === measurementTemplate);
-  const dueOrders = orders.filter((order) => !['COLLECTED', 'CANCELLED'].includes(order.status));
+  const dueOrders = orders.filter((order) => {
+    const stage = businessConfiguration?.workflow.stages.find((item) =>
+      item.key === order.workflow_stage_key || item.key === order.status);
+    return stage ? !stage.isTerminal : order.status !== 'CANCELLED';
+  });
   const activeStageKeys = new Set(businessConfiguration?.workflow.stages
     .filter((stage) => !stage.isInitial && !stage.isTerminal).map((stage) => stage.key) ?? []);
   const dashboardMetrics: Array<[string, string, string]> = [
@@ -1139,6 +1236,19 @@ function AppContent() {
             <Text style={styles.syncButtonText}>{syncing ? '…' : copy.retry}</Text>
           </Pressable>
         </View>
+        {syncState.attention_details.length ? (
+          <View style={styles.attentionCard}>
+            <Text style={styles.attentionTitle}>{syncState.attention} changes need attention</Text>
+            {syncState.attention_details.slice(0, 5).map((item) => (
+              <Text key={item.id} style={styles.syncError}>
+                {item.entity_type}: {item.message}
+              </Text>
+            ))}
+            {syncState.attention_details.length > 5 ? (
+              <Text style={styles.syncMeta}>+{syncState.attention_details.length - 5} more</Text>
+            ) : null}
+          </View>
+        ) : null}
 
         {error ? <Text accessibilityRole="alert" style={styles.errorBanner}>{error}</Text> : null}
 
@@ -1219,32 +1329,33 @@ function AppContent() {
           <>
             <View style={styles.pageHeadingRow}>
               <View><Text style={styles.pageTitle}>{term('items', 'Catalog')}</Text><Text style={styles.subtitle}>{catalogItems.length} entries</Text></View>
-              {can('settings:manage') && online === true ? <ActionButton title="＋ Add item" onPress={() => { setError(''); setCatalogForm(!catalogForm); }} /> : null}
+              {can('settings:manage') ? <ActionButton title="＋ Add item" onPress={() => { setError(''); setCatalogForm(!catalogForm); }} /> : null}
             </View>
             <Field label={copy.search} value={search} onChangeText={setSearch} />
-            {catalogForm && can('settings:manage') && online === true ? (
+            {catalogForm && can('settings:manage') ? (
               <View style={styles.card}>
                 <Text style={styles.fieldLabel}>{term('item', 'Item')} type</Text>
                 <View style={styles.chipWrap}>
-                  {businessConfiguration?.template.itemTypes.map((itemType) => (
+                  {businessConfiguration?.itemTypes.map((itemType) => (
                     <Pressable
                       key={itemType.key}
                       onPress={() => { setCatalogTypeKey(itemType.key); setCatalogCustomFields({}); }}
-                      style={[styles.chip, (catalogTypeKey || businessConfiguration.template.itemTypes[0]?.key) === itemType.key && styles.chipSelected]}
+                      style={[styles.chip, selectedCatalogTypeKey === itemType.key && styles.chipSelected]}
                     >
-                      <Text style={[styles.chipText, (catalogTypeKey || businessConfiguration.template.itemTypes[0]?.key) === itemType.key && styles.chipTextSelected]}>{itemType.label}</Text>
+                      <Text style={[styles.chipText, selectedCatalogTypeKey === itemType.key && styles.chipTextSelected]}>{itemType.label}</Text>
                     </Pressable>
                   ))}
                 </View>
                 <Field label="Name" value={catalogName} onChangeText={setCatalogName} />
+                <Field label="Description" value={catalogDescription} onChangeText={setCatalogDescription} multiline />
                 <Field label="Code / SKU" value={catalogSku} onChangeText={setCatalogSku} />
                 <View style={styles.twoFields}>
                   <View style={styles.halfField}><Field label="Unit" value={catalogUnit} onChangeText={setCatalogUnit} /></View>
                   <View style={styles.halfField}><Field label={`Unit price (${businessConfiguration?.business.currency ?? 'PKR'})`} value={catalogUnitPrice} onChangeText={setCatalogUnitPrice} keyboardType="decimal-pad" /></View>
                 </View>
-                {catalogFields.filter((field) => mobileFieldVisible(field, catalogTypeKey || businessConfiguration?.template.itemTypes[0]?.key)).map((field) =>
+                {visibleCatalogFields.map((field) =>
                   renderDynamicField(field, catalogCustomFields, setCatalogCustomFields))}
-                <Text style={styles.offlineHint}>Catalog edits require a network connection. Customer and order drafts remain available offline.</Text>
+                <Text style={styles.offlineHint}>{copy.saved} Catalog items will sync when a connection is available.</Text>
                 <ActionButton title={saving ? '…' : copy.save} onPress={() => void saveCatalogItem()} disabled={saving || !catalogName.trim()} />
               </View>
             ) : null}
@@ -1254,14 +1365,18 @@ function AppContent() {
               <View key={item.id} style={styles.listCard}>
                 <View style={styles.listMain}>
                   <Text style={styles.listTitle}>{item.name}</Text>
+                  {item.description ? <Text style={styles.listMeta}>{item.description}</Text> : null}
                   <Text style={styles.listMeta}>
-                    {businessConfiguration?.template.itemTypes.find((type) => type.key === item.typeKey)?.label ?? item.typeKey}
+                    {businessConfiguration?.itemTypes.find((type) => type.key === item.typeKey)?.label ?? item.typeKey}
                     {item.sku ? ` · ${item.sku}` : ''} · {item.unit}
                   </Text>
                   {item.unitPrice ? <Text style={styles.listMeta}>{formatCurrency(item.unitPrice, businessConfiguration?.business.currency)} / {item.unit}</Text> : null}
                   <StoredCustomFields serialized={JSON.stringify(item.customFields)} definitions={catalogFields} errorLabel={copy.error} />
                 </View>
-                {can('settings:manage') && online === true ? (
+                <Text style={styles.syncBadge}>
+                  {item.syncState === 'synced' ? '✓' : ['conflict', 'rejected'].includes(item.syncState) ? '!' : '↑'}
+                </Text>
+                {can('settings:manage') && online === true && item.syncState === 'synced' ? (
                   <Pressable accessibilityRole="button" onPress={() => void toggleCatalogItem(item)} disabled={saving}>
                     <Text style={styles.syncBadge}>{item.active ? 'Deactivate' : 'Activate'}</Text>
                   </Pressable>
@@ -1278,7 +1393,7 @@ function AppContent() {
               <View><Text style={styles.pageTitle}>{term('orders', copy.orders)}</Text><Text style={styles.subtitle}>{orders.length} {term('orders', copy.orders).toLocaleLowerCase()}</Text></View>
               {can('orders:write') ? <ActionButton title={`＋ ${copy.newOrder}`} onPress={() => { setError(''); setOrderForm(!orderForm); }} /> : null}
             </View>
-            {businessConfiguration && businessConfiguration.template.key !== 'tailor' ? (
+            {businessConfiguration ? (
               <View style={styles.card}>
                 <Text style={styles.sectionTitle}>Configured workflow</Text>
                 <Text style={styles.listMeta}>
@@ -1297,15 +1412,15 @@ function AppContent() {
                   ))}
                 </View>
                 <Field
-                  label={term('item', currentItemType?.label ?? copy.garment)}
-                  value={garmentName}
-                  onChangeText={setGarmentName}
+                  label={term('item', currentItemType?.label ?? copy.item)}
+                  value={itemName}
+                  onChangeText={setItemName}
                 />
-                {businessConfiguration?.template.itemTypes.length ? (
+                {businessConfiguration?.itemTypes.length ? (
                   <View style={styles.field}>
-                    <Text style={styles.fieldLabel}>{term('item', currentItemType?.label ?? copy.garment)} type</Text>
+                    <Text style={styles.fieldLabel}>{term('item', currentItemType?.label ?? copy.item)} type</Text>
                     <View style={styles.chipWrap}>
-                      {businessConfiguration.template.itemTypes.map((itemType) => (
+                      {businessConfiguration.itemTypes.map((itemType) => (
                         <Pressable
                           key={itemType.key}
                           onPress={() => setOrderItemTypeKey(itemType.key)}
@@ -1319,18 +1434,18 @@ function AppContent() {
                 ) : null}
                 {catalogItems.some((item) => item.active && item.typeKey === currentItemType?.key) ? (
                   <View style={styles.field}>
-                    <Text style={styles.fieldLabel}>Saved {term('item', currentItemType?.label ?? copy.garment).toLowerCase()}</Text>
+                    <Text style={styles.fieldLabel}>Saved {term('item', currentItemType?.label ?? copy.item).toLowerCase()}</Text>
                     <View style={styles.chipWrap}>
                       {catalogItems.filter((item) => item.active && item.typeKey === currentItemType?.key).map((item) => (
                         <Pressable
                           key={item.id}
                           onPress={() => {
-                            setGarmentName(item.name);
+                            setItemName(item.name);
                             if (item.unitPrice) setUnitPrice(item.unitPrice);
                           }}
-                          style={[styles.chip, garmentName === item.name && styles.chipSelected]}
+                          style={[styles.chip, itemName === item.name && styles.chipSelected]}
                         >
-                          <Text style={[styles.chipText, garmentName === item.name && styles.chipTextSelected]}>{item.name}</Text>
+                          <Text style={[styles.chipText, itemName === item.name && styles.chipTextSelected]}>{item.name}</Text>
                         </Pressable>
                       ))}
                     </View>
@@ -1388,7 +1503,7 @@ function AppContent() {
                           editable={!paymentAttempt}
                         />
                         <View style={styles.chipWrap}>
-                          {(['CASH', 'BANK', 'DIGITAL'] as const).map((method, index) => (
+                          {paymentMethodOptions.map((method) => (
                             <Pressable
                               accessibilityRole="button"
                               accessibilityState={{ selected: method === paymentMethod, disabled: Boolean(paymentAttempt) }}
@@ -1397,7 +1512,7 @@ function AppContent() {
                               onPress={() => setPaymentMethod(method)}
                               style={[styles.chip, paymentMethod === method && styles.chipSelected]}
                             >
-                              <Text style={[styles.chipText, paymentMethod === method && styles.chipTextSelected]}>{copy.paymentMethods[index]}</Text>
+                              <Text style={[styles.chipText, paymentMethod === method && styles.chipTextSelected]}>{paymentMethodLabel(method)}</Text>
                             </Pressable>
                           ))}
                         </View>
@@ -1431,7 +1546,7 @@ function AppContent() {
                     </Pressable>
                   ))}
                 </View>
-                <Text style={styles.fieldLabel}>{copy.chooseGarment}</Text>
+                <Text style={styles.fieldLabel}>{copy.chooseMeasurementTemplate}</Text>
                 <View style={styles.chipWrap}>
                   {templates.map((template) => (
                     <Pressable key={template.id} onPress={() => { setMeasurementTemplate(template.id); setMeasurementValues({}); }} style={[styles.chip, measurementTemplate === template.id && styles.chipSelected]}>
@@ -1477,6 +1592,7 @@ function AppContent() {
             ) : notificationHistory.length ? notificationHistory.map((notification) => {
               const statusLabel = {
                 QUEUED: copy.queued,
+                PROCESSING: copy.processing,
                 SENT: copy.sent,
                 DELIVERED: copy.delivered,
                 READ: copy.read,
@@ -1677,6 +1793,8 @@ const styles = StyleSheet.create({
   connectionText: { color: '#52665C', fontSize: 11, fontWeight: '700' },
   content: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 20 },
   syncCard: { backgroundColor: '#EAF3EE', borderRadius: 15, padding: 13, flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  attentionCard: { backgroundColor: '#FCEDEA', borderRadius: 12, padding: 12, marginTop: -12, marginBottom: 16 },
+  attentionTitle: { color: '#8D342B', fontSize: 11, fontWeight: '800', marginBottom: 3 },
   syncCopy: { flex: 1, paddingRight: 8 },
   syncTitle: { color: '#245A45', fontSize: 12, fontWeight: '800' },
   syncMeta: { color: '#75877D', fontSize: 10, marginTop: 4 },

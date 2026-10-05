@@ -13,6 +13,7 @@
     "typecheck": "npm run build:shared && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.seed.json",
     "test": "tsx --test test/*.test.ts",
     "test:db": "tsx scripts/test-db.ts",
+    "test:acceptance:templates": "tsx --test test/business-templates.acceptance.test.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",

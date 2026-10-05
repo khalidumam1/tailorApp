@@ -296,7 +296,7 @@ router.get('/:paymentId/receipt.pdf', requireBusinessPermission('payments:read')
       order: {
         include: {
           customer: { select: { name: true } },
-          items: { select: { garmentName: true, quantity: true } },
+          items: { select: { itemName: true, garmentName: true, quantity: true } },
         },
       },
       correctionOf: { select: { receiptNumber: true } },
@@ -316,7 +316,7 @@ router.get('/:paymentId/receipt.pdf', requireBusinessPermission('payments:read')
     businessName: payment.business.name,
     customerName: payment.order.customer.name,
     orderNumber: payment.order.orderNumber,
-    garments: payment.order.items.map((item) => `${item.quantity} x ${item.garmentName}`).join(', '),
+    garments: payment.order.items.map((item) => `${item.quantity} x ${item.itemName ?? item.garmentName}`).join(', '),
     amount: `PKR ${payment.amount.toFixed(2)}`,
     paymentMethod: payment.method,
     paymentKind: payment.kind,

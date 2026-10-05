@@ -1,12 +1,13 @@
 import { Prisma } from '@prisma/client';
 import { HttpError } from './errors.js';
 
-type UsageLimit = 'customers' | 'staff' | 'ordersPerMonth';
+type UsageLimit = 'customers' | 'staff' | 'ordersPerMonth' | 'catalogItems';
 
 const permissionLimit: Record<string, UsageLimit | undefined> = {
   'customers:write': 'customers',
   'staff:manage': 'staff',
   'orders:write': 'ordersPerMonth',
+  'catalog:write': 'catalogItems',
 };
 
 export async function assertPlanLimit(
@@ -51,10 +52,12 @@ export async function assertPlanLimit(
     currentUsage = await tx.membership.count({
       where: { businessId, active: true, role: { name: { not: 'Owner' } } },
     });
-  } else {
+  } else if (limitName === 'ordersPerMonth') {
     const karachiNow = new Date(now.getTime() + 5 * 60 * 60 * 1000);
     const monthStart = new Date(Date.UTC(karachiNow.getUTCFullYear(), karachiNow.getUTCMonth(), 1) - 5 * 60 * 60 * 1000);
     currentUsage = await tx.order.count({ where: { businessId, createdAt: { gte: monthStart } } });
+  } else {
+    currentUsage = await tx.businessItem.count({ where: { businessId, active: true } });
   }
   if (currentUsage + additionalUsage > limit) {
     throw new HttpError(403, `Your plan limit for ${limitName} has been reached.`, 'SUBSCRIPTION_LIMIT_REACHED');

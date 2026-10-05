@@ -194,6 +194,12 @@ async function seed() {
         dueDays: 12,
         orderNumber: 'FURN-000001',
         receiptNumber: 'FURN-R000001',
+        catalogValues: {
+          catalog_dimensions: 210,
+          catalog_material: 'Oak',
+          catalog_color: 'Natural',
+          catalog_design: 'Compact two-seat sofa with a hardwood frame.',
+        },
         customValues: { dimensions: 210, material: 'Oak' },
         stages: [
           ['new', 'New'], ['design', 'Design'], ['material_confirmation', 'Material Confirmation'],
@@ -212,7 +218,12 @@ async function seed() {
         dueDays: 18,
         orderNumber: 'CARP-000001',
         receiptNumber: 'CARP-R000001',
-        customValues: { dimensions: 180 },
+        catalogValues: {
+          catalog_dimensions: 180,
+          catalog_material: 'Oak',
+          catalog_design: 'Made-to-measure dining table with a protective finish.',
+        },
+        customValues: { dimensions: 180, wood_material: 'Oak', design: 'Solid oak, rounded edges, clear finish.' },
         stages: [
           ['new', 'New'], ['measurement', 'Measurement'], ['material', 'Material'],
           ['production', 'Production'], ['installation', 'Installation'], ['completed', 'Completed'],
@@ -230,8 +241,14 @@ async function seed() {
         dueDays: 3,
         orderNumber: 'AUTO-000001',
         receiptNumber: 'AUTO-R000001',
+        catalogValues: {
+          catalog_registration: 'ABC-123',
+          catalog_parts: 'Oil filter and front brake pads',
+          catalog_labour: 12000,
+          catalog_estimate: 32000,
+        },
         customValues: {
-          vehicle: 'Honda Civic · demo registration ABC-123',
+          vehicle: 'Honda Civic - demo registration ABC-123',
           inspection_notes: 'Inspect engine, brakes, and suspension.',
           registration: 'ABC-123',
           service_type: 'Repair',
@@ -253,6 +270,11 @@ async function seed() {
         dueDays: 5,
         orderNumber: 'PRINT-000001',
         receiptNumber: 'PRINT-R000001',
+        catalogValues: {
+          catalog_size: 'A5',
+          catalog_material: 'Glossy paper',
+          catalog_quantity: 500,
+        },
         customValues: {
           specifications: 'A5, 4-color, 170gsm glossy, 500 copies.',
           size: 'A5',
@@ -407,6 +429,27 @@ async function seed() {
       const initialStage = workflowStages.find((stage) => stage.isInitial);
       if (!initialStage) throw new Error(`Template ${definition.key} has no initial workflow stage`);
       const fieldByKey = new Map(template.fields.map((field) => [field.key, field]));
+      const catalogValues = Object.entries(definition.catalogValues)
+        .map(([key, value]) => {
+          const field = fieldByKey.get(key);
+          if (!field || field.screen !== 'catalog-item') {
+            throw new Error(`Template ${definition.key} is missing catalog field ${key}`);
+          }
+          return customFieldValueData({
+            fieldDefinitionId: field.id,
+            key,
+            type: field.type,
+            value: field.type === 'NUMBER' || field.type === 'CURRENCY' || field.type === 'MEASUREMENT'
+              ? Number(value) : String(value),
+          });
+        });
+      for (const value of catalogValues) {
+        await tx.customFieldValue.upsert({
+          where: { itemId_fieldDefinitionId: { itemId: item.id, fieldDefinitionId: value.fieldDefinitionId } },
+          update: value,
+          create: { businessId: demoBusiness.id, itemId: item.id, ...value },
+        });
+      }
       const orderValues = Object.entries(definition.customValues)
         .flatMap(([key, value]) => {
           const field = fieldByKey.get(key);

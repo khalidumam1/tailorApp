@@ -9,14 +9,12 @@ import {
   isNotificationTemplate,
   isNotificationTemplateMap,
   renderNotificationTemplate,
-  type NotificationTemplateVariable,
 } from './domain/notification-templates.js';
 
 type NotificationTx = Prisma.TransactionClient;
 type NotificationSnapshot = Record<string, string>;
 type NotificationPayload = Record<string, Prisma.InputJsonValue>;
 let duePaymentCursor: string | undefined;
-let subscriptionExpiryCursor: string | undefined;
 
 function jsonInput(value: NotificationPayload): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -66,61 +64,79 @@ async function queueNotification(
     where: { businessId: input.businessId },
     select: { notificationTemplates: true, contactPhone: true },
   });
-  const phone = validatedPhone(input.recipientPhone ?? input.customer?.phone ?? configuration?.contactPhone ?? '');
-  let notSentReason = !phone
-    ? 'Recipient phone number is invalid or not configured'
-    : input.customer && (input.customer.whatsappOptedOutAt || !input.customer.whatsappConsent)
-      ? 'Customer has not consented or has opted out'
-      : null;
-  let templateName = templateFor(input.kind);
-  let payload: NotificationPayload = input.payload;
   const templates = isNotificationTemplateMap(configuration?.notificationTemplates)
     ? configuration.notificationTemplates
     : {};
-  if (Object.hasOwn(templates, input.kind)) {
-    const configured = templates[input.kind];
-    if (!isNotificationTemplate(configured)) {
-      notSentReason ??= 'Notification template configuration is invalid';
-    } else if (!configured.enabled) {
-      notSentReason ??= 'Notification event is disabled by business configuration';
-    } else {
-      try {
-        const values: Record<NotificationTemplateVariable, string> = {
-          'business.name': input.payload.businessName ?? '',
-          'business.phone': configuration?.contactPhone ?? '',
-          'recipient.name': input.recipientName ?? input.customer?.name ?? input.payload.customerName ?? '',
-          'recipient.phone': phone ?? '',
-          'customer.name': input.payload.customerName ?? input.customer?.name ?? '',
-          'customer.phone': phone ?? '',
-          'order.number': input.payload.orderNumber ?? '',
-          'order.total': input.payload.total ?? '',
-          'order.paid': input.payload.totalPaid ?? input.payload.advancePaid ?? '',
-          'order.balance': input.payload.remaining ?? input.payload.outstanding ?? '',
-          'order.status': input.payload.orderStatus ?? '',
-          'order.readyDate': input.payload.readyDate ?? '',
-          'item.name': input.payload.itemName ?? input.payload.garments ?? '',
-          'subscription.plan': input.payload.subscriptionPlan ?? '',
-          'subscription.cycle': input.payload.subscriptionCycle ?? '',
-          'subscription.status': input.payload.subscriptionStatus ?? '',
-          'subscription.endsAt': input.payload.subscriptionEndsAt ?? '',
-          'subscription.graceUntil': input.payload.subscriptionGraceUntil ?? '',
-          'subscription.daysRemaining': input.payload.subscriptionDaysRemaining ?? '',
-        };
-        const rendered = renderNotificationTemplate(configured.body, values);
-        templateName = configured.providerTemplateName ?? templateName;
-        if (!templateName) {
-          notSentReason ??= 'An approved WhatsApp template name is required for this event';
-        } else {
-          payload = {
-            ...input.payload,
-            renderedBody: rendered.body,
-            templateParameters: rendered.parameters,
-            templateLanguage: configured.language ?? env.WHATSAPP_TEMPLATE_LANGUAGE,
-          };
-        }
-      } catch (error) {
-        notSentReason ??= error instanceof Error ? error.message.slice(0, 500) : 'Notification template is invalid';
+  const configured = Object.hasOwn(templates, input.kind) ? templates[input.kind] : undefined;
+  let notSentReason: string | null = null;
+  let templateName = templateFor(input.kind);
+  let payload: NotificationPayload = input.payload;
+  let recipientPolicy: 'CUSTOMER' | 'BUSINESS_CONTACT' = input.customer ? 'CUSTOMER' : 'BUSINESS_CONTACT';
+  if (configured !== undefined && !isNotificationTemplate(configured)) {
+    notSentReason = 'Notification template configuration is invalid';
+  } else if (isNotificationTemplate(configured)) {
+    recipientPolicy = configured.recipientPolicy ?? recipientPolicy;
+    if (!configured.enabled) notSentReason = 'Notification event is disabled by business configuration';
+  }
+  if (recipientPolicy === 'CUSTOMER' && !input.customer) {
+    notSentReason ??= 'Customer recipient policy requires a customer record';
+  } else if (recipientPolicy === 'CUSTOMER' && input.customer
+    && (input.customer.whatsappOptedOutAt || !input.customer.whatsappConsent)) {
+    notSentReason ??= 'Customer has not consented or has opted out';
+  }
+  const phone = validatedPhone(recipientPolicy === 'CUSTOMER'
+    ? input.customer?.phone ?? ''
+    : input.recipientPhone ?? configuration?.contactPhone ?? '');
+  if (!phone) notSentReason ??= 'Recipient phone number is invalid or not configured';
+  if (isNotificationTemplate(configured) && configured.enabled) {
+    try {
+      const values: Record<string, string> = {
+        'business.name': input.payload.businessName ?? '',
+        'business.phone': configuration?.contactPhone ?? '',
+        'recipient.name': recipientPolicy === 'CUSTOMER'
+          ? input.customer?.name ?? input.payload.customerName ?? ''
+          : input.recipientName ?? input.payload.customerName ?? '',
+        'recipient.phone': phone ?? '',
+        'customer.name': input.payload.customerName ?? input.customer?.name ?? '',
+        'customer.phone': input.customer?.phone ?? '',
+        'order.number': input.payload.orderNumber ?? '',
+        'order.total': input.payload.total ?? '',
+        'order.paid': input.payload.totalPaid ?? input.payload.advancePaid ?? '',
+        'order.balance': input.payload.remaining ?? input.payload.outstanding ?? '',
+        'order.status': input.payload.orderStatus ?? '',
+        'order.readyDate': input.payload.readyDate ?? '',
+        'item.name': input.payload.itemName ?? input.payload.garments ?? '',
+        'subscription.plan': input.payload.subscriptionPlan ?? '',
+        'subscription.cycle': input.payload.subscriptionCycle ?? '',
+        'subscription.status': input.payload.subscriptionStatus ?? '',
+        'subscription.endsAt': input.payload.subscriptionEndsAt ?? '',
+        'subscription.graceUntil': input.payload.subscriptionGraceUntil ?? '',
+        'subscription.daysRemaining': input.payload.subscriptionDaysRemaining ?? '',
+        'event.name': input.payload.eventName ?? '',
+        'event.description': input.payload.eventDescription ?? '',
+        'event.date': input.payload.eventDate ?? '',
+        'event.id': input.payload.eventId ?? '',
+        'event.status': input.payload.eventStatus ?? '',
+        'event.amount': input.payload.eventAmount ?? '',
+        'event.reference': input.payload.eventReference ?? '',
+      };
+      for (const [key, value] of Object.entries(input.payload)) {
+        if (key.startsWith('custom.')) values[key] = value;
       }
+      const rendered = renderNotificationTemplate(configured.body, values);
+      templateName = configured.providerTemplateName ?? templateName;
+      if (!templateName) {
+        notSentReason ??= 'An approved WhatsApp template name is required for this event';
+      } else {
+        payload = {
+          ...input.payload,
+          renderedBody: rendered.body,
+          templateParameters: rendered.parameters,
+          templateLanguage: configured.language ?? env.WHATSAPP_TEMPLATE_LANGUAGE,
+        };
+      }
+    } catch (error) {
+      notSentReason ??= error instanceof Error ? error.message.slice(0, 500) : 'Notification template is invalid';
     }
   }
   if (!templateName) {
@@ -131,10 +147,12 @@ async function queueNotification(
   await tx.whatsAppNotification.createMany({
     data: [{
       businessId: input.businessId,
-      customerId: input.customer?.id,
+      customerId: recipientPolicy === 'CUSTOMER' ? input.customer?.id : undefined,
       orderId: input.orderId,
       paymentId: input.paymentId,
-      recipientName: input.recipientName ?? input.customer?.name ?? input.payload.customerName ?? null,
+      recipientName: recipientPolicy === 'CUSTOMER'
+        ? input.customer?.name ?? input.payload.customerName ?? null
+        : input.recipientName ?? input.payload.customerName ?? null,
       kind: input.kind,
       status: notSentReason ? 'NOT_SENT' : 'QUEUED',
       idempotencyKey: input.idempotencyKey,
@@ -166,7 +184,7 @@ export async function queueOrderCreated(
     (total, payment) => payment.kind === 'PAYMENT' ? total.plus(payment.amount) : total.minus(payment.amount),
     new Prisma.Decimal(0),
   );
-  const garments = order.items.map((item) => `${item.quantity} x ${item.garmentName}`).join(', ');
+  const itemNames = order.items.map((item) => `${item.quantity} x ${item.itemName ?? item.garmentName}`).join(', ');
   await queueNotification(tx, {
     businessId: order.businessId,
     customer: order.customer,
@@ -177,7 +195,8 @@ export async function queueOrderCreated(
       businessName: order.business.name,
       customerName: order.customer.name,
       orderNumber: order.orderNumber,
-      garments,
+      items: itemNames,
+      garments: itemNames,
       total: money(order.total),
       advancePaid: money(paid),
       outstanding: money(Prisma.Decimal.max(new Prisma.Decimal(0), order.total.minus(paid))),
@@ -262,7 +281,8 @@ export async function queueOrderReady(
       businessName: order.business.name,
       customerName: order.customer.name,
       orderNumber: order.orderNumber,
-      garments: order.items.map((item) => `${item.quantity} x ${item.garmentName}`).join(', '),
+      items: order.items.map((item) => `${item.quantity} x ${item.itemName ?? item.garmentName}`).join(', '),
+      garments: order.items.map((item) => `${item.quantity} x ${item.itemName ?? item.garmentName}`).join(', '),
       total: money(order.total),
       totalPaid: money(paid),
       remaining: money(Prisma.Decimal.max(new Prisma.Decimal(0), order.total.minus(paid))),
@@ -315,6 +335,151 @@ export async function queueOrderStatusChanged(
   });
 }
 
+function displayValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+function customFieldSnapshot(
+  entries: Array<{ fieldDefinition: { key: string }; valueText: string | null; valueNumber: Prisma.Decimal | null;
+    valueBoolean: boolean | null; valueDate: Date | null; valueJson: Prisma.JsonValue | null }>,
+): NotificationSnapshot {
+  return Object.fromEntries(entries.map((entry) => [
+    `custom.${entry.fieldDefinition.key}`,
+    entry.valueText
+      ?? entry.valueNumber?.toString()
+      ?? (entry.valueBoolean === null ? undefined : String(entry.valueBoolean))
+      ?? entry.valueDate?.toISOString()
+      ?? displayValue(entry.valueJson),
+  ]));
+}
+
+export async function queueCustomerNotification(
+  tx: NotificationTx,
+  customerId: string,
+  kind: 'CUSTOMER_CREATED' | 'CUSTOMER_UPDATED',
+): Promise<void> {
+  const customer = await tx.customer.findUniqueOrThrow({
+    where: { id: customerId },
+    include: {
+      business: { select: { name: true } },
+      customFieldValues: {
+        include: { fieldDefinition: { select: { key: true } } },
+      },
+    },
+  });
+  const eventName = kind === 'CUSTOMER_CREATED' ? 'Customer created' : 'Customer updated';
+  await queueNotification(tx, {
+    businessId: customer.businessId,
+    customer,
+    recipientName: customer.business.name,
+    kind,
+    idempotencyKey: kind === 'CUSTOMER_CREATED'
+      ? `customer-created:${customer.id}`
+      : `customer-updated:${customer.id}:${customer.version}`,
+    payload: {
+      businessName: customer.business.name,
+      customerName: customer.name,
+      eventName,
+      eventDescription: `${eventName}: ${customer.name}`,
+      eventId: customer.id,
+      eventStatus: 'ACTIVE',
+      eventDate: dateLabel(new Date()),
+      ...customFieldSnapshot(customer.customFieldValues),
+    },
+  });
+}
+
+export async function queueMeasurementAppended(
+  tx: NotificationTx,
+  revisionId: string,
+): Promise<void> {
+  const revision = await tx.measurementRevision.findUniqueOrThrow({
+    where: { id: revisionId },
+    include: {
+      profile: {
+        include: {
+          customer: {
+            include: {
+              business: { select: { name: true } },
+              customFieldValues: {
+                include: { fieldDefinition: { select: { key: true } } },
+              },
+            },
+          },
+          garmentTemplate: { select: { name: true } },
+        },
+      },
+    },
+  });
+  const customer = revision.profile.customer;
+  const measurementValues = revision.values && typeof revision.values === 'object' && !Array.isArray(revision.values)
+    ? Object.fromEntries(Object.entries(revision.values).map(([key, value]) => [`custom.measurement_${key}`, displayValue(value)]))
+    : {};
+  const eventName = 'Measurement appended';
+  await queueNotification(tx, {
+    businessId: customer.businessId,
+    customer,
+    recipientName: customer.business.name,
+    kind: 'MEASUREMENT_APPENDED',
+    idempotencyKey: `measurement-appended:${revision.id}`,
+    payload: {
+      businessName: customer.business.name,
+      customerName: customer.name,
+      eventName,
+      eventDescription: `${revision.profile.garmentTemplate.name} measurements updated (revision ${revision.version})`,
+      eventId: revision.id,
+      eventDate: dateLabel(revision.measuredAt),
+      eventStatus: `REVISION_${revision.version}`,
+      itemName: revision.profile.garmentTemplate.name,
+      ...customFieldSnapshot(customer.customFieldValues),
+      ...measurementValues,
+    },
+  });
+}
+
+export async function queueSubscriptionPaymentNotification(
+  tx: NotificationTx,
+  paymentId: string,
+  kind: 'SUBSCRIPTION_PAYMENT_SUBMITTED' | 'SUBSCRIPTION_PAYMENT_UNDER_REVIEW'
+    | 'SUBSCRIPTION_PAYMENT_APPROVED' | 'SUBSCRIPTION_PAYMENT_REJECTED',
+  detail?: string,
+): Promise<void> {
+  const payment = await tx.subscriptionPayment.findUniqueOrThrow({
+    where: { id: paymentId },
+    include: {
+      business: { select: { name: true } },
+      plan: { select: { name: true } },
+    },
+  });
+  const eventNames = {
+    SUBSCRIPTION_PAYMENT_SUBMITTED: 'Subscription payment submitted',
+    SUBSCRIPTION_PAYMENT_UNDER_REVIEW: 'Subscription payment under review',
+    SUBSCRIPTION_PAYMENT_APPROVED: 'Subscription payment approved',
+    SUBSCRIPTION_PAYMENT_REJECTED: 'Subscription payment rejected',
+  } as const;
+  await queueNotification(tx, {
+    businessId: payment.businessId,
+    recipientName: payment.business.name,
+    kind,
+    idempotencyKey: `subscription-payment:${payment.id}:${payment.status.toLowerCase()}`,
+    payload: {
+      businessName: payment.business.name,
+      subscriptionPlan: payment.plan.name,
+      subscriptionCycle: payment.cycle,
+      eventName: eventNames[kind],
+      eventDescription: detail ?? eventNames[kind],
+      eventId: payment.id,
+      eventStatus: payment.status,
+      eventDate: dateLabel(payment.updatedAt),
+      eventAmount: money(payment.amount),
+      eventReference: payment.transactionReference,
+    },
+  });
+}
+
 function businessDate(date: Date, timezone: string): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: timezone,
@@ -338,21 +503,42 @@ function daysBetweenDates(from: string, to: string): number {
 
 export async function enqueueSubscriptionExpiryNotifications(): Promise<void> {
   const now = new Date();
-  const nextCursor = await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     const setting = await tx.platformSetting.findUnique({ where: { key: 'billing' }, select: { value: true } });
     const billing = setting?.value;
-    const reminderDays = typeof billing === 'object' && billing !== null && 'expiryReminderDays' in billing
-      && Array.isArray(billing.expiryReminderDays)
-      ? [...new Set(billing.expiryReminderDays.filter(
-        (day): day is number => typeof day === 'number' && Number.isInteger(day) && day >= 0 && day <= 365,
-      ))]
-      : [];
-    if (!reminderDays.length) return undefined;
+    if (!billing || typeof billing !== 'object' || Array.isArray(billing)
+      || !('expiryReminderDays' in billing) || !Array.isArray(billing.expiryReminderDays)
+    ) {
+      throw new Error('Subscription expiry reminder configuration is invalid');
+    }
+    const reminderDays = [...new Set(billing.expiryReminderDays.map((day): number => {
+      if (typeof day !== 'number' || !Number.isInteger(day) || day < 0 || day > 365) {
+        throw new Error('Subscription expiry reminder configuration is invalid');
+      }
+      return day;
+    }))];
+    if (!reminderDays.length) return;
+
+    await tx.whatsAppNotificationScanCursor.upsert({
+      where: { id: 'subscription-expiry' },
+      create: { id: 'subscription-expiry' },
+      update: {},
+    });
+    await tx.$queryRaw`SELECT "id" FROM "WhatsAppNotificationScanCursor" WHERE "id" = 'subscription-expiry' FOR UPDATE`;
+    const scanCursor = await tx.whatsAppNotificationScanCursor.findUniqueOrThrow({
+      where: { id: 'subscription-expiry' },
+      select: { lastId: true },
+    });
+    const expiryWindow = {
+      gte: new Date(now.getTime() - 86_400_000),
+      lte: new Date(now.getTime() + (Math.max(...reminderDays) + 2) * 86_400_000),
+    };
 
     const subscriptions = await tx.subscription.findMany({
       where: {
         status: { in: ['ACTIVE', 'TRIAL'] },
-        endsAt: { gte: now },
+        endsAt: expiryWindow,
+        ...(scanCursor.lastId ? { id: { gt: scanCursor.lastId } } : {}),
       },
       include: {
         business: {
@@ -360,27 +546,28 @@ export async function enqueueSubscriptionExpiryNotifications(): Promise<void> {
         },
         plan: { select: { name: true } },
       },
-      orderBy: [{ endsAt: 'asc' }, { id: 'asc' }],
+      orderBy: { id: 'asc' },
       take: 100,
-      ...(subscriptionExpiryCursor ? { cursor: { id: subscriptionExpiryCursor }, skip: 1 } : {}),
     });
+    if (!subscriptions.length) {
+      await tx.whatsAppNotificationScanCursor.update({
+        where: { id: 'subscription-expiry' },
+        data: { lastId: null },
+      });
+      return;
+    }
     for (const subscription of subscriptions) {
       const localToday = businessDate(now, subscription.business.timezone);
       const localExpiryDate = businessDate(subscription.endsAt, subscription.business.timezone);
       const daysRemaining = daysBetweenDates(localToday, localExpiryDate);
       if (!reminderDays.includes(daysRemaining)) continue;
 
-      const configured = isNotificationTemplateMap(subscription.business.configuration?.notificationTemplates)
-        ? subscription.business.configuration.notificationTemplates.SUBSCRIPTION_EXPIRING
-        : undefined;
       const contactPhone = subscription.business.configuration?.contactPhone;
-      if (!isNotificationTemplate(configured) || !configured.enabled || !configured.providerTemplateName
-        || !contactPhone || !validatedPhone(contactPhone)) continue;
 
       await queueNotification(tx, {
         businessId: subscription.businessId,
         recipientName: subscription.business.name,
-        recipientPhone: contactPhone,
+        recipientPhone: contactPhone ?? undefined,
         kind: 'SUBSCRIPTION_EXPIRING',
         idempotencyKey: `subscription-expiring:${subscription.id}:${localExpiryDate}:${daysRemaining}`,
         payload: {
@@ -394,9 +581,11 @@ export async function enqueueSubscriptionExpiryNotifications(): Promise<void> {
         },
       });
     }
-    return subscriptions.length === 100 ? subscriptions.at(-1)?.id : undefined;
+    await tx.whatsAppNotificationScanCursor.update({
+      where: { id: 'subscription-expiry' },
+      data: { lastId: subscriptions.at(-1)?.id ?? null },
+    });
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-  subscriptionExpiryCursor = nextCursor;
 }
 
 export async function enqueueDuePaymentNotifications(): Promise<void> {
@@ -622,12 +811,14 @@ async function sendNotification(
     && configuredParameters.every((value): value is string => typeof value === 'string')
     ? configuredParameters.map((_, index) => `configured_${index}`)
     : legacyParameters;
+  const hasConfiguredTemplate = Array.isArray(configuredParameters)
+    && configuredParameters.every((value): value is string => typeof value === 'string');
   const parameterValues = Array.isArray(configuredParameters)
     && configuredParameters.every((value): value is string => typeof value === 'string')
     ? configuredParameters
     : parameters.map((key) => payload[key] ?? '');
   const components: Array<Record<string, unknown>> = [];
-  if (notification.kind === 'ORDER_CREATED' || notification.kind === 'PAYMENT_RECEIVED') {
+  if (!hasConfiguredTemplate && (notification.kind === 'ORDER_CREATED' || notification.kind === 'PAYMENT_RECEIVED')) {
     const mediaId = await uploadReceipt(notification.payload, notification.kind);
     components.push({
       type: 'header',
@@ -766,7 +957,10 @@ export function startWhatsAppWorker(logger: Logger): NodeJS.Timeout | undefined 
         // Drain a small batch, then yield to the event loop.
       }
     } catch (error) {
-      logger.error({ errorName: error instanceof Error ? error.name : 'unknown' }, 'WhatsApp notification worker failed');
+      logger.error({
+        errorName: error instanceof Error ? error.name : 'unknown',
+        errorMessage: error instanceof Error ? error.message.slice(0, 500) : 'Unknown worker failure',
+      }, 'WhatsApp notification worker failed');
     } finally {
       running = false;
     }

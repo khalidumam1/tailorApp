@@ -10,6 +10,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
+import { queueMeasurementAppended } from '../whatsapp.js';
 
 const router = express.Router();
 const idSchema = z.string().uuid();
@@ -148,6 +149,7 @@ router.post('/customers/:customerId/revisions', requireBusinessPermission('measu
         measuredAt: new Date(input.measuredAt),
       },
     });
+    await queueMeasurementAppended(tx, revision.id);
     await tx.auditEvent.create({
       data: {
         businessId,

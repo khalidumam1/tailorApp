@@ -103,7 +103,7 @@ export const authenticate: RequestHandler = asyncHandler(async (req, _res, next)
   next();
 });
 
-export function requireBusinessPermission(permission: string): RequestHandler {
+export function requireBusinessPermission(permission: string, planFeature?: string): RequestHandler {
   const handler: RequestHandler = asyncHandler(async (req, _res, next) => {
     if (req.auth?.scope !== 'business' || !req.auth.business) {
       next(new HttpError(403, 'Business membership is required', 'BUSINESS_ACCESS_DENIED'));
@@ -115,7 +115,7 @@ export function requireBusinessPermission(permission: string): RequestHandler {
     }
     const paidMutation = !permission.startsWith('subscriptions:')
       && (permission.endsWith(':write') || permission.endsWith(':manage') || permission === 'orders:transition');
-    await assertSubscriptionAccess(req.auth.business.id, permission, paidMutation);
+    await assertSubscriptionAccess(req.auth.business.id, permission, paidMutation, planFeature);
     next();
   });
   return handler;
@@ -125,6 +125,7 @@ export async function assertSubscriptionAccess(
   businessId: string,
   permission?: string,
   isPaidMutation = true,
+  explicitFeature?: string,
 ): Promise<void> {
   const setting = await prisma.platformSetting.findUnique({ where: { key: 'billing' }, select: { value: true } });
   const billing = setting?.value;
@@ -147,12 +148,13 @@ export async function assertSubscriptionAccess(
   }
   if (!entitlement) return;
 
-  const feature = permission?.startsWith('customers:') ? 'customers'
+  const feature = explicitFeature ?? (permission?.startsWith('customers:') ? 'customers'
     : permission?.startsWith('measurements:') ? 'measurements'
       : permission?.startsWith('orders:') ? 'orders'
         : permission?.startsWith('payments:') ? 'payments'
+          : permission?.startsWith('notifications:') ? 'notifications'
             : permission === 'staff:manage' ? 'staff'
-            : permission === 'reports:read' ? 'reports' : undefined;
+              : permission === 'reports:read' ? 'reports' : undefined);
   const features = entitlement.plan.features;
   if (feature && typeof features === 'object' && features !== null && !Array.isArray(features)
     && feature in features && features[feature] === false) {

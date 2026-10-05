@@ -126,3 +126,27 @@ test('rejects transitions from terminal stages', () => {
     (error: unknown) => error instanceof HttpError && error.code === 'INVALID_TEMPLATE_TRANSITION',
   );
 });
+
+test('rejects unreachable workflow stages and item-type visibility references', () => {
+  assert.throws(
+    () => validateTemplate({
+      ...genericTemplate,
+      stages: [...genericTemplate.stages, {
+        key: 'ORPHAN',
+        label: 'Orphan',
+        sortOrder: 3,
+        isInitial: false,
+        isTerminal: true,
+        actions: [],
+      }],
+    }),
+    (error: unknown) => error instanceof HttpError && error.code === 'INVALID_TEMPLATE_WORKFLOW_GRAPH',
+  );
+  assert.throws(
+    () => validateTemplate({
+      ...genericTemplate,
+      fields: [{ ...genericTemplate.fields[0], visibility: { itemTypes: ['unknown'] } }],
+    }),
+    (error: unknown) => error instanceof HttpError && error.code === 'INVALID_TEMPLATE_FIELD_VISIBILITY',
+  );
+});

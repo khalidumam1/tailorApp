@@ -12,8 +12,8 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { calculateNetPaid, calculateOutstanding } from '../domain/finance.js';
-import { customFieldValueData, validateCustomFieldValues } from '../domain/custom-fields.js';
-import { isAllowedOrderTransition } from '../domain/orders.js';
+import { customFieldValueData, validateCustomFieldValues, withBuiltInOrderItemFields } from '../domain/custom-fields.js';
+import { businessRoleKey, isAllowedOrderTransition } from '../domain/orders.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { assertPlanLimit } from '../plan-limits.js';
@@ -150,6 +150,7 @@ router.post('/', requireBusinessPermission('orders:write'), asyncHandler(async (
   const configuration = await prisma.business.findUnique({
     where: { id: businessId },
     include: {
+      configuration: true,
       template: {
         include: {
           fields: { where: { active: true } },
@@ -163,10 +164,11 @@ router.post('/', requireBusinessPermission('orders:write'), asyncHandler(async (
     },
   });
   if (!configuration?.template) throw new HttpError(409, 'Business template configuration is unavailable', 'BUSINESS_TEMPLATE_MISSING');
-  if (!configuration.template.enabledModules.includes('orders')) {
+  const enabledModules = configuration.configuration?.enabledModules ?? configuration.template.enabledModules;
+  if (!enabledModules.includes('orders')) {
     throw new HttpError(403, 'The orders module is disabled for this business', 'BUSINESS_MODULE_DISABLED');
   }
-  const itemTypes = itemTypesSchema.safeParse(configuration.template.itemTypes);
+  const itemTypes = itemTypesSchema.safeParse(configuration.configuration?.itemTypes ?? configuration.template.itemTypes);
   if (!itemTypes.success || itemTypes.data.length === 0) {
     throw new HttpError(500, 'Business item types are invalid', 'INVALID_ITEM_TYPES');
   }
@@ -187,11 +189,11 @@ router.post('/', requireBusinessPermission('orders:write'), asyncHandler(async (
       throw new HttpError(400, 'Item type is not available for this business', 'INVALID_ITEM_TYPE');
     }
     const itemName = item.itemName ?? item.garmentName ?? '';
-    const customFieldValues = validateCustomFieldValues(itemFields, {
-      ...(item.customFields ?? {}),
-      garment_name: itemName,
-      quantity: item.quantity,
-    }, { itemTypeKey });
+    const customFieldValues = validateCustomFieldValues(
+      itemFields,
+      withBuiltInOrderItemFields(itemFields, item.customFields ?? {}, itemName, item.quantity),
+      { itemTypeKey },
+    );
     const unitPrice = new Prisma.Decimal(item.unitPrice);
     total = total.plus(unitPrice.mul(item.quantity));
     let measurementSnapshot: Prisma.InputJsonObject = {};
@@ -375,13 +377,12 @@ router.post('/:orderId/workflow', requireBusinessPermission('orders:transition')
       if (!transition) {
         throw new HttpError(409, `Transition from ${fromStage.label} to ${toStage.label} is not allowed`, 'INVALID_WORKFLOW_TRANSITION');
       }
-      if (transition.allowedRoleKeys.length > 0
-        ) {
+      if (transition.allowedRoleKeys.length > 0) {
         const membership = await tx.membership.findFirst({
           where: { id: req.auth?.membershipId, businessId, userId: actorId },
           select: { role: { select: { name: true } } },
         });
-        if (!membership || !transition.allowedRoleKeys.includes(membership.role.name)) {
+        if (!membership || !transition.allowedRoleKeys.includes(businessRoleKey(membership.role.name))) {
           throw new HttpError(403, 'Your business role cannot perform this workflow transition', 'WORKFLOW_ROLE_DENIED');
         }
       }
@@ -471,7 +472,9 @@ router.post('/:orderId/status', requireBusinessPermission('orders:transition'), 
     ? order.business.workflowStages : order.business.template?.workflowStages ?? [];
   const transitions = order.business.workflowStages.length
     ? order.business.workflowTransitions : order.business.template?.workflowTransitions ?? [];
-  const targetKey = input.toStatus === 'FINISHING' ? 'FITTING' : input.toStatus;
+  const targetKey = order.business.template?.key === 'tailor' && input.toStatus === 'FINISHING'
+    ? 'FITTING'
+    : input.toStatus;
   const fromStage = stages.find((stage) => stage.key === order.workflowStageKey)
     ?? stages.find((stage) => stage.id === order.workflowStageId)
     ?? stages.find((stage) => stage.key === order.status);
@@ -479,21 +482,23 @@ router.post('/:orderId/status', requireBusinessPermission('orders:transition'), 
   const configuredTransition = fromStage && toStage
     ? transitions.find((transition) => transition.fromStageId === fromStage.id && transition.toStageId === toStage.id)
     : undefined;
-  if (fromStage && toStage) {
-    if (!configuredTransition) {
-      throw new HttpError(409, `Cannot transition order from ${fromStage.label} to ${toStage.label}`, 'INVALID_STATUS_TRANSITION');
+  if (!fromStage || !toStage) {
+    if (!order.workflowStageId && order.business.template?.key === 'tailor') {
+      if (!isAllowedOrderTransition(order.status, input.toStatus)) {
+        throw new HttpError(409, `Cannot transition order from ${order.status} to ${input.toStatus}`, 'INVALID_STATUS_TRANSITION');
+      }
+    } else {
+      throw new HttpError(409, 'The requested status is not part of the configured workflow', 'INVALID_STATUS_TRANSITION');
     }
-  } else if (!order.workflowStageId && !isAllowedOrderTransition(order.status, input.toStatus)) {
-    throw new HttpError(409, `Cannot transition order from ${order.status} to ${input.toStatus}`, 'INVALID_STATUS_TRANSITION');
-  } else if (order.workflowStageId) {
-    throw new HttpError(409, 'The requested status is not part of the configured workflow', 'INVALID_STATUS_TRANSITION');
+  } else if (!configuredTransition) {
+    throw new HttpError(409, `Cannot transition order from ${fromStage.label} to ${toStage.label}`, 'INVALID_STATUS_TRANSITION');
   }
   if (configuredTransition && configuredTransition.allowedRoleKeys.length > 0) {
     const membership = await prisma.membership.findFirst({
       where: { id: req.auth?.membershipId, businessId, userId: actorId },
       select: { role: { select: { name: true } } },
     });
-    if (!membership || !configuredTransition.allowedRoleKeys.includes(membership.role.name)) {
+    if (!membership || !configuredTransition.allowedRoleKeys.includes(businessRoleKey(membership.role.name))) {
       throw new HttpError(403, 'Your business role cannot perform this workflow transition', 'WORKFLOW_ROLE_DENIED');
     }
   }

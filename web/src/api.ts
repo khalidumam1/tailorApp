@@ -4,7 +4,6 @@ import {
   createMeasurementRevisionSchema,
   createOrderSchema,
   createPaymentSchema,
-  orderStatuses,
 } from '@tailor/shared';
 
 const customerSchema = z.object({
@@ -40,7 +39,7 @@ const catalogItemSchema = z.object({
 const orderSchema = z.object({
   id: z.string().uuid(),
   orderNumber: z.string(),
-  status: z.enum(orderStatuses),
+  status: z.string(),
   workflowStageId: z.string().uuid().nullable().optional(),
   workflowStageKey: z.string().nullable().optional(),
   currentWorkflowStage: z.object({
@@ -61,7 +60,7 @@ const orderSchema = z.object({
   customFields: z.record(z.string(), z.unknown()).optional(),
   items: z.array(z.object({
     id: z.string().uuid(),
-    garmentName: z.string(),
+    garmentName: z.string().optional(),
     itemName: z.string().nullable().optional(),
     itemTypeKey: z.string().optional(),
     quantity: z.number().int(),
@@ -155,8 +154,22 @@ const notificationSchema = z.object({
   orderId: z.string().uuid().nullable(),
   paymentId: z.string().uuid().nullable(),
   recipientName: z.string().nullable(),
-  kind: z.enum(['ORDER_CREATED', 'PAYMENT_RECEIVED', 'ORDER_READY', 'STATUS_CHANGED', 'PAYMENT_DUE', 'SUBSCRIPTION_EXPIRING']),
-  status: z.enum(['QUEUED', 'SENT', 'DELIVERED', 'READ', 'FAILED', 'NOT_SENT']),
+  kind: z.enum([
+    'ORDER_CREATED',
+    'PAYMENT_RECEIVED',
+    'ORDER_READY',
+    'STATUS_CHANGED',
+    'PAYMENT_DUE',
+    'SUBSCRIPTION_EXPIRING',
+    'CUSTOMER_CREATED',
+    'CUSTOMER_UPDATED',
+    'MEASUREMENT_APPENDED',
+    'SUBSCRIPTION_PAYMENT_SUBMITTED',
+    'SUBSCRIPTION_PAYMENT_UNDER_REVIEW',
+    'SUBSCRIPTION_PAYMENT_APPROVED',
+    'SUBSCRIPTION_PAYMENT_REJECTED',
+  ]),
+  status: z.enum(['QUEUED', 'PROCESSING', 'SENT', 'DELIVERED', 'READ', 'FAILED', 'NOT_SENT']),
   recipientPhone: z.string(),
   templateName: z.string(),
   attemptCount: z.number().int(),
@@ -238,9 +251,24 @@ const notificationTemplateSchema = z.object({
   body: z.string(),
   providerTemplateName: z.string().optional(),
   language: z.string().optional(),
+  recipientPolicy: z.enum(['CUSTOMER', 'BUSINESS_CONTACT']).optional(),
 });
 const notificationTemplatesSchema = z.record(
-  z.enum(['ORDER_CREATED', 'PAYMENT_RECEIVED', 'ORDER_READY', 'STATUS_CHANGED', 'PAYMENT_DUE', 'SUBSCRIPTION_EXPIRING']),
+  z.enum([
+    'ORDER_CREATED',
+    'PAYMENT_RECEIVED',
+    'ORDER_READY',
+    'STATUS_CHANGED',
+    'PAYMENT_DUE',
+    'SUBSCRIPTION_EXPIRING',
+    'CUSTOMER_CREATED',
+    'CUSTOMER_UPDATED',
+    'MEASUREMENT_APPENDED',
+    'SUBSCRIPTION_PAYMENT_SUBMITTED',
+    'SUBSCRIPTION_PAYMENT_UNDER_REVIEW',
+    'SUBSCRIPTION_PAYMENT_APPROVED',
+    'SUBSCRIPTION_PAYMENT_REJECTED',
+  ]),
   notificationTemplateSchema,
 );
 export function parseNotificationTemplates(value: unknown) {
@@ -287,8 +315,8 @@ const businessConfigurationSchema = z.object({
     key: z.string(),
     name: z.string(),
     category: z.string(),
-    itemTypes: z.array(templateItemTypeSchema),
   }),
+  itemTypes: z.array(templateItemTypeSchema),
   availableModules: z.array(z.string()),
   availablePaymentMethods: z.array(z.string()),
   availableDashboardWidgets: z.array(z.string()),
@@ -356,6 +384,21 @@ const businessConfigurationHistorySchema = z.object({
   })),
   nextCursor: z.string().uuid().nullable(),
 });
+const businessPermissionSchema = z.object({ key: z.string(), description: z.string() });
+const businessRoleSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  isSystem: z.boolean(),
+  permissions: z.array(z.string()),
+  memberCount: z.number().int().optional(),
+});
+const businessMemberSchema = z.object({
+  id: z.string().uuid(),
+  active: z.boolean(),
+  createdAt: z.string(),
+  user: z.object({ id: z.string().uuid(), name: z.string(), email: z.string(), active: z.boolean() }),
+  role: z.object({ id: z.string().uuid(), name: z.string() }),
+});
 const templateFieldInputSchema = z.object({
   module: z.string(),
   screen: z.string(),
@@ -406,6 +449,9 @@ export type BusinessFieldInput = z.infer<typeof businessFieldInputSchema>;
 export type BusinessStageInput = z.infer<typeof businessStageInputSchema>;
 export type BusinessTransitionInput = z.infer<typeof businessTransitionInputSchema>;
 export type BusinessConfigurationHistoryEntry = z.infer<typeof businessConfigurationHistorySchema>['items'][number];
+export type BusinessRole = z.infer<typeof businessRoleSchema>;
+export type BusinessMember = z.infer<typeof businessMemberSchema>;
+export type BusinessPermission = z.infer<typeof businessPermissionSchema>;
 export function parseBusinessTemplateInput(value: unknown): BusinessTemplateInput {
   return templateEditSchema.parse(value);
 }
@@ -519,7 +565,7 @@ export type CatalogItem = z.infer<typeof catalogItemSchema>;
 export type Order = z.infer<typeof orderSchema>;
 export type LoginResult = z.infer<typeof loginResponseSchema>;
 export type Dashboard = z.infer<typeof dashboardSchema>;
-export type GarmentTemplate = z.infer<typeof templateSchema>;
+export type MeasurementTemplate = z.infer<typeof templateSchema>;
 export type MeasurementProfile = z.infer<typeof profileSchema>;
 export type Payment = z.infer<typeof paymentSchema>;
 export type WhatsAppNotification = z.infer<typeof notificationSchema>;
@@ -728,11 +774,36 @@ export const api = {
     if (cursor) params.set('cursor', cursor);
     return request(`/business/configuration/history?${params}`, businessConfigurationHistorySchema, { token });
   },
+  businessPermissions(token: string) {
+    return request('/business/permissions', z.object({ items: z.array(businessPermissionSchema) }), { token });
+  },
+  businessRoles(token: string) {
+    return request('/business/roles', z.object({ items: z.array(businessRoleSchema) }), { token });
+  },
+  createBusinessRole(token: string, input: { name: string; permissions: string[] }) {
+    return request('/business/roles', businessRoleSchema, { token, method: 'POST', body: input });
+  },
+  updateBusinessRole(token: string, roleId: string, input: { name: string; permissions: string[] }) {
+    return request(`/business/roles/${roleId}`, businessRoleSchema, { token, method: 'PATCH', body: input });
+  },
+  deleteBusinessRole(token: string, roleId: string) {
+    return request(`/business/roles/${roleId}`, z.unknown(), { token, method: 'DELETE' });
+  },
+  businessStaff(token: string) {
+    return request('/business/staff', z.object({ items: z.array(businessMemberSchema) }), { token });
+  },
+  createBusinessStaff(token: string, input: { name: string; email: string; initialPassword: string; roleId: string }) {
+    return request('/business/staff', businessMemberSchema, { token, method: 'POST', body: input });
+  },
+  updateBusinessStaff(token: string, membershipId: string, input: { roleId?: string; active?: boolean }) {
+    return request(`/business/staff/${membershipId}`, businessMemberSchema, { token, method: 'PATCH', body: input });
+  },
   updateBusinessConfiguration(token: string, input: {
     version: number;
     business?: Partial<BusinessConfiguration['business']>;
     terminologyOverrides?: Record<string, string>;
     enabledModules?: string[];
+    itemTypes?: BusinessConfiguration['itemTypes'];
     paymentMethods?: string[];
     notificationTemplates?: z.infer<typeof notificationTemplatesSchema>;
     contactPhone?: string | null;

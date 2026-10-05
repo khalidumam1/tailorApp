@@ -14,3 +14,7 @@ const allowedTransitions: Record<OrderStatus, readonly OrderStatus[]> = {
 export function isAllowedOrderTransition(from: OrderStatus, to: OrderStatus): boolean {
   return allowedTransitions[from].includes(to);
 }
+
+export function businessRoleKey(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^[_-]+|[_-]+$/g, '');
+}

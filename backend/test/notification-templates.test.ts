@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  isNotificationTemplate,
   renderNotificationTemplate,
   validateNotificationTemplateBody,
   type NotificationTemplateVariable,
@@ -26,6 +27,14 @@ const variables: Record<NotificationTemplateVariable, string> = {
   'subscription.endsAt': '2026-10-19',
   'subscription.graceUntil': '2026-10-26',
   'subscription.daysRemaining': '14',
+  'event.name': 'Measurement appended',
+  'event.description': 'Measurements revised',
+  'event.date': 'Oct 5, 2026',
+  'event.id': 'revision-123',
+  'event.status': 'REVISION_2',
+  'event.amount': '',
+  'event.reference': '',
+  'custom.favorite_color': 'Navy',
 };
 
 test('configured notification templates render generic variables and preserve parameter order', () => {
@@ -55,6 +64,37 @@ test('subscription expiry templates render generic recipient and subscription fi
     '2026-10-19',
     '14',
   ]);
+});
+
+test('event and custom-field variables render without enumerating custom keys', () => {
+  const rendered = renderNotificationTemplate(
+    '{{event.name}}: {{event.description}}; favorite color {{custom.favorite_color}}',
+    variables,
+  );
+
+  assert.equal(
+    rendered.body,
+    'Measurement appended: Measurements revised; favorite color Navy',
+  );
+  assert.deepEqual(rendered.parameters, [
+    'Measurement appended',
+    'Measurements revised',
+    'Navy',
+  ]);
+  assert.throws(() => validateNotificationTemplateBody('Value: {{custom.bad.key}}'), /Unsupported/);
+});
+
+test('notification templates validate configured recipient policies', () => {
+  assert.equal(isNotificationTemplate({
+    enabled: true,
+    body: '{{recipient.name}}',
+    recipientPolicy: 'BUSINESS_CONTACT',
+  }), true);
+  assert.equal(isNotificationTemplate({
+    enabled: true,
+    body: '{{recipient.name}}',
+    recipientPolicy: 'ARBITRARY_PHONE',
+  }), false);
 });
 
 test('notification template validation rejects unknown and malformed variable expressions', () => {

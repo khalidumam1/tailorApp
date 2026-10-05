@@ -77,3 +77,23 @@ test('rejects malformed dropdown options and invalid validation patterns', () =>
     (error: unknown) => error instanceof HttpError && error.code === 'INVALID_BUSINESS_FIELD_VALIDATION',
   );
 });
+
+test('rejects invalid visibility rules and disconnected workflow stages', () => {
+  assert.throws(
+    () => validateBusinessStructure({
+      ...validStructure,
+      fields: [{ ...validStructure.fields[0], visibility: { itemTypes: 'chairs' } }],
+    }),
+    (error: unknown) => error instanceof HttpError && error.code === 'INVALID_BUSINESS_FIELD_VISIBILITY',
+  );
+  assert.throws(
+    () => validateBusinessStructure({
+      ...validStructure,
+      stages: [
+        ...validStructure.stages,
+        { key: 'ORPHAN', label: 'Orphan', sortOrder: 2, isInitial: false, isTerminal: true, actions: [] },
+      ],
+    }),
+    (error: unknown) => error instanceof HttpError && error.code === 'INVALID_BUSINESS_WORKFLOW_GRAPH',
+  );
+});

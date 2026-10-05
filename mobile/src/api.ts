@@ -15,7 +15,8 @@ export interface Session {
 
 export interface BusinessConfiguration {
   business: { id: string; name: string; logoUrl: string | null; type: string; currency: string; timezone: string };
-  template: { id: string; key: string; name: string; category: string; itemTypes: Array<{ key: string; label: string }> };
+  template: { id: string; key: string; name: string; category: string };
+  itemTypes: Array<{ key: string; label: string }>;
   availableModules: string[];
   availablePaymentMethods: string[];
   availableDashboardWidgets: string[];
@@ -63,6 +64,7 @@ export function parseBusinessConfiguration(value: unknown): BusinessConfiguratio
     || !stringArray(value.availableModules) || !stringArray(value.availablePaymentMethods)
     || !stringArray(value.availableDashboardWidgets) || !stringArray(value.enabledModules) || !stringArray(value.paymentMethods)
     || !stringArray(value.dashboardWidgets) || typeof value.version !== 'number'
+    || (!Array.isArray(value.itemTypes) && !Array.isArray(value.template.itemTypes))
     || !(value.contactPhone === null || typeof value.contactPhone === 'string')
     || (value.publishedAt !== null && typeof value.publishedAt !== 'string')) {
     throw new Error('The server returned an invalid business configuration');
@@ -74,7 +76,7 @@ export function parseBusinessConfiguration(value: unknown): BusinessConfiguratio
     || typeof business.type !== 'string' || typeof business.currency !== 'string'
     || typeof business.timezone !== 'string' || typeof template.id !== 'string'
     || typeof template.key !== 'string' || typeof template.name !== 'string'
-    || typeof template.category !== 'string' || !Array.isArray(template.itemTypes)) {
+    || typeof template.category !== 'string') {
     throw new Error('The server returned an invalid business configuration');
   }
   const terminology: Record<string, string> = {};
@@ -82,7 +84,8 @@ export function parseBusinessConfiguration(value: unknown): BusinessConfiguratio
     if (typeof label !== 'string') throw new Error('The server returned invalid business terminology');
     terminology[key] = label;
   }
-  const itemTypes = template.itemTypes.map((item) => {
+  const rawItemTypes = Array.isArray(value.itemTypes) ? value.itemTypes : template.itemTypes as unknown[];
+  const itemTypes = rawItemTypes.map((item) => {
     if (!isRecord(item) || typeof item.key !== 'string' || typeof item.label !== 'string') {
       throw new Error('The server returned invalid business item types');
     }
@@ -146,13 +149,8 @@ export function parseBusinessConfiguration(value: unknown): BusinessConfiguratio
       currency: business.currency,
       timezone: business.timezone,
     },
-    template: {
-      id: template.id,
-      key: template.key,
-      name: template.name,
-      category: template.category,
-      itemTypes,
-    },
+    template: { id: template.id, key: template.key, name: template.name, category: template.category },
+    itemTypes,
     availableModules: value.availableModules,
     availablePaymentMethods: value.availablePaymentMethods,
     availableDashboardWidgets: value.availableDashboardWidgets,
@@ -172,12 +170,14 @@ export function parseBusinessConfiguration(value: unknown): BusinessConfiguratio
 export class ApiError extends Error {
   status: number;
   code?: string;
+  retryAfterMs?: number;
 
-  constructor(message: string, status: number, code?: string) {
+  constructor(message: string, status: number, code?: string, retryAfterMs?: number) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -214,14 +214,23 @@ async function responseBody(response: Response): Promise<Record<string, unknown>
   return body as Record<string, unknown>;
 }
 
-function responseError(body: Record<string, unknown>, status: number): ApiError {
+function retryAfterMilliseconds(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
+}
+
+function responseError(body: Record<string, unknown>, response: Response): ApiError {
   const error = body.error && typeof body.error === 'object'
     ? body.error as Record<string, unknown>
     : {};
   return new ApiError(
     typeof error.message === 'string' ? error.message : 'The request could not be completed',
-    status,
+    response.status,
     typeof error.code === 'string' ? error.code : undefined,
+    retryAfterMilliseconds(response.headers.get('retry-after')),
   );
 }
 
@@ -234,7 +243,7 @@ async function rotate(session: Session): Promise<Session> {
   const body = await responseBody(response);
   const data = body.data as Record<string, unknown> | undefined;
   if (!response.ok || typeof data?.accessToken !== 'string' || typeof data.refreshToken !== 'string') {
-    throw responseError(body, response.status);
+    throw responseError(body, response);
   }
   const nextSession = {
     ...session,
@@ -278,7 +287,7 @@ export async function apiRequest<T = unknown>(
     response = await send(currentSession);
   }
   const body = await responseBody(response);
-  if (!response.ok) throw responseError(body, response.status);
+  if (!response.ok) throw responseError(body, response);
   return body as T;
 }
 
@@ -298,7 +307,7 @@ export async function signIn(
     }),
   });
   const body = await responseBody(response);
-  if (!response.ok) throw responseError(body, response.status);
+  if (!response.ok) throw responseError(body, response);
   return (body.data ?? {}) as Record<string, unknown>;
 }
 

@@ -8,6 +8,7 @@ import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { assertPlanLimit } from '../plan-limits.js';
 import { customFieldValueData, validateCustomFieldValues } from '../domain/custom-fields.js';
+import { queueCustomerNotification } from '../whatsapp.js';
 
 const router = express.Router();
 const customerIdSchema = z.string().uuid();
@@ -187,6 +188,7 @@ router.post('/', requireBusinessPermission('customers:write'), asyncHandler(asyn
       });
       const customValueRows = customerFieldValueRows(businessId, created.id, customValues);
       if (customValueRows.length) await tx.customFieldValue.createMany({ data: customValueRows });
+      await queueCustomerNotification(tx, created.id, 'CUSTOMER_CREATED');
       await tx.auditEvent.create({
         data: {
           businessId,
@@ -294,6 +296,7 @@ router.patch('/:customerId', requireBusinessPermission('customers:write'), async
           customFieldValues: { include: { fieldDefinition: { select: { key: true, label: true, type: true } } } },
         },
       });
+      await queueCustomerNotification(tx, updated.id, 'CUSTOMER_UPDATED');
       await tx.auditEvent.create({
         data: {
           businessId,

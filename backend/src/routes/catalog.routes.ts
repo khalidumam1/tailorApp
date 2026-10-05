@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
+import { assertPlanLimit } from '../plan-limits.js';
 import { customFieldValueData, validateCustomFieldValues } from '../domain/custom-fields.js';
 
 const router = express.Router();
@@ -82,7 +83,7 @@ async function itemFieldDefinitions(
   for (const field of business.customFields) {
     if (['item', 'catalog-item'].includes(field.screen)) byKey.set(field.key, field);
   }
-  return { fields: [...byKey.values()], itemTypes: itemTypeKeys(business.template.itemTypes) };
+  return { fields: [...byKey.values()], itemTypes: itemTypeKeys(business.configuration?.itemTypes ?? business.template.itemTypes) };
 }
 
 function valueMap(item: {
@@ -126,7 +127,7 @@ function mapUniqueError(error: unknown): never {
 
 router.use(authenticate);
 
-router.get('/', requireBusinessPermission('orders:read'), asyncHandler(async (req, res) => {
+router.get('/', requireBusinessPermission('orders:read', 'catalog'), asyncHandler(async (req, res) => {
   const businessId = businessIdFrom(req);
   const query = listQuerySchema.parse(req.query);
   await itemFieldDefinitions(prisma, businessId);
@@ -159,11 +160,12 @@ router.get('/', requireBusinessPermission('orders:read'), asyncHandler(async (re
   res.json({ data: { items, nextCursor: hasMore ? items.at(-1)?.id ?? null : null } });
 }));
 
-router.post('/', requireBusinessPermission('settings:manage'), asyncHandler(async (req, res) => {
+router.post('/', requireBusinessPermission('settings:manage', 'catalog'), asyncHandler(async (req, res) => {
   const businessId = businessIdFrom(req);
   const input = itemInputSchema.parse(req.body);
   try {
     const created = await prisma.$transaction(async (tx) => {
+      await assertPlanLimit(tx, businessId, 'catalog:write');
       const { fields, itemTypes } = await itemFieldDefinitions(tx, businessId);
       assertItemType(itemTypes, input.typeKey);
       const customValues = validateCustomFieldValues(fields, input.customFields, { itemTypeKey: input.typeKey });
@@ -211,7 +213,7 @@ router.post('/', requireBusinessPermission('settings:manage'), asyncHandler(asyn
   }
 }));
 
-router.patch('/:itemId', requireBusinessPermission('settings:manage'), asyncHandler(async (req, res) => {
+router.patch('/:itemId', requireBusinessPermission('settings:manage', 'catalog'), asyncHandler(async (req, res) => {
   const businessId = businessIdFrom(req);
   const itemId = itemIdSchema.parse(req.params.itemId);
   const input = itemUpdateSchema.parse(req.body);
@@ -225,6 +227,7 @@ router.patch('/:itemId', requireBusinessPermission('settings:manage'), asyncHand
       if (existing.version !== input.version) {
         throw new HttpError(409, 'Catalog item changed since it was loaded; refresh before updating', 'VERSION_CONFLICT');
       }
+      if (input.active === true && !existing.active) await assertPlanLimit(tx, businessId, 'catalog:write');
       const { fields, itemTypes } = await itemFieldDefinitions(tx, businessId);
       const typeKey = input.typeKey ?? existing.typeKey;
       assertItemType(itemTypes, typeKey);

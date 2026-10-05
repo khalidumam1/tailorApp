@@ -52,6 +52,13 @@ enum WhatsAppNotificationKind {
   STATUS_CHANGED
   PAYMENT_DUE
   SUBSCRIPTION_EXPIRING
+  CUSTOMER_CREATED
+  CUSTOMER_UPDATED
+  MEASUREMENT_APPENDED
+  SUBSCRIPTION_PAYMENT_SUBMITTED
+  SUBSCRIPTION_PAYMENT_UNDER_REVIEW
+  SUBSCRIPTION_PAYMENT_APPROVED
+  SUBSCRIPTION_PAYMENT_REJECTED
 }
 
 enum WhatsAppNotificationStatus {
@@ -157,6 +164,7 @@ model BusinessConfiguration {
   terminologyOverrides  Json      @default("{}")
   enabledModules        String[]  @default([])
   paymentMethods        String[]  @default([])
+  itemTypes             Json?
   contactPhone          String?   @db.VarChar(32)
   notificationTemplates Json      @default("{}")
   dashboardWidgets      String[]  @default([])
@@ -644,6 +652,12 @@ model WhatsAppNotification {
   @@index([businessId, createdAt])
   @@index([businessId, customerId, createdAt])
   @@index([status, nextAttemptAt])
+}
+
+model WhatsAppNotificationScanCursor {
+  id        String   @id @db.VarChar(80)
+  lastId    String?  @db.Uuid
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 }
 
 model SubscriptionPlan {

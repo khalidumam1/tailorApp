@@ -36,6 +36,22 @@ export interface LocalOrder {
   sync_state: string;
 }
 
+export interface LocalCatalogItem {
+  id: string;
+  business_id: string;
+  typeKey: string;
+  name: string;
+  description: string | null;
+  sku: string | null;
+  unit: string;
+  unitPrice: string | null;
+  sortOrder: number;
+  version: number;
+  active: boolean;
+  customFields: Record<string, unknown>;
+  syncState: string;
+}
+
 export interface LocalTemplate {
   id: string;
   name: string;

@@ -24,6 +24,21 @@ export type ValidatedFieldValue = {
   value: string | number | boolean | string[] | Date;
 };
 
+export function withBuiltInOrderItemFields(
+  definitions: readonly Pick<FieldDefinition, 'key'>[],
+  input: Record<string, unknown>,
+  name: string,
+  quantity: number,
+): Record<string, unknown> {
+  const keys = new Set(definitions.map((field) => field.key));
+  return {
+    ...input,
+    ...(keys.has('item_name') ? { item_name: name } : {}),
+    ...(keys.has('garment_name') ? { garment_name: name } : {}),
+    ...(keys.has('quantity') ? { quantity } : {}),
+  };
+}
+
 function record(value: Prisma.JsonValue | null): Record<string, Prisma.JsonValue | undefined> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value;

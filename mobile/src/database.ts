@@ -117,8 +117,27 @@ export class BusinessConfigurationRecord extends Model {
   @field('updated_at') updatedAt: number;
 }
 
+export class CatalogItemRecord extends Model {
+  static table = 'catalog_items';
+
+  @field('business_id') businessId: string;
+  @field('remote_id') remoteId: string | null;
+  @field('type_key') typeKey: string;
+  @field('name') name: string;
+  @field('description') description: string | null;
+  @field('sku') sku: string | null;
+  @field('unit') unit: string;
+  @field('unit_price') unitPrice: string | null;
+  @field('sort_order') sortOrder: number;
+  @field('version') version: number;
+  @field('active') active: boolean;
+  @field('custom_fields_json') customFieldsJson: string;
+  @field('sync_state') syncState: string;
+  @field('updated_at') updatedAt: number;
+}
+
 const schema = appSchema({
-  version: 4,
+  version: 6,
   tables: [
     tableSchema({
       name: 'customers',
@@ -152,6 +171,25 @@ const schema = appSchema({
         { name: 'order_custom_fields_json', type: 'string', isOptional: true },
         { name: 'item_custom_fields_json', type: 'string', isOptional: true },
         { name: 'version', type: 'number' },
+        { name: 'sync_state', type: 'string', isIndexed: true },
+        { name: 'updated_at', type: 'number' },
+      ],
+    }),
+    tableSchema({
+      name: 'catalog_items',
+      columns: [
+        { name: 'business_id', type: 'string', isIndexed: true },
+        { name: 'remote_id', type: 'string', isOptional: true, isIndexed: true },
+        { name: 'type_key', type: 'string', isIndexed: true },
+        { name: 'name', type: 'string', isIndexed: true },
+        { name: 'description', type: 'string', isOptional: true },
+        { name: 'sku', type: 'string', isOptional: true },
+        { name: 'unit', type: 'string' },
+        { name: 'unit_price', type: 'string', isOptional: true },
+        { name: 'sort_order', type: 'number' },
+        { name: 'version', type: 'number' },
+        { name: 'active', type: 'boolean', isIndexed: true },
+        { name: 'custom_fields_json', type: 'string' },
         { name: 'sync_state', type: 'string', isIndexed: true },
         { name: 'updated_at', type: 'number' },
       ],
@@ -251,6 +289,34 @@ const migrations = schemaMigrations({
     steps: [addColumns({
       table: 'customers',
       columns: [{ name: 'custom_fields_json', type: 'string', isOptional: true }],
+    })],
+  }, {
+    toVersion: 5,
+    steps: [createTable({
+      name: 'catalog_items',
+      columns: [
+        { name: 'business_id', type: 'string', isIndexed: true },
+        { name: 'type_key', type: 'string', isIndexed: true },
+        { name: 'name', type: 'string', isIndexed: true },
+        { name: 'sku', type: 'string', isOptional: true },
+        { name: 'unit', type: 'string' },
+        { name: 'unit_price', type: 'string', isOptional: true },
+        { name: 'sort_order', type: 'number' },
+        { name: 'version', type: 'number' },
+        { name: 'active', type: 'boolean', isIndexed: true },
+        { name: 'custom_fields_json', type: 'string' },
+        { name: 'sync_state', type: 'string', isIndexed: true },
+        { name: 'updated_at', type: 'number' },
+      ],
+    })],
+  }, {
+    toVersion: 6,
+    steps: [addColumns({
+      table: 'catalog_items',
+      columns: [
+        { name: 'remote_id', type: 'string', isOptional: true, isIndexed: true },
+        { name: 'description', type: 'string', isOptional: true },
+      ],
     })],
   }],
 });
@@ -536,6 +602,7 @@ export function openLocalDatabase(): Promise<Database> {
         SyncStateRecord,
         PaymentAttemptRecord,
         BusinessConfigurationRecord,
+        CatalogItemRecord,
       ],
     });
     databasePromise = adapter.initializingPromise

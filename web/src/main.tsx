@@ -6,7 +6,6 @@ import {
   createMeasurementRevisionSchema,
   createOrderSchema,
   createPaymentSchema,
-  orderStatuses,
 } from '@tailor/shared';
 import {
   api,
@@ -22,7 +21,7 @@ import {
   parseNotificationTemplates,
   parseBusinessTemplateInput,
   type Dashboard,
-  type GarmentTemplate,
+  type MeasurementTemplate,
   type LoginResult,
   type MeasurementProfile,
   type Order,
@@ -32,6 +31,7 @@ import {
   type WhatsAppNotification,
 } from './api';
 import { BusinessStructureEditors } from './BusinessStructureEditors';
+import { BusinessTeamAdmin } from './BusinessTeamAdmin';
 import './styles.css';
 
 type View = 'dashboard' | 'orders' | 'catalog' | 'customers' | 'measurements' | 'payments' | 'notifications' | 'subscription' | 'configuration';
@@ -150,7 +150,7 @@ function App() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [notifications, setNotifications] = useState<WhatsAppNotification[]>([]);
-  const [templates, setTemplates] = useState<GarmentTemplate[]>([]);
+  const [templates, setTemplates] = useState<MeasurementTemplate[]>([]);
   const [profiles, setProfiles] = useState<MeasurementProfile[]>([]);
   const [search, setSearch] = useState('');
   const [customerName, setCustomerName] = useState('');
@@ -167,7 +167,7 @@ function App() {
   const [editingCatalogItemId, setEditingCatalogItemId] = useState<string | null>(null);
   const [orderCustomerId, setOrderCustomerId] = useState('');
   const [orderCatalogItemId, setOrderCatalogItemId] = useState('');
-  const [orderGarment, setOrderGarment] = useState('Shalwar Kameez');
+  const [orderItemName, setOrderItemName] = useState('');
   const [orderItemTypeKey, setOrderItemTypeKey] = useState('');
   const [orderCustomFields, setOrderCustomFields] = useState<Record<string, unknown>>({});
   const [orderItemCustomFields, setOrderItemCustomFields] = useState<Record<string, unknown>>({});
@@ -223,8 +223,12 @@ function App() {
   const [billingBusinessId, setBillingBusinessId] = useState('');
   const [billingBusinessDetail, setBillingBusinessDetail] = useState<Awaited<ReturnType<typeof api.platformBillingBusiness>> | null>(null);
   const [planDraft, setPlanDraft] = useState({ name: '', description: '', monthlyPrice: '', yearlyPrice: '', trialDays: '14' });
-  const [planFeatures, setPlanFeatures] = useState<Record<string, boolean>>({ customers: true, measurements: true, orders: true, payments: true, staff: true, reports: true });
-  const [planLimits, setPlanLimits] = useState<Record<string, string>>({ customers: '-1', staff: '-1', ordersPerMonth: '-1' });
+  const [planFeatures, setPlanFeatures] = useState<Record<string, boolean>>({
+    customers: true, measurements: true, orders: true, payments: true, catalog: true, notifications: true, staff: true, reports: true,
+  });
+  const [planLimits, setPlanLimits] = useState<Record<string, string>>({
+    customers: '-1', staff: '-1', ordersPerMonth: '-1', catalogItems: '-1',
+  });
   const [editingPlanId, setEditingPlanId] = useState<string | null>(null);
   const [assignDraft, setAssignDraft] = useState({
     planId: '',
@@ -530,7 +534,7 @@ function App() {
     () => templates.find((template) => template.id === measurementTemplateId),
     [measurementTemplateId, templates],
   );
-  const configuredItemTypes = businessConfiguration?.template.itemTypes ?? [];
+  const configuredItemTypes = businessConfiguration?.itemTypes ?? [];
   const selectedOrderItemType = configuredItemTypes.find((type) => type.key === orderItemTypeKey)
     ?? configuredItemTypes[0];
   const orderFields = (businessConfiguration?.fields ?? [])
@@ -538,7 +542,7 @@ function App() {
   const orderItemFields = (businessConfiguration?.fields ?? [])
     .filter((field) => field.module === 'orders'
       && ['order-item', 'item'].includes(field.screen)
-      && !['garment_name', 'quantity'].includes(field.key)
+      && !['item_name', 'garment_name', 'quantity'].includes(field.key)
       && isVisibleForItemType(field, selectedOrderItemType?.key));
   const customerFields = (businessConfiguration?.fields ?? [])
     .filter((field) => field.module === 'customers'
@@ -624,7 +628,7 @@ function App() {
     setWorking(true);
     setError(null);
     try {
-      const typeKey = catalogTypeKey || businessConfiguration.template.itemTypes[0]?.key;
+      const typeKey = catalogTypeKey || businessConfiguration.itemTypes[0]?.key;
       if (!typeKey) throw new Error('Configure at least one item type in the business template.');
       if (editingCatalogItemId) {
         const current = catalogItems.find((item) => item.id === editingCatalogItemId);
@@ -731,8 +735,8 @@ function App() {
         customerId: orderCustomerId,
         promisedAt: karachiInputToUtc(orderDueAt),
         items: [{
-          itemTypeKey: orderItemTypeKey || businessConfiguration?.template.itemTypes[0]?.key,
-          itemName: orderGarment,
+          itemTypeKey: orderItemTypeKey || businessConfiguration?.itemTypes[0]?.key,
+          itemName: orderItemName,
           quantity: Number(orderQuantity),
           unitPrice: orderPrice,
           ...(orderMeasurementId ? { measurementProfileId: orderMeasurementId } : {}),
@@ -742,6 +746,7 @@ function App() {
       });
       await withSession((token) => api.createOrder(token, input));
       setOrderPrice('');
+      setOrderItemName('');
       setOrderMeasurementId('');
       setOrderCatalogItemId('');
       setOrderCustomFields({});
@@ -852,6 +857,7 @@ function App() {
         contactPhone: businessConfigurationDraft.contactPhone,
         terminologyOverrides: businessConfigurationDraft.terminology,
         enabledModules: businessConfigurationDraft.enabledModules,
+        itemTypes: businessConfigurationDraft.itemTypes,
         paymentMethods: businessConfigurationDraft.paymentMethods,
         dashboardWidgets: businessConfigurationDraft.dashboardWidgets,
         notificationTemplates,
@@ -1180,8 +1186,10 @@ function App() {
         setNotice('Subscription plan created.');
       }
       setPlanDraft({ name: '', description: '', monthlyPrice: '', yearlyPrice: '', trialDays: '14' });
-      setPlanFeatures({ customers: true, measurements: true, orders: true, payments: true, staff: true, reports: true });
-      setPlanLimits({ customers: '-1', staff: '-1', ordersPerMonth: '-1' });
+      setPlanFeatures({
+        customers: true, measurements: true, orders: true, payments: true, catalog: true, notifications: true, staff: true, reports: true,
+      });
+      setPlanLimits({ customers: '-1', staff: '-1', ordersPerMonth: '-1', catalogItems: '-1' });
       setEditingPlanId(null);
     } catch (cause) {
       setError(messageFor(cause));
@@ -1207,8 +1215,10 @@ function App() {
   function cancelPlanEdit() {
     setEditingPlanId(null);
     setPlanDraft({ name: '', description: '', monthlyPrice: '', yearlyPrice: '', trialDays: '14' });
-    setPlanFeatures({ customers: true, measurements: true, orders: true, payments: true, staff: true, reports: true });
-    setPlanLimits({ customers: '-1', staff: '-1', ordersPerMonth: '-1' });
+    setPlanFeatures({
+      customers: true, measurements: true, orders: true, payments: true, catalog: true, notifications: true, staff: true, reports: true,
+    });
+    setPlanLimits({ customers: '-1', staff: '-1', ordersPerMonth: '-1', catalogItems: '-1' });
   }
 
   async function reviewSubscriptionPayment(payment: import('./api').SubscriptionPayment, decision: 'APPROVE' | 'REJECT' | 'UNDER_REVIEW') {
@@ -2015,18 +2025,18 @@ function App() {
                 <div className="panel-heading"><h3>{editingCatalogItemId ? 'Edit' : 'Add'} {term('item', 'item').toLowerCase()}</h3><p className="muted">Item types and additional fields come from the active business template.</p></div>
                 <div className="form-grid">
                   <label>Type<select
-                    value={catalogTypeKey || businessConfiguration?.template.itemTypes[0]?.key || ''}
+                    value={catalogTypeKey || businessConfiguration?.itemTypes[0]?.key || ''}
                     onChange={(event) => { setCatalogTypeKey(event.target.value); setCatalogCustomFields({}); }}
                     required
                   >
-                    {businessConfiguration?.template.itemTypes.map((type) => <option key={type.key} value={type.key}>{type.label}</option>)}
+                    {businessConfiguration?.itemTypes.map((type) => <option key={type.key} value={type.key}>{type.label}</option>)}
                   </select></label>
                   <label>Name<input value={catalogName} onChange={(event) => setCatalogName(event.target.value)} maxLength={160} required /></label>
                   <label className="span-all">Description<textarea rows={2} value={catalogDescription} onChange={(event) => setCatalogDescription(event.target.value)} maxLength={2000} /></label>
                   <label>Code / SKU<input value={catalogSku} onChange={(event) => setCatalogSku(event.target.value)} maxLength={80} /></label>
                   <label>Unit<input value={catalogUnit} onChange={(event) => setCatalogUnit(event.target.value)} maxLength={40} required /></label>
                   <label>Unit price ({businessConfiguration?.business.currency ?? 'PKR'})<input type="number" min="0" step="0.01" value={catalogUnitPrice} onChange={(event) => setCatalogUnitPrice(event.target.value)} /></label>
-                  {catalogFields.filter((field) => isVisibleForItemType(field, catalogTypeKey || businessConfiguration?.template.itemTypes[0]?.key)).map((field) => (
+                  {catalogFields.filter((field) => isVisibleForItemType(field, catalogTypeKey || businessConfiguration?.itemTypes[0]?.key)).map((field) => (
                     <DynamicFieldControl
                       key={field.id}
                       field={field}
@@ -2047,7 +2057,7 @@ function App() {
                       <td><strong>{item.name}</strong>{Object.entries(item.customFields).map(([key, value]) => (
                         <small className="table-note" key={key}>{catalogFields.find((field) => field.key === key)?.label ?? key}: {displayFieldValue(value)}</small>
                       ))}</td>
-                      <td>{businessConfiguration?.template.itemTypes.find((type) => type.key === item.typeKey)?.label ?? item.typeKey}</td>
+                      <td>{businessConfiguration?.itemTypes.find((type) => type.key === item.typeKey)?.label ?? item.typeKey}</td>
                       <td>{item.sku ?? '—'}</td>
                       <td>{item.unitPrice ? `${money(item.unitPrice, businessConfiguration?.business.currency)} / ${item.unit}` : `— / ${item.unit}`}</td>
                       <td><span className="notification-pill">{item.active ? 'Active' : 'Inactive'}</span></td>
@@ -2063,7 +2073,7 @@ function App() {
         {view === 'orders' && (
           <section className="content-stack">
             <div className="section-heading">
-              <div><h2>{term('orders', 'Orders')}</h2><p className="muted">Follow each {term('item', 'garment').toLowerCase()} through the configured workflow.</p></div>
+              <div><h2>{term('orders', 'Orders')}</h2><p className="muted">Follow each {term('item', 'item').toLowerCase()} through the configured workflow.</p></div>
               <form className="search-form" onSubmit={(event) => { event.preventDefault(); void reloadCurrent(); }}>
                 <label className="visually-hidden" htmlFor="order-search">Search orders</label>
                 <input id="order-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Order number or customer" />
@@ -2092,21 +2102,21 @@ function App() {
                       {configuredItemTypes.map((type) => <option key={type.key} value={type.key}>{type.label}</option>)}
                     </select></label>
                   ) : null}
-                  <label>{selectedOrderItemType?.label ?? term('item', 'Item')} name<input value={orderGarment} onChange={(event) => setOrderGarment(event.target.value)} maxLength={160} required /></label>
-                  {catalogItems.some((item) => item.active && item.typeKey === (selectedOrderItemType?.key ?? businessConfiguration?.template.itemTypes[0]?.key)) && (
+                  <label>{selectedOrderItemType?.label ?? term('item', 'Item')} name<input value={orderItemName} onChange={(event) => setOrderItemName(event.target.value)} maxLength={160} required /></label>
+                  {catalogItems.some((item) => item.active && item.typeKey === (selectedOrderItemType?.key ?? businessConfiguration?.itemTypes[0]?.key)) && (
                     <label>Saved {selectedOrderItemType?.label.toLowerCase() ?? term('item', 'Item').toLowerCase()}<select
                       value={orderCatalogItemId}
                       onChange={(event) => {
                         const item = catalogItems.find((entry) => entry.id === event.target.value);
                         setOrderCatalogItemId(item?.id ?? '');
                         if (item) {
-                          setOrderGarment(item.name);
+                          setOrderItemName(item.name);
                           if (item.unitPrice) setOrderPrice(item.unitPrice);
                         }
                       }}
                     >
                       <option value="">Enter a new item</option>
-                      {catalogItems.filter((item) => item.active && item.typeKey === (selectedOrderItemType?.key ?? businessConfiguration?.template.itemTypes[0]?.key)).map((item) => (
+                      {catalogItems.filter((item) => item.active && item.typeKey === (selectedOrderItemType?.key ?? businessConfiguration?.itemTypes[0]?.key)).map((item) => (
                         <option key={item.id} value={item.id}>{item.name}{item.sku ? ` · ${item.sku}` : ''}</option>
                       ))}
                     </select></label>
@@ -2195,7 +2205,7 @@ function App() {
                   <label>Customer<select value={measurementCustomerId} onChange={(event) => setMeasurementCustomerId(event.target.value)} required>
                     {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
                   </select></label>
-                  <label>Garment template<select value={measurementTemplateId} onChange={(event) => setMeasurementTemplateId(event.target.value)} required>
+                  <label>Measurement template<select value={measurementTemplateId} onChange={(event) => setMeasurementTemplateId(event.target.value)} required>
                     {templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
                   </select></label>
                   {selectedTemplate?.fields.map((field) => (
@@ -2349,14 +2359,52 @@ function App() {
                       </label>
                     ))}
                   </div>
+                  <h3>Item and service types</h3>
+                  <p className="muted">These types control catalog entries, order items, and type-specific custom fields for this business.</p>
+                  <div className="content-stack">
+                    {businessConfigurationDraft.itemTypes.map((itemType, index) => (
+                      <div className="form-grid business-item-type-row" key={`${itemType.key}-${index}`}>
+                        <label>Type key<input
+                          value={itemType.key}
+                          pattern="[a-z][a-z0-9_-]{0,79}"
+                          maxLength={80}
+                          onChange={(event) => setBusinessConfigurationDraft({
+                            ...businessConfigurationDraft,
+                            itemTypes: businessConfigurationDraft.itemTypes.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, key: event.target.value } : item),
+                          })}
+                          required
+                        /></label>
+                        <label>Label<input
+                          value={itemType.label}
+                          maxLength={120}
+                          onChange={(event) => setBusinessConfigurationDraft({
+                            ...businessConfigurationDraft,
+                            itemTypes: businessConfigurationDraft.itemTypes.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, label: event.target.value } : item),
+                          })}
+                          required
+                        /></label>
+                        <button className="button button-quiet" type="button" disabled={businessConfigurationDraft.itemTypes.length <= 1} onClick={() => setBusinessConfigurationDraft({
+                          ...businessConfigurationDraft,
+                          itemTypes: businessConfigurationDraft.itemTypes.filter((_, itemIndex) => itemIndex !== index),
+                        })}>Remove type</button>
+                      </div>
+                    ))}
+                    <button className="button button-secondary" type="button" onClick={() => setBusinessConfigurationDraft({
+                      ...businessConfigurationDraft,
+                      itemTypes: [...businessConfigurationDraft.itemTypes, { key: '', label: '' }],
+                    })}>Add item or service type</button>
+                  </div>
                   <h3>Notification templates</h3>
-                  <p className="muted">Configure event bodies and approved WhatsApp template names. Variable order must match the approved Meta template. Supported variables: {'{{business.name}}'}, {'{{customer.name}}'}, {'{{customer.phone}}'}, {'{{order.number}}'}, {'{{order.total}}'}, {'{{order.paid}}'}, {'{{order.balance}}'}, {'{{order.status}}'}, {'{{order.readyDate}}'}, {'{{item.name}}'}.</p>
+                  <p className="muted">Configure event bodies, approved WhatsApp template names, and recipientPolicy (CUSTOMER or BUSINESS_CONTACT). Variable order must match the approved Meta template. Variables include business.*, recipient.*, customer.*, order.*, item.name, subscription.*, event.*, and custom.field_key.</p>
                   <label>Event templates (JSON)<textarea rows={10} spellCheck={false} value={notificationTemplateJson} onChange={(event) => setNotificationTemplateJson(event.target.value)} /></label>
                   <div className="platform-form-footer"><p className="fine-print">Version {businessConfigurationDraft.version}. Saving publishes an audited configuration for this business only.</p><button className="button button-primary" disabled={working || !online}>{working ? 'Publishing…' : 'Publish settings'}</button></div>
                 </form>
                 <form className="content-stack" onSubmit={saveBusinessStructure}>
                   <BusinessStructureEditors
                     fields={structureFields}
+                    itemTypes={businessConfigurationDraft.itemTypes}
                     inheritedFields={businessConfigurationDraft.fields.filter((field) =>
                       field.businessId !== businessConfigurationDraft.business.id
                       && !structureFields.some((draft) => draft.key === field.key))}
@@ -2384,11 +2432,17 @@ function App() {
                 <section className="panel">
                   <h3>Current template preview</h3>
                   <p className="muted">{businessConfigurationDraft.template.name} · {businessConfigurationDraft.template.category}</p>
-                  <p className="fine-print">Item types: {businessConfigurationDraft.template.itemTypes.map((item) => item.label).join(', ')}</p>
+                  <p className="fine-print">Item types: {businessConfigurationDraft.itemTypes.map((item) => item.label).join(', ')}</p>
                   <p className="fine-print">Configured fields: {businessConfigurationDraft.fields.length}</p>
                   <p className="fine-print">Workflow: {businessConfigurationDraft.workflow.stages.map((stage) => stage.label).join(' → ')}</p>
                   <p className="fine-print">Allowed transitions: {businessConfigurationDraft.workflow.transitions.length}</p>
                 </section>
+                <BusinessTeamAdmin
+                  canManage={currentUser?.context.permissions.includes('staff:manage') ?? false}
+                  actorPermissions={currentUser?.context.permissions ?? []}
+                  online={online}
+                  withSession={withSession}
+                />
                 <section className="panel form-panel configuration-history" aria-labelledby="configuration-history-title">
                   <div className="section-heading">
                     <div>
@@ -2648,6 +2702,7 @@ function DynamicFieldControl({
 function NotificationPill({ status }: { status: WhatsAppNotification['status'] }) {
   const labels: Record<WhatsAppNotification['status'], string> = {
     QUEUED: 'Queued',
+    PROCESSING: 'Processing',
     SENT: 'Sent',
     DELIVERED: 'Delivered',
     READ: 'Read',
@@ -2655,17 +2710,6 @@ function NotificationPill({ status }: { status: WhatsAppNotification['status'] }
     NOT_SENT: 'Not sent',
   };
   return <span className={`notification-pill notification-${status.toLowerCase()}`}>{labels[status]}</span>;
-}
-
-function TransitionButton({ order, onChange, disabled }: { order: Order; onChange: (order: Order, next: Order['status']) => void; disabled: boolean }) {
-  const index = orderStatuses.indexOf(order.status);
-  const next = order.status === 'COLLECTED' || order.status === 'CANCELLED' ? undefined : orderStatuses[index + 1];
-  return (
-    <>
-      {next && <button className="button button-secondary" disabled={disabled} onClick={() => onChange(order, next)}>Move to {next.replaceAll('_', ' ').toLowerCase()}</button>}
-      {order.status !== 'COLLECTED' && order.status !== 'CANCELLED' && <button className="button button-danger-quiet" disabled={disabled} onClick={() => onChange(order, 'CANCELLED')}>Cancel</button>}
-    </>
-  );
 }
 
 function LoadingState() {
