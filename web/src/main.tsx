@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { StrictMode } from 'react';
 import ReactDOM from 'react-dom/client';
 import {
@@ -11,9 +11,13 @@ import {
 import {
   api,
   ApiError,
+  type BusinessFieldInput,
+  type BusinessStageInput,
+  type BusinessTransitionInput,
   type CurrentUser,
   type Customer,
   type BusinessConfiguration,
+  type BusinessConfigurationHistoryEntry,
   type BusinessTemplate,
   parseNotificationTemplates,
   parseBusinessTemplateInput,
@@ -27,6 +31,7 @@ import {
   type Session,
   type WhatsAppNotification,
 } from './api';
+import { BusinessStructureEditors } from './BusinessStructureEditors';
 import './styles.css';
 
 type View = 'dashboard' | 'orders' | 'catalog' | 'customers' | 'measurements' | 'payments' | 'notifications' | 'subscription' | 'configuration';
@@ -69,6 +74,48 @@ function karachiInputToUtc(value: string): string {
   return new Date(`${value}:00+05:00`).toISOString();
 }
 
+function structureDraft(configuration: BusinessConfiguration): {
+  fields: BusinessFieldInput[];
+  stages: BusinessStageInput[];
+  transitions: BusinessTransitionInput[];
+} {
+  const stages = configuration.workflow.stages.map((stage) => ({
+    key: stage.key,
+    label: stage.label,
+    sortOrder: stage.sortOrder,
+    isInitial: stage.isInitial,
+    isTerminal: stage.isTerminal,
+    actions: stage.actions,
+  }));
+  const stageKeys = new Map(configuration.workflow.stages.map((stage) => [stage.id, stage.key]));
+  return {
+    fields: configuration.tenantFields.map((field) => ({
+      module: field.module,
+      screen: field.screen,
+      key: field.key,
+      label: field.label,
+      type: field.type as BusinessFieldInput['type'],
+      required: field.required,
+      sortOrder: field.sortOrder,
+      ...(field.defaultValue !== null ? { defaultValue: field.defaultValue } : {}),
+      ...(field.validation !== null ? { validation: field.validation } : {}),
+      ...(field.options !== null ? { options: field.options } : {}),
+      ...(field.visibility !== null ? { visibility: field.visibility } : {}),
+    })),
+    stages,
+    transitions: configuration.workflow.transitions.flatMap((transition) => {
+      const from = stageKeys.get(transition.fromStageId);
+      const to = stageKeys.get(transition.toStageId);
+      return from && to ? [{
+        from,
+        to,
+        allowedRoleKeys: transition.allowedRoleKeys,
+        actions: transition.actions,
+      }] : [];
+    }),
+  };
+}
+
 function messageFor(error: unknown): string {
   return error instanceof Error ? error.message : 'Something went wrong. Please try again.';
 }
@@ -90,6 +137,13 @@ function App() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [businessConfiguration, setBusinessConfiguration] = useState<BusinessConfiguration | null>(null);
   const [businessConfigurationDraft, setBusinessConfigurationDraft] = useState<BusinessConfiguration | null>(null);
+  const [businessConfigurationHistory, setBusinessConfigurationHistory] = useState<BusinessConfigurationHistoryEntry[]>([]);
+  const [businessConfigurationHistoryCursor, setBusinessConfigurationHistoryCursor] = useState<string | null>(null);
+  const [loadingBusinessConfigurationHistory, setLoadingBusinessConfigurationHistory] = useState(false);
+  const businessConfigurationHistoryRequest = useRef(0);
+  const [structureFields, setStructureFields] = useState<BusinessFieldInput[]>([]);
+  const [structureStages, setStructureStages] = useState<BusinessStageInput[]>([]);
+  const [structureTransitions, setStructureTransitions] = useState<BusinessTransitionInput[]>([]);
   const [notificationTemplateJson, setNotificationTemplateJson] = useState('{}');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [catalogItems, setCatalogItems] = useState<import('./api').CatalogItem[]>([]);
@@ -135,6 +189,10 @@ function App() {
   const [platformTemplateKey, setPlatformTemplateKey] = useState('tailor');
   const [platformTemplateDraft, setPlatformTemplateDraft] = useState('');
   const [editingPlatformTemplateId, setEditingPlatformTemplateId] = useState<string | null>(null);
+  const [platformTemplateRevisions, setPlatformTemplateRevisions] = useState<import('./api').BusinessTemplateRevision[]>([]);
+  const [selectedTemplateRevisionId, setSelectedTemplateRevisionId] = useState('');
+  const [loadingTemplateRevisions, setLoadingTemplateRevisions] = useState(false);
+  const [platformTemplateHistoryRefresh, setPlatformTemplateHistoryRefresh] = useState(0);
   const [platformStaff, setPlatformStaff] = useState<import('./api').PlatformStaff[]>([]);
   const [platformPermissions, setPlatformPermissions] = useState<import('./api').PlatformPermission[]>([]);
   const [platformAudit, setPlatformAudit] = useState<import('./api').AuditEvent[]>([]);
@@ -276,9 +334,18 @@ function App() {
 
   useEffect(() => {
     let active = true;
+    businessConfigurationHistoryRequest.current += 1;
+    setBusinessConfigurationHistory([]);
+    setBusinessConfigurationHistoryCursor(null);
+    setLoadingBusinessConfigurationHistory(false);
     if (!session || currentUser?.context.scope !== 'business') {
       setBusinessConfiguration(null);
       setBusinessConfigurationDraft(null);
+      setBusinessConfigurationHistory([]);
+      setBusinessConfigurationHistoryCursor(null);
+      setStructureFields([]);
+      setStructureStages([]);
+      setStructureTransitions([]);
       setNotificationTemplateJson('{}');
       return () => { active = false; };
     }
@@ -287,6 +354,10 @@ function App() {
         if (active) {
           setBusinessConfiguration(configuration);
           setBusinessConfigurationDraft(configuration);
+          const structure = structureDraft(configuration);
+          setStructureFields(structure.fields);
+          setStructureStages(structure.stages);
+          setStructureTransitions(structure.transitions);
           setNotificationTemplateJson(JSON.stringify(configuration.notificationTemplates, null, 2));
         }
       })
@@ -398,6 +469,38 @@ function App() {
     });
     return () => { active = false; };
   }, [currentUser, platformTemplateKey, platformView, session, withSession]);
+
+  useEffect(() => {
+    let active = true;
+    if (!session || currentUser?.context.scope !== 'platform'
+      || platformView !== 'templates'
+      || !currentUser.context.platformPermissions.includes('platform:templates:manage')
+      || !editingPlatformTemplateId) {
+      setPlatformTemplateRevisions([]);
+      setSelectedTemplateRevisionId('');
+      setLoadingTemplateRevisions(false);
+      return () => { active = false; };
+    }
+    setPlatformTemplateRevisions([]);
+    setSelectedTemplateRevisionId('');
+    setLoadingTemplateRevisions(true);
+    withSession((token) => api.platformTemplateRevisions(token, editingPlatformTemplateId))
+      .then((result) => {
+        if (!active) return;
+        setPlatformTemplateRevisions(result.items);
+        setSelectedTemplateRevisionId((current) =>
+          result.items.some((revision) => revision.id === current)
+            ? current
+            : result.items[0]?.id ?? '');
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(messageFor(cause));
+      })
+      .finally(() => {
+        if (active) setLoadingTemplateRevisions(false);
+      });
+    return () => { active = false; };
+  }, [currentUser, editingPlatformTemplateId, platformTemplateHistoryRefresh, platformView, session, withSession]);
 
   useEffect(() => {
     let active = true;
@@ -577,18 +680,23 @@ function App() {
     } finally {
       setWorking(false);
     }
+  }
 
-    function editCatalogItem(item: import('./api').CatalogItem) {
-      setEditingCatalogItemId(item.id);
-      setCatalogTypeKey(item.typeKey);
-      setCatalogName(item.name);
-      setCatalogDescription(item.description ?? '');
-      setCatalogSku(item.sku ?? '');
-      setCatalogUnit(item.unit);
-      setCatalogUnitPrice(item.unitPrice ?? '');
-      setCatalogCustomFields(item.customFields);
-      setError(null);
-    }
+  function editCatalogItem(item: import('./api').CatalogItem) {
+    setEditingCatalogItemId(item.id);
+    setCatalogTypeKey(item.typeKey);
+    setCatalogName(item.name);
+    setCatalogDescription(item.description ?? '');
+    setCatalogSku(item.sku ?? '');
+    setCatalogUnit(item.unit);
+    setCatalogUnitPrice(item.unitPrice ?? '');
+    const configuredFieldKeys = new Set((businessConfiguration?.fields ?? [])
+      .filter((field) => field.module === 'catalog' && ['item', 'catalog-item'].includes(field.screen))
+      .map((field) => field.key));
+    setCatalogCustomFields(Object.fromEntries(
+      Object.entries(item.customFields).filter(([key]) => configuredFieldKeys.has(key)),
+    ));
+    setError(null);
   }
 
   async function toggleWhatsAppConsent(customer: Customer) {
@@ -741,6 +849,7 @@ function App() {
           currency: businessConfigurationDraft.business.currency,
           timezone: businessConfigurationDraft.business.timezone,
         },
+        contactPhone: businessConfigurationDraft.contactPhone,
         terminologyOverrides: businessConfigurationDraft.terminology,
         enabledModules: businessConfigurationDraft.enabledModules,
         paymentMethods: businessConfigurationDraft.paymentMethods,
@@ -750,13 +859,85 @@ function App() {
       }));
       const configuration = await withSession(api.businessConfiguration);
       setBusinessConfiguration(configuration);
-      setBusinessConfigurationDraft(configuration);
+      setBusinessConfigurationDraft((current) => current ? {
+        ...configuration,
+        business: current.business,
+        terminology: current.terminology,
+        enabledModules: current.enabledModules,
+        paymentMethods: current.paymentMethods,
+        contactPhone: current.contactPhone,
+        dashboardWidgets: current.dashboardWidgets,
+      } : configuration);
       setNotificationTemplateJson(JSON.stringify(configuration.notificationTemplates, null, 2));
-      setNotice('Business configuration published.');
+      if (businessConfiguration?.templateVersion !== configuration.templateVersion) {
+        const structure = structureDraft(configuration);
+        setStructureFields(structure.fields);
+        setStructureStages(structure.stages);
+        setStructureTransitions(structure.transitions);
+        setNotice('Business settings published. The assigned template changed, so the field and workflow editor was refreshed.');
+      } else {
+        setNotice('Business configuration published.');
+      }
     } catch (cause) {
       setError(messageFor(cause));
     } finally {
       setWorking(false);
+    }
+  }
+
+  async function saveBusinessStructure(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!businessConfiguration) return;
+    setWorking(true);
+    setError(null);
+    try {
+      await withSession((token) => api.updateBusinessStructure(token, {
+        version: businessConfiguration.configurationVersion,
+        templateVersion: businessConfiguration.templateVersion,
+        fields: structureFields,
+        stages: structureStages,
+        transitions: structureTransitions,
+      }));
+      const configuration = await withSession(api.businessConfiguration);
+      setBusinessConfiguration(configuration);
+      setBusinessConfigurationDraft((current) => current ? {
+        ...configuration,
+        business: current.business,
+        terminology: current.terminology,
+        enabledModules: current.enabledModules,
+        paymentMethods: current.paymentMethods,
+        contactPhone: current.contactPhone,
+        dashboardWidgets: current.dashboardWidgets,
+      } : configuration);
+      const structure = structureDraft(configuration);
+      setStructureFields(structure.fields);
+      setStructureStages(structure.stages);
+      setStructureTransitions(structure.transitions);
+      setNotice('Business custom fields and workflow published.');
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function loadBusinessConfigurationHistory(loadMore = false) {
+    const requestId = ++businessConfigurationHistoryRequest.current;
+    setLoadingBusinessConfigurationHistory(true);
+    setError(null);
+    try {
+      const page = await withSession((token) => api.businessConfigurationHistory(
+        token,
+        loadMore ? businessConfigurationHistoryCursor ?? undefined : undefined,
+      ));
+      if (requestId === businessConfigurationHistoryRequest.current) {
+        setBusinessConfigurationHistory((current) => loadMore ? [...current, ...page.items] : page.items);
+        setBusinessConfigurationHistoryCursor(page.nextCursor);
+      }
+    } catch (cause) {
+      if (requestId === businessConfigurationHistoryRequest.current) setError(messageFor(cause));
+    } finally {
+      if (requestId === businessConfigurationHistoryRequest.current) setLoadingBusinessConfigurationHistory(false);
     }
   }
 
@@ -838,6 +1019,7 @@ function App() {
       const templates = await withSession(api.platformTemplates);
       setPlatformTemplates(templates.items);
       setEditingPlatformTemplateId(saved.id);
+      setPlatformTemplateHistoryRefresh((current) => current + 1);
       setNotice(`Template ${saved.name} saved.`);
     } catch (cause) {
       setError(messageFor(cause));
@@ -1407,6 +1589,41 @@ function App() {
                 ) : null;
               })()}
             </div>
+            {editingPlatformTemplateId && (
+              <section className="panel form-panel template-revision-history" aria-labelledby="template-history-title">
+                <div className="section-heading">
+                  <div><h3 id="template-history-title">Published revision history</h3><p className="muted">Immutable snapshots include the full template configuration, fields, item types, stages, and transitions.</p></div>
+                  <button className="button button-secondary" type="button" disabled={loadingTemplateRevisions} onClick={() => setPlatformTemplateHistoryRefresh((current) => current + 1)}>
+                    {loadingTemplateRevisions ? 'Loading…' : 'Refresh history'}
+                  </button>
+                </div>
+                {loadingTemplateRevisions && platformTemplateRevisions.length === 0 ? <LoadingState /> : platformTemplateRevisions.length ? (
+                  <>
+                    <div className="form-grid template-revision-controls">
+                      <label>Revision<select value={selectedTemplateRevisionId} onChange={(event) => setSelectedTemplateRevisionId(event.target.value)}>
+                        {platformTemplateRevisions.map((revision) => (
+                          <option key={revision.id} value={revision.id}>
+                            Version {revision.version} · {new Date(revision.createdAt).toLocaleString()}
+                          </option>
+                        ))}
+                      </select></label>
+                    </div>
+                    {(() => {
+                      const revision = platformTemplateRevisions.find((item) => item.id === selectedTemplateRevisionId);
+                      if (!revision) return null;
+                      return (
+                        <>
+                          <p className="fine-print">
+                            Version {revision.version} · {revision.actor ? `${revision.actor.name} (${revision.actor.email})` : revision.actorId ? `Actor ${revision.actorId}` : 'Migration baseline'} · Request {revision.requestId}
+                          </p>
+                          <pre className="template-revision-snapshot">{JSON.stringify(revision.snapshot, null, 2)}</pre>
+                        </>
+                      );
+                    })()}
+                  </>
+                ) : <p className="muted">No snapshots are available for this template yet.</p>}
+              </section>
+            )}
             {platformTemplateDraft ? (
               <form className="panel form-panel" onSubmit={savePlatformTemplate}>
                 <div className="panel-heading"><h3>{editingPlatformTemplateId ? 'Customize template' : 'Create a template'}</h3><p className="muted">Edit the structured JSON below. Keys must be unique; workflows need one initial stage and at least one terminal stage. Businesses without tenant overrides inherit the saved template defaults.</p></div>
@@ -2068,6 +2285,18 @@ function App() {
                     <label>Logo URL<input type="url" value={businessConfigurationDraft.business.logoUrl ?? ''} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, logoUrl: event.target.value || null } })} placeholder="https://…" /></label>
                     <label>Currency<input value={businessConfigurationDraft.business.currency} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, currency: event.target.value.toUpperCase() } })} pattern="[A-Z]{3}" maxLength={3} required /></label>
                     <label>Timezone<input value={businessConfigurationDraft.business.timezone} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, timezone: event.target.value } })} maxLength={100} required /></label>
+                    <label>Business contact / WhatsApp phone<input
+                      type="tel"
+                      value={businessConfigurationDraft.contactPhone ?? ''}
+                      onChange={(event) => setBusinessConfigurationDraft({
+                        ...businessConfigurationDraft,
+                        contactPhone: event.target.value || null,
+                      })}
+                      pattern="[+]?[0-9][0-9 ().-]{5,31}"
+                      maxLength={32}
+                      placeholder="+923001234567"
+                      aria-describedby="business-contact-phone-help"
+                    /><small id="business-contact-phone-help" className="fine-print">Subscription reminders use this configured number; the app will not guess a phone from a user account.</small></label>
                   </div>
                   <h3>Enabled modules</h3>
                   <div className="configuration-options">
@@ -2125,6 +2354,33 @@ function App() {
                   <label>Event templates (JSON)<textarea rows={10} spellCheck={false} value={notificationTemplateJson} onChange={(event) => setNotificationTemplateJson(event.target.value)} /></label>
                   <div className="platform-form-footer"><p className="fine-print">Version {businessConfigurationDraft.version}. Saving publishes an audited configuration for this business only.</p><button className="button button-primary" disabled={working || !online}>{working ? 'Publishing…' : 'Publish settings'}</button></div>
                 </form>
+                <form className="content-stack" onSubmit={saveBusinessStructure}>
+                  <BusinessStructureEditors
+                    fields={structureFields}
+                    inheritedFields={businessConfigurationDraft.fields.filter((field) =>
+                      field.businessId !== businessConfigurationDraft.business.id
+                      && !structureFields.some((draft) => draft.key === field.key))}
+                    availableModules={businessConfigurationDraft.enabledModules}
+                    workflowEnabled={businessConfigurationDraft.availableModules.includes('orders')
+                      && businessConfigurationDraft.enabledModules.includes('orders')}
+                    stages={structureStages}
+                    transitions={structureTransitions}
+                    onFieldsChange={setStructureFields}
+                    onWorkflowChange={(stages, transitions) => {
+                      setStructureStages(stages);
+                      setStructureTransitions(transitions);
+                    }}
+                  />
+                  <div className="panel form-panel platform-form-footer">
+                    <p className="fine-print">
+                      Configuration version {businessConfigurationDraft.configurationVersion} · template version {businessConfigurationDraft.templateVersion}.
+                      {businessConfigurationDraft.workflowIsTenantScoped ? ' This business has its own workflow.' : ' Workflow currently inherits from its template.'}
+                    </p>
+                    <button className="button button-primary" disabled={working || !online}>
+                      {working ? 'Publishing…' : 'Publish fields and workflow'}
+                    </button>
+                  </div>
+                </form>
                 <section className="panel">
                   <h3>Current template preview</h3>
                   <p className="muted">{businessConfigurationDraft.template.name} · {businessConfigurationDraft.template.category}</p>
@@ -2132,6 +2388,54 @@ function App() {
                   <p className="fine-print">Configured fields: {businessConfigurationDraft.fields.length}</p>
                   <p className="fine-print">Workflow: {businessConfigurationDraft.workflow.stages.map((stage) => stage.label).join(' → ')}</p>
                   <p className="fine-print">Allowed transitions: {businessConfigurationDraft.workflow.transitions.length}</p>
+                </section>
+                <section className="panel form-panel configuration-history" aria-labelledby="configuration-history-title">
+                  <div className="section-heading">
+                    <div>
+                      <h3 id="configuration-history-title">Configuration history</h3>
+                      <p className="muted">Read-only snapshots of published business settings, fields, and workflows.</p>
+                    </div>
+                    <button
+                      className="button button-secondary"
+                      type="button"
+                      disabled={loadingBusinessConfigurationHistory || !online}
+                      onClick={() => void loadBusinessConfigurationHistory()}
+                    >
+                      {loadingBusinessConfigurationHistory ? 'Loading…' : 'Refresh history'}
+                    </button>
+                  </div>
+                  {businessConfigurationHistory.length ? (
+                    <div className="configuration-history-list">
+                      {businessConfigurationHistory.map((entry) => (
+                        <details className="configuration-history-entry" key={entry.id}>
+                          <summary>
+                            <span>
+                              <strong>{entry.version === null ? 'Configuration update' : `Version ${entry.version}`}</strong>
+                              <small className="table-note">
+                                {new Date(entry.createdAt).toLocaleString()} · {entry.actorName}
+                                {entry.templateVersion === null ? '' : ` · Template version ${entry.templateVersion}`}
+                              </small>
+                            </span>
+                          </summary>
+                          {entry.snapshot === null
+                            ? <p className="muted">This historical event did not include a configuration snapshot.</p>
+                            : <pre className="template-revision-snapshot">{JSON.stringify(entry.snapshot, null, 2)}</pre>}
+                        </details>
+                      ))}
+                    </div>
+                  ) : !loadingBusinessConfigurationHistory ? (
+                    <p className="muted">Load history to review previously published configuration snapshots.</p>
+                  ) : null}
+                  {businessConfigurationHistoryCursor && (
+                    <button
+                      className="button button-secondary"
+                      type="button"
+                      disabled={loadingBusinessConfigurationHistory || !online}
+                      onClick={() => void loadBusinessConfigurationHistory(true)}
+                    >
+                      Load more history
+                    </button>
+                  )}
                 </section>
               </>
             ) : <LoadingState />}

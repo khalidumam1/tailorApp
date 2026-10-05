@@ -55,7 +55,7 @@ Requirements: Node.js 24 (Node 22.12+ is supported), npm 11, and Docker Compose.
    npm run db:migrate
    ```
 
-4. For local demo data, set four **development-only** values in `.env`:
+4. For local demo data, set the six **development-only** values in `.env`:
    `SEED_OWNER_EMAIL`, `SEED_OWNER_PASSWORD`, `SEED_STAFF_EMAIL`,
    `SEED_STAFF_PASSWORD`, `SEED_PLATFORM_ADMIN_EMAIL`, and
    `SEED_PLATFORM_ADMIN_PASSWORD`. Use distinct email addresses, unique
@@ -68,7 +68,11 @@ Requirements: Node.js 24 (Node 22.12+ is supported), npm 11, and Docker Compose.
 
    The seed refuses to run in production and never prints passwords. It does
    not reset an existing account's password; it refuses to repurpose accounts
-   already attached to another role or business.
+   already attached to another role or business. It creates Tailor, Furniture,
+   Carpenter, Auto Workshop, and Printing demo workspaces with a shared demo
+   owner login; use the email/password values configured above. The platform
+   admin login uses `SEED_PLATFORM_ADMIN_EMAIL` and
+   `SEED_PLATFORM_ADMIN_PASSWORD`.
 
 5. Start individual applications in separate terminals:
 

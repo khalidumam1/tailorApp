@@ -1,6 +1,8 @@
 export const notificationTemplateVariables = [
   'business.name',
   'business.phone',
+  'recipient.name',
+  'recipient.phone',
   'customer.name',
   'customer.phone',
   'order.number',
@@ -10,6 +12,12 @@ export const notificationTemplateVariables = [
   'order.status',
   'order.readyDate',
   'item.name',
+  'subscription.plan',
+  'subscription.cycle',
+  'subscription.status',
+  'subscription.endsAt',
+  'subscription.graceUntil',
+  'subscription.daysRemaining',
 ] as const;
 
 export type NotificationTemplateVariable = typeof notificationTemplateVariables[number];

@@ -50,6 +50,8 @@ enum WhatsAppNotificationKind {
   PAYMENT_RECEIVED
   ORDER_READY
   STATUS_CHANGED
+  PAYMENT_DUE
+  SUBSCRIPTION_EXPIRING
 }
 
 enum WhatsAppNotificationStatus {
@@ -85,103 +87,105 @@ enum SubscriptionPaymentStatus {
 }
 
 model BusinessTemplate {
-  id               String                 @id @default(uuid()) @db.Uuid
-  key              String                 @unique @db.VarChar(80)
-  name             String                 @db.VarChar(120)
-  category         String                 @db.VarChar(80)
-  description      String?                @db.VarChar(1000)
-  terminology      Json
-  enabledModules   String[]
-  itemTypes        Json
-  paymentMethods   String[]
-  dashboardWidgets String[]
-  isSystem         Boolean                @default(false)
-  active           Boolean                @default(true)
-  version         Int               @default(1)
-  createdAt        DateTime               @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime               @updatedAt @db.Timestamptz(3)
-  businesses       Business[]
-  fields           CustomFieldDefinition[]
-  workflowStages   WorkflowStage[]
+  id                  String                  @id @default(uuid()) @db.Uuid
+  key                 String                  @unique @db.VarChar(80)
+  name                String                  @db.VarChar(120)
+  category            String                  @db.VarChar(80)
+  description         String?                 @db.VarChar(1000)
+  terminology         Json
+  enabledModules      String[]
+  itemTypes           Json
+  paymentMethods      String[]
+  dashboardWidgets    String[]
+  isSystem            Boolean                 @default(false)
+  active              Boolean                 @default(true)
+  version             Int                     @default(1)
+  createdAt           DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime                @updatedAt @db.Timestamptz(3)
+  businesses          Business[]
+  fields              CustomFieldDefinition[]
+  workflowStages      WorkflowStage[]
   workflowTransitions WorkflowTransition[]
+  revisions           BusinessTemplateRevision[]
 
   @@index([active, category, name])
 }
 
 model Business {
-  id          String       @id @default(uuid()) @db.Uuid
-  name        String       @db.VarChar(160)
-  slug        String       @unique @db.VarChar(80)
-  businessType String      @default("TAILOR") @db.VarChar(80)
-  logoUrl     String?      @db.VarChar(2048)
-  templateId  String?      @db.Uuid
-  status      BusinessStatus @default(PENDING)
-  timezone    String       @default("Asia/Karachi")
-  currency    String       @default("PKR") @db.Char(3)
-  orderSequence Int        @default(0)
-  receiptSequence Int      @default(0)
-  createdAt   DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt   DateTime     @updatedAt @db.Timestamptz(3)
-  memberships Membership[]
-  customers   Customer[]
-  roles       Role[]
-  templates   GarmentTemplate[]
-  profiles    MeasurementProfile[]
-  orders      Order[]
-  orderItems  OrderItem[]
-  payments    Payment[]
+  id                    String                  @id @default(uuid()) @db.Uuid
+  name                  String                  @db.VarChar(160)
+  slug                  String                  @unique @db.VarChar(80)
+  businessType          String                  @default("TAILOR") @db.VarChar(80)
+  logoUrl               String?                 @db.VarChar(2048)
+  templateId            String?                 @db.Uuid
+  status                BusinessStatus          @default(PENDING)
+  timezone              String                  @default("Asia/Karachi")
+  currency              String                  @default("PKR") @db.Char(3)
+  orderSequence         Int                     @default(0)
+  receiptSequence       Int                     @default(0)
+  createdAt             DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime                @updatedAt @db.Timestamptz(3)
+  memberships           Membership[]
+  customers             Customer[]
+  roles                 Role[]
+  templates             GarmentTemplate[]
+  profiles              MeasurementProfile[]
+  orders                Order[]
+  orderItems            OrderItem[]
+  payments              Payment[]
   whatsappNotifications WhatsAppNotification[]
-  subscriptions Subscription[]
-  subscriptionPayments SubscriptionPayment[]
-  subscriptionEvents SubscriptionEvent[]
-  auditEvents AuditEvent[]
-  settings    BusinessSetting[]
-  syncOperations SyncOperation[]
-  template    BusinessTemplate? @relation(fields: [templateId], references: [id], onDelete: Restrict)
-  configuration BusinessConfiguration?
-  customFields CustomFieldDefinition[]
-  items       BusinessItem[]
-  customFieldValues CustomFieldValue[]
-  orderWorkflowHistory OrderWorkflowHistory[]
-  workflowStages WorkflowStage[]
-  workflowTransitions WorkflowTransition[]
+  subscriptions         Subscription[]
+  subscriptionPayments  SubscriptionPayment[]
+  subscriptionEvents    SubscriptionEvent[]
+  auditEvents           AuditEvent[]
+  settings              BusinessSetting[]
+  syncOperations        SyncOperation[]
+  template              BusinessTemplate?       @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  configuration         BusinessConfiguration?
+  customFields          CustomFieldDefinition[]
+  items                 BusinessItem[]
+  customFieldValues     CustomFieldValue[]
+  orderWorkflowHistory  OrderWorkflowHistory[]
+  workflowStages        WorkflowStage[]
+  workflowTransitions   WorkflowTransition[]
 
   @@index([templateId])
 }
 
 model BusinessConfiguration {
-  businessId             String    @id @db.Uuid
+  businessId            String    @id @db.Uuid
   terminologyOverrides  Json      @default("{}")
-  enabledModules         String[]  @default([])
-  paymentMethods         String[]  @default([])
-  notificationTemplates  Json      @default("{}")
-  dashboardWidgets       String[]  @default([])
-  publishedAt            DateTime? @db.Timestamptz(3)
-  version                Int       @default(1)
-  updatedAt              DateTime  @updatedAt @db.Timestamptz(3)
-  business               Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  enabledModules        String[]  @default([])
+  paymentMethods        String[]  @default([])
+  contactPhone          String?   @db.VarChar(32)
+  notificationTemplates Json      @default("{}")
+  dashboardWidgets      String[]  @default([])
+  publishedAt           DateTime? @db.Timestamptz(3)
+  version               Int       @default(1)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(3)
+  business              Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
 }
 
 model CustomFieldDefinition {
-  id           String           @id @default(uuid()) @db.Uuid
-  templateId   String?          @db.Uuid
-  businessId   String?          @db.Uuid
-  module       String           @db.VarChar(80)
-  screen       String           @db.VarChar(80)
-  key          String           @db.VarChar(80)
-  label        String           @db.VarChar(120)
-  type         String           @db.VarChar(24)
-  required     Boolean          @default(false)
+  id           String             @id @default(uuid()) @db.Uuid
+  templateId   String?            @db.Uuid
+  businessId   String?            @db.Uuid
+  module       String             @db.VarChar(80)
+  screen       String             @db.VarChar(80)
+  key          String             @db.VarChar(80)
+  label        String             @db.VarChar(120)
+  type         String             @db.VarChar(24)
+  required     Boolean            @default(false)
   defaultValue Json?
   validation   Json?
   options      Json?
   visibility   Json?
-  sortOrder    Int              @default(0)
-  active       Boolean          @default(true)
-  createdAt    DateTime         @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime         @updatedAt @db.Timestamptz(3)
-  template     BusinessTemplate? @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  business     Business?        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  sortOrder    Int                @default(0)
+  active       Boolean            @default(true)
+  createdAt    DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime           @updatedAt @db.Timestamptz(3)
+  template     BusinessTemplate?  @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  business     Business?          @relation(fields: [businessId], references: [id], onDelete: Cascade)
   values       CustomFieldValue[]
 
   @@unique([templateId, key])
@@ -191,25 +195,25 @@ model CustomFieldDefinition {
 }
 
 model WorkflowStage {
-  id          String                @id @default(uuid()) @db.Uuid
-  templateId  String?               @db.Uuid
-  businessId  String?               @db.Uuid
-  key         String                @db.VarChar(80)
-  label       String                @db.VarChar(120)
-  sortOrder   Int
-  isInitial   Boolean               @default(false)
-  isTerminal  Boolean               @default(false)
-  actions     Json                  @default("[]")
-  active      Boolean               @default(true)
-  createdAt   DateTime              @default(now()) @db.Timestamptz(3)
-  updatedAt   DateTime              @updatedAt @db.Timestamptz(3)
-  template    BusinessTemplate?     @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  business    Business?             @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  transitionsFrom WorkflowTransition[] @relation("WorkflowTransitionFrom")
-  transitionsTo WorkflowTransition[]   @relation("WorkflowTransitionTo")
-  currentOrders Order[]               @relation("OrderCurrentWorkflowStage")
-  historyFrom   OrderWorkflowHistory[] @relation("WorkflowHistoryFrom")
-  historyTo     OrderWorkflowHistory[] @relation("WorkflowHistoryTo")
+  id              String                 @id @default(uuid()) @db.Uuid
+  templateId      String?                @db.Uuid
+  businessId      String?                @db.Uuid
+  key             String                 @db.VarChar(80)
+  label           String                 @db.VarChar(120)
+  sortOrder       Int
+  isInitial       Boolean                @default(false)
+  isTerminal      Boolean                @default(false)
+  actions         Json                   @default("[]")
+  active          Boolean                @default(true)
+  createdAt       DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime               @updatedAt @db.Timestamptz(3)
+  template        BusinessTemplate?      @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  business        Business?              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  transitionsFrom WorkflowTransition[]   @relation("WorkflowTransitionFrom")
+  transitionsTo   WorkflowTransition[]   @relation("WorkflowTransitionTo")
+  currentOrders   Order[]                @relation("OrderCurrentWorkflowStage")
+  historyFrom     OrderWorkflowHistory[] @relation("WorkflowHistoryFrom")
+  historyTo       OrderWorkflowHistory[] @relation("WorkflowHistoryTo")
 
   @@unique([templateId, key])
   @@unique([businessId, key])
@@ -218,18 +222,18 @@ model WorkflowStage {
 }
 
 model WorkflowTransition {
-  id            String           @id @default(uuid()) @db.Uuid
-  templateId    String?          @db.Uuid
-  businessId    String?          @db.Uuid
-  fromStageId   String           @db.Uuid
-  toStageId     String           @db.Uuid
-  allowedRoleKeys String[]       @default([])
-  actions       Json             @default("[]")
-  createdAt     DateTime         @default(now()) @db.Timestamptz(3)
-  template      BusinessTemplate? @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  business      Business?        @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  fromStage     WorkflowStage    @relation("WorkflowTransitionFrom", fields: [fromStageId], references: [id], onDelete: Cascade)
-  toStage       WorkflowStage    @relation("WorkflowTransitionTo", fields: [toStageId], references: [id], onDelete: Cascade)
+  id              String            @id @default(uuid()) @db.Uuid
+  templateId      String?           @db.Uuid
+  businessId      String?           @db.Uuid
+  fromStageId     String            @db.Uuid
+  toStageId       String            @db.Uuid
+  allowedRoleKeys String[]          @default([])
+  actions         Json              @default("[]")
+  createdAt       DateTime          @default(now()) @db.Timestamptz(3)
+  template        BusinessTemplate? @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  business        Business?         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  fromStage       WorkflowStage     @relation("WorkflowTransitionFrom", fields: [fromStageId], references: [id], onDelete: Cascade)
+  toStage         WorkflowStage     @relation("WorkflowTransitionTo", fields: [toStageId], references: [id], onDelete: Cascade)
 
   @@unique([templateId, fromStageId, toStageId])
   @@unique([businessId, fromStageId, toStageId])
@@ -238,40 +242,56 @@ model WorkflowTransition {
 }
 
 model User {
-  id                   String       @id @default(uuid()) @db.Uuid
-  email                String       @unique @db.VarChar(254)
-  name                 String       @db.VarChar(160)
-  passwordHash         String       @db.VarChar(100)
-  platformRole         PlatformRole?
-  active               Boolean      @default(true)
-  createdAt            DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt            DateTime     @updatedAt @db.Timestamptz(3)
-  memberships          Membership[]
-  refreshTokens        RefreshToken[]
-  passwordResetTokens  PasswordResetToken[]
-  platformPermissions  PlatformPermissionGrant[]
-  createdOrders        Order[]      @relation("OrderCreator")
-  changedOrderStatuses OrderStatusHistory[]
-  workflowChanges      OrderWorkflowHistory[]
-  recordedPayments     Payment[]    @relation("PaymentRecorder")
-  auditEvents          AuditEvent[]
-  syncOperations       SyncOperation[]
-  reviewedSubscriptionPayments SubscriptionPayment[] @relation("SubscriptionPaymentReviewer")
-  submittedSubscriptionPayments SubscriptionPayment[] @relation("SubscriptionPaymentSubmitter")
-  subscriptionEvents SubscriptionEvent[]
+  id                            String                    @id @default(uuid()) @db.Uuid
+  email                         String                    @unique @db.VarChar(254)
+  name                          String                    @db.VarChar(160)
+  passwordHash                  String                    @db.VarChar(100)
+  platformRole                  PlatformRole?
+  active                        Boolean                   @default(true)
+  createdAt                     DateTime                  @default(now()) @db.Timestamptz(3)
+  updatedAt                     DateTime                  @updatedAt @db.Timestamptz(3)
+  memberships                   Membership[]
+  refreshTokens                 RefreshToken[]
+  passwordResetTokens           PasswordResetToken[]
+  platformPermissions           PlatformPermissionGrant[]
+  createdOrders                 Order[]                   @relation("OrderCreator")
+  changedOrderStatuses          OrderStatusHistory[]
+  workflowChanges               OrderWorkflowHistory[]
+  recordedPayments              Payment[]                 @relation("PaymentRecorder")
+  auditEvents                   AuditEvent[]
+  syncOperations                SyncOperation[]
+  reviewedSubscriptionPayments  SubscriptionPayment[]     @relation("SubscriptionPaymentReviewer")
+  submittedSubscriptionPayments SubscriptionPayment[]     @relation("SubscriptionPaymentSubmitter")
+  subscriptionEvents            SubscriptionEvent[]
+  businessTemplateRevisions     BusinessTemplateRevision[] @relation("BusinessTemplateRevisionActor")
+}
+
+model BusinessTemplateRevision {
+  id        String          @id @default(uuid()) @db.Uuid
+  templateId String         @db.Uuid
+  version   Int
+  snapshot  Json
+  actorId   String?         @db.Uuid
+  requestId String          @db.VarChar(64)
+  createdAt DateTime        @default(now()) @db.Timestamptz(3)
+  template  BusinessTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  actor     User?           @relation("BusinessTemplateRevisionActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([templateId, version])
+  @@index([templateId, createdAt])
 }
 
 model Membership {
-  id         String   @id @default(uuid()) @db.Uuid
-  businessId String   @db.Uuid
-  userId     String   @db.Uuid
-  roleId     String   @db.Uuid
-  active     Boolean  @default(true)
-  createdAt  DateTime @default(now()) @db.Timestamptz(3)
-  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role       Role     @relation(fields: [roleId, businessId], references: [id, businessId], onDelete: Restrict)
-  refreshTokens RefreshToken[]
+  id             String          @id @default(uuid()) @db.Uuid
+  businessId     String          @db.Uuid
+  userId         String          @db.Uuid
+  roleId         String          @db.Uuid
+  active         Boolean         @default(true)
+  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
+  business       Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           Role            @relation(fields: [roleId, businessId], references: [id, businessId], onDelete: Restrict)
+  refreshTokens  RefreshToken[]
   syncOperations SyncOperation[]
 
   @@unique([businessId, userId])
@@ -280,11 +300,11 @@ model Membership {
 }
 
 model Role {
-  id          String           @id @default(uuid()) @db.Uuid
-  businessId  String?          @db.Uuid
-  name        String           @db.VarChar(80)
-  isSystem    Boolean          @default(false)
-  business    Business?        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  id          String                @id @default(uuid()) @db.Uuid
+  businessId  String?               @db.Uuid
+  name        String                @db.VarChar(80)
+  isSystem    Boolean               @default(false)
+  business    Business?             @relation(fields: [businessId], references: [id], onDelete: Cascade)
   memberships Membership[]
   grants      RolePermissionGrant[]
 
@@ -293,10 +313,10 @@ model Role {
 }
 
 model Permission {
-  id          String                 @id @default(uuid()) @db.Uuid
-  key         String                 @unique @db.VarChar(100)
-  description String                 @db.VarChar(200)
-  roleGrants  RolePermissionGrant[]
+  id             String                    @id @default(uuid()) @db.Uuid
+  key            String                    @unique @db.VarChar(100)
+  description    String                    @db.VarChar(200)
+  roleGrants     RolePermissionGrant[]
   platformGrants PlatformPermissionGrant[]
 }
 
@@ -346,24 +366,24 @@ model PasswordResetToken {
 }
 
 model Customer {
-  id         String    @id @default(uuid()) @db.Uuid
-  businessId String    @db.Uuid
-  name       String    @db.VarChar(120)
-  phone      String    @db.VarChar(24)
-  phoneNormalized String @db.VarChar(24)
-  whatsappConsent Boolean @default(false)
-  whatsappConsentAt DateTime? @db.Timestamptz(3)
-  whatsappOptedOutAt DateTime? @db.Timestamptz(3)
-  notes      String?   @db.VarChar(2000)
-  deletedAt  DateTime? @db.Timestamptz(3)
-  version    Int       @default(1)
-  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt  DateTime  @updatedAt @db.Timestamptz(3)
-  business   Business  @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  profiles   MeasurementProfile[]
-  orders     Order[]
+  id                    String                 @id @default(uuid()) @db.Uuid
+  businessId            String                 @db.Uuid
+  name                  String                 @db.VarChar(120)
+  phone                 String                 @db.VarChar(24)
+  phoneNormalized       String                 @db.VarChar(24)
+  whatsappConsent       Boolean                @default(false)
+  whatsappConsentAt     DateTime?              @db.Timestamptz(3)
+  whatsappOptedOutAt    DateTime?              @db.Timestamptz(3)
+  notes                 String?                @db.VarChar(2000)
+  deletedAt             DateTime?              @db.Timestamptz(3)
+  version               Int                    @default(1)
+  createdAt             DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime               @updatedAt @db.Timestamptz(3)
+  business              Business               @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  profiles              MeasurementProfile[]
+  orders                Order[]
   whatsappNotifications WhatsAppNotification[]
-  customFieldValues CustomFieldValue[]
+  customFieldValues     CustomFieldValue[]
 
   @@unique([businessId, phoneNormalized])
   @@unique([id, businessId])
@@ -372,21 +392,21 @@ model Customer {
 }
 
 model BusinessItem {
-  id          String   @id @default(uuid()) @db.Uuid
-  businessId  String   @db.Uuid
-  typeKey     String   @db.VarChar(80)
-  name        String   @db.VarChar(160)
-  description String?  @db.VarChar(2000)
-  sku         String?  @db.VarChar(80)
-  unit        String   @default("unit") @db.VarChar(40)
-  unitPrice   Decimal? @db.Decimal(12, 2)
-  sortOrder   Int      @default(0)
-  version     Int      @default(1)
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
-  business    Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  orderItems  OrderItem[]
+  id                String             @id @default(uuid()) @db.Uuid
+  businessId        String             @db.Uuid
+  typeKey           String             @db.VarChar(80)
+  name              String             @db.VarChar(160)
+  description       String?            @db.VarChar(2000)
+  sku               String?            @db.VarChar(80)
+  unit              String             @default("unit") @db.VarChar(40)
+  unitPrice         Decimal?           @db.Decimal(12, 2)
+  sortOrder         Int                @default(0)
+  version           Int                @default(1)
+  active            Boolean            @default(true)
+  createdAt         DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime           @updatedAt @db.Timestamptz(3)
+  business          Business           @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  orderItems        OrderItem[]
   customFieldValues CustomFieldValue[]
 
   @@unique([id, businessId])
@@ -397,26 +417,26 @@ model BusinessItem {
 }
 
 model CustomFieldValue {
-  id                String   @id @default(uuid()) @db.Uuid
-  businessId        String   @db.Uuid
-  fieldDefinitionId String   @db.Uuid
-  customerId        String?  @db.Uuid
-  orderId           String?  @db.Uuid
-  orderItemId       String?  @db.Uuid
-  itemId            String?  @db.Uuid
-  valueText         String?  @db.Text
-  valueNumber       Decimal? @db.Decimal(20, 6)
+  id                String                @id @default(uuid()) @db.Uuid
+  businessId        String                @db.Uuid
+  fieldDefinitionId String                @db.Uuid
+  customerId        String?               @db.Uuid
+  orderId           String?               @db.Uuid
+  orderItemId       String?               @db.Uuid
+  itemId            String?               @db.Uuid
+  valueText         String?               @db.Text
+  valueNumber       Decimal?              @db.Decimal(20, 6)
   valueBoolean      Boolean?
-  valueDate         DateTime? @db.Timestamptz(3)
+  valueDate         DateTime?             @db.Timestamptz(3)
   valueJson         Json?
-  createdAt         DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
-  business          Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  createdAt         DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime              @updatedAt @db.Timestamptz(3)
+  business          Business              @relation(fields: [businessId], references: [id], onDelete: Restrict)
   fieldDefinition   CustomFieldDefinition @relation(fields: [fieldDefinitionId], references: [id], onDelete: Restrict)
-  customer          Customer? @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Cascade)
-  order             Order? @relation(fields: [orderId, businessId], references: [id, businessId], onDelete: Cascade)
-  orderItem         OrderItem? @relation(fields: [orderItemId, businessId], references: [id, businessId], onDelete: Cascade)
-  item              BusinessItem? @relation(fields: [itemId, businessId], references: [id, businessId], onDelete: Cascade)
+  customer          Customer?             @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Cascade)
+  order             Order?                @relation(fields: [orderId, businessId], references: [id, businessId], onDelete: Cascade)
+  orderItem         OrderItem?            @relation(fields: [orderItemId, businessId], references: [id, businessId], onDelete: Cascade)
+  item              BusinessItem?         @relation(fields: [itemId, businessId], references: [id, businessId], onDelete: Cascade)
 
   @@unique([customerId, fieldDefinitionId])
   @@unique([orderId, fieldDefinitionId])
@@ -426,72 +446,72 @@ model CustomFieldValue {
 }
 
 model GarmentTemplate {
-  id         String   @id @default(uuid()) @db.Uuid
-  businessId String?  @db.Uuid
-  name       String   @db.VarChar(120)
+  id         String               @id @default(uuid()) @db.Uuid
+  businessId String?              @db.Uuid
+  name       String               @db.VarChar(120)
   fields     Json
-  active     Boolean  @default(true)
-  createdAt  DateTime @default(now()) @db.Timestamptz(3)
-  business   Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  active     Boolean              @default(true)
+  createdAt  DateTime             @default(now()) @db.Timestamptz(3)
+  business   Business?            @relation(fields: [businessId], references: [id], onDelete: Cascade)
   profiles   MeasurementProfile[]
 
   @@unique([businessId, name])
 }
 
 model MeasurementProfile {
-  id              String                @id @default(uuid()) @db.Uuid
-  businessId      String                @db.Uuid
-  customerId      String                @db.Uuid
-  garmentTemplateId String               @db.Uuid
-  createdAt       DateTime              @default(now()) @db.Timestamptz(3)
-  business        Business              @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  customer        Customer              @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
-  garmentTemplate GarmentTemplate       @relation(fields: [garmentTemplateId], references: [id], onDelete: Restrict)
-  revisions       MeasurementRevision[]
+  id                String                @id @default(uuid()) @db.Uuid
+  businessId        String                @db.Uuid
+  customerId        String                @db.Uuid
+  garmentTemplateId String                @db.Uuid
+  createdAt         DateTime              @default(now()) @db.Timestamptz(3)
+  business          Business              @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  customer          Customer              @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  garmentTemplate   GarmentTemplate       @relation(fields: [garmentTemplateId], references: [id], onDelete: Restrict)
+  revisions         MeasurementRevision[]
 
-  @@index([businessId, customerId])
   @@unique([businessId, customerId, garmentTemplateId])
+  @@index([businessId, customerId])
 }
 
 model MeasurementRevision {
-  id        String            @id @default(uuid()) @db.Uuid
-  profileId String            @db.Uuid
-  version   Int
-  values    Json
-  notes     String?           @db.VarChar(2000)
-  measuredAt DateTime         @db.Timestamptz(3)
-  createdAt DateTime           @default(now()) @db.Timestamptz(3)
-  profile   MeasurementProfile @relation(fields: [profileId], references: [id], onDelete: Restrict)
+  id         String             @id @default(uuid()) @db.Uuid
+  profileId  String             @db.Uuid
+  version    Int
+  values     Json
+  notes      String?            @db.VarChar(2000)
+  measuredAt DateTime           @db.Timestamptz(3)
+  createdAt  DateTime           @default(now()) @db.Timestamptz(3)
+  profile    MeasurementProfile @relation(fields: [profileId], references: [id], onDelete: Restrict)
 
   @@unique([profileId, version])
 }
 
 model Order {
-  id          String              @id @default(uuid()) @db.Uuid
-  businessId  String              @db.Uuid
-  customerId  String              @db.Uuid
-  createdById String              @db.Uuid
-  orderNumber String              @db.VarChar(40)
-  status      OrderStatus         @default(NEW)
-  workflowStageId String?         @db.Uuid
-  workflowStageKey String?        @db.VarChar(80)
-  promisedAt  DateTime            @db.Timestamptz(3)
-  notes       String?             @db.VarChar(4000)
-  total       Decimal             @db.Decimal(12, 2)
-  version     Int                 @default(1)
-  deletedAt   DateTime?           @db.Timestamptz(3)
-  createdAt   DateTime            @default(now()) @db.Timestamptz(3)
-  updatedAt   DateTime            @updatedAt @db.Timestamptz(3)
-  business    Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  customer    Customer            @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
-  createdBy   User                @relation("OrderCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  items       OrderItem[]
-  currentWorkflowStage WorkflowStage? @relation("OrderCurrentWorkflowStage", fields: [workflowStageId], references: [id], onDelete: SetNull)
-  workflowHistory OrderWorkflowHistory[]
-  customFieldValues CustomFieldValue[]
-  statusHistory OrderStatusHistory[]
-  alterations AlterationTask[]
-  payments    Payment[]
+  id                    String                 @id @default(uuid()) @db.Uuid
+  businessId            String                 @db.Uuid
+  customerId            String                 @db.Uuid
+  createdById           String                 @db.Uuid
+  orderNumber           String                 @db.VarChar(40)
+  status                OrderStatus            @default(NEW)
+  workflowStageId       String?                @db.Uuid
+  workflowStageKey      String?                @db.VarChar(80)
+  promisedAt            DateTime               @db.Timestamptz(3)
+  notes                 String?                @db.VarChar(4000)
+  total                 Decimal                @db.Decimal(12, 2)
+  version               Int                    @default(1)
+  deletedAt             DateTime?              @db.Timestamptz(3)
+  createdAt             DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime               @updatedAt @db.Timestamptz(3)
+  business              Business               @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  customer              Customer               @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  createdBy             User                   @relation("OrderCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  items                 OrderItem[]
+  currentWorkflowStage  WorkflowStage?         @relation("OrderCurrentWorkflowStage", fields: [workflowStageId], references: [id], onDelete: SetNull)
+  workflowHistory       OrderWorkflowHistory[]
+  customFieldValues     CustomFieldValue[]
+  statusHistory         OrderStatusHistory[]
+  alterations           AlterationTask[]
+  payments              Payment[]
   whatsappNotifications WhatsAppNotification[]
 
   @@unique([businessId, orderNumber])
@@ -501,89 +521,89 @@ model Order {
 }
 
 model OrderItem {
-  id                   String   @id @default(uuid()) @db.Uuid
-  orderId              String   @db.Uuid
-  businessId           String   @db.Uuid
-  itemId               String?  @db.Uuid
-  itemTypeKey          String   @default("garment") @db.VarChar(80)
-  itemName             String?  @db.VarChar(160)
-  garmentName          String   @db.VarChar(120)
-  quantity             Int
-  unitPrice            Decimal  @db.Decimal(12, 2)
-  measurementSnapshot  Json
-  order                Order    @relation(fields: [orderId, businessId], references: [id, businessId], onDelete: Restrict)
-  business             Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  item                 BusinessItem? @relation(fields: [itemId, businessId], references: [id, businessId], onDelete: Restrict)
-  customFieldValues    CustomFieldValue[]
+  id                  String             @id @default(uuid()) @db.Uuid
+  orderId             String             @db.Uuid
+  businessId          String             @db.Uuid
+  itemId              String?            @db.Uuid
+  itemTypeKey         String             @default("garment") @db.VarChar(80)
+  itemName            String?            @db.VarChar(160)
+  garmentName         String             @db.VarChar(120)
+  quantity            Int
+  unitPrice           Decimal            @db.Decimal(12, 2)
+  measurementSnapshot Json
+  order               Order              @relation(fields: [orderId, businessId], references: [id, businessId], onDelete: Restrict)
+  business            Business           @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  item                BusinessItem?      @relation(fields: [itemId, businessId], references: [id, businessId], onDelete: Restrict)
+  customFieldValues   CustomFieldValue[]
 
   @@unique([id, businessId])
   @@index([businessId, itemTypeKey])
 }
 
 model OrderWorkflowHistory {
-  id             String   @id @default(uuid()) @db.Uuid
-  businessId     String   @db.Uuid
-  orderId        String   @db.Uuid
-  fromStageId    String?  @db.Uuid
-  toStageId      String?  @db.Uuid
-  fromStageKey   String?  @db.VarChar(80)
-  toStageKey     String   @db.VarChar(80)
-  fromStageLabel String?  @db.VarChar(120)
-  toStageLabel   String   @db.VarChar(120)
-  changedById    String   @db.Uuid
-  note           String?  @db.VarChar(500)
-  createdAt      DateTime @default(now()) @db.Timestamptz(3)
-  business       Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  order          Order    @relation(fields: [orderId, businessId], references: [id, businessId], onDelete: Restrict)
+  id             String         @id @default(uuid()) @db.Uuid
+  businessId     String         @db.Uuid
+  orderId        String         @db.Uuid
+  fromStageId    String?        @db.Uuid
+  toStageId      String?        @db.Uuid
+  fromStageKey   String?        @db.VarChar(80)
+  toStageKey     String         @db.VarChar(80)
+  fromStageLabel String?        @db.VarChar(120)
+  toStageLabel   String         @db.VarChar(120)
+  changedById    String         @db.Uuid
+  note           String?        @db.VarChar(500)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+  business       Business       @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  order          Order          @relation(fields: [orderId, businessId], references: [id, businessId], onDelete: Restrict)
   fromStage      WorkflowStage? @relation("WorkflowHistoryFrom", fields: [fromStageId], references: [id], onDelete: SetNull)
   toStage        WorkflowStage? @relation("WorkflowHistoryTo", fields: [toStageId], references: [id], onDelete: SetNull)
-  changedBy      User     @relation(fields: [changedById], references: [id], onDelete: Restrict)
+  changedBy      User           @relation(fields: [changedById], references: [id], onDelete: Restrict)
 
   @@index([businessId, orderId, createdAt])
 }
 
 model OrderStatusHistory {
-  id          String      @id @default(uuid()) @db.Uuid
-  orderId     String      @db.Uuid
+  id          String       @id @default(uuid()) @db.Uuid
+  orderId     String       @db.Uuid
   fromStatus  OrderStatus?
   toStatus    OrderStatus
-  changedById String      @db.Uuid
-  note        String?     @db.VarChar(500)
-  createdAt   DateTime    @default(now()) @db.Timestamptz(3)
-  order       Order       @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  changedBy   User        @relation(fields: [changedById], references: [id], onDelete: Restrict)
+  changedById String       @db.Uuid
+  note        String?      @db.VarChar(500)
+  createdAt   DateTime     @default(now()) @db.Timestamptz(3)
+  order       Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  changedBy   User         @relation(fields: [changedById], references: [id], onDelete: Restrict)
 
   @@index([orderId, createdAt])
 }
 
 model AlterationTask {
-  id          String   @id @default(uuid()) @db.Uuid
-  orderId     String   @db.Uuid
-  description String   @db.VarChar(1000)
-  status      String   @default("OPEN") @db.VarChar(24)
+  id          String    @id @default(uuid()) @db.Uuid
+  orderId     String    @db.Uuid
+  description String    @db.VarChar(1000)
+  status      String    @default("OPEN") @db.VarChar(24)
   dueAt       DateTime? @db.Timestamptz(3)
-  createdAt   DateTime @default(now()) @db.Timestamptz(3)
-  order       Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  order       Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
 }
 
 model Payment {
-  id          String        @id @default(uuid()) @db.Uuid
-  businessId  String        @db.Uuid
-  orderId     String        @db.Uuid
-  recordedById String       @db.Uuid
-  amount      Decimal       @db.Decimal(12, 2)
-  kind        PaymentKind   @default(PAYMENT)
-  method      PaymentMethod
-  receiptNumber String      @db.VarChar(40)
-  idempotencyKey String     @db.VarChar(100)
-  correctionOfId String?    @db.Uuid
-  correctionReason String?  @db.VarChar(500)
-  createdAt   DateTime      @default(now()) @db.Timestamptz(3)
-  business    Business      @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  order       Order         @relation(fields: [orderId, businessId], references: [id, businessId], onDelete: Restrict)
-  recordedBy  User          @relation("PaymentRecorder", fields: [recordedById], references: [id], onDelete: Restrict)
-  correctionOf Payment?     @relation("PaymentCorrections", fields: [correctionOfId, businessId, orderId], references: [id, businessId, orderId], onDelete: Restrict)
-  corrections Payment[]     @relation("PaymentCorrections")
+  id                    String                 @id @default(uuid()) @db.Uuid
+  businessId            String                 @db.Uuid
+  orderId               String                 @db.Uuid
+  recordedById          String                 @db.Uuid
+  amount                Decimal                @db.Decimal(12, 2)
+  kind                  PaymentKind            @default(PAYMENT)
+  method                PaymentMethod
+  receiptNumber         String                 @db.VarChar(40)
+  idempotencyKey        String                 @db.VarChar(100)
+  correctionOfId        String?                @db.Uuid
+  correctionReason      String?                @db.VarChar(500)
+  createdAt             DateTime               @default(now()) @db.Timestamptz(3)
+  business              Business               @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  order                 Order                  @relation(fields: [orderId, businessId], references: [id, businessId], onDelete: Restrict)
+  recordedBy            User                   @relation("PaymentRecorder", fields: [recordedById], references: [id], onDelete: Restrict)
+  correctionOf          Payment?               @relation("PaymentCorrections", fields: [correctionOfId, businessId, orderId], references: [id, businessId, orderId], onDelete: Restrict)
+  corrections           Payment[]              @relation("PaymentCorrections")
   whatsappNotifications WhatsAppNotification[]
 
   @@unique([businessId, idempotencyKey])
@@ -594,31 +614,32 @@ model Payment {
 }
 
 model WhatsAppNotification {
-  id                String                    @id @default(uuid()) @db.Uuid
-  businessId        String                    @db.Uuid
-  customerId        String                    @db.Uuid
-  orderId           String                    @db.Uuid
-  paymentId         String?                   @db.Uuid
-  kind              WhatsAppNotificationKind
-  status            WhatsAppNotificationStatus @default(QUEUED)
-  idempotencyKey    String                    @unique @db.VarChar(160)
-  recipientPhone    String                    @db.VarChar(16)
-  templateName      String                    @db.VarChar(128)
-  payload           Json
-  metaMessageId     String?                   @unique @db.VarChar(128)
-  attemptCount      Int                       @default(0)
-  nextAttemptAt     DateTime                  @default(now()) @db.Timestamptz(3)
-  lastError         String?                   @db.VarChar(500)
-  sentAt            DateTime?                 @db.Timestamptz(3)
-  deliveredAt       DateTime?                 @db.Timestamptz(3)
-  readAt            DateTime?                 @db.Timestamptz(3)
-  failedAt          DateTime?                 @db.Timestamptz(3)
-  createdAt         DateTime                  @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime                  @updatedAt @db.Timestamptz(3)
-  business          Business                  @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  customer          Customer                  @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
-  order             Order                    @relation(fields: [orderId, businessId], references: [id, businessId], onDelete: Restrict)
-  payment           Payment?                 @relation(fields: [paymentId, businessId, orderId], references: [id, businessId, orderId], onDelete: Restrict)
+  id             String                     @id @default(uuid()) @db.Uuid
+  businessId     String                     @db.Uuid
+  customerId     String?                    @db.Uuid
+  orderId        String?                    @db.Uuid
+  paymentId      String?                    @db.Uuid
+  recipientName  String?                    @db.VarChar(160)
+  kind           WhatsAppNotificationKind
+  status         WhatsAppNotificationStatus @default(QUEUED)
+  idempotencyKey String                     @unique @db.VarChar(160)
+  recipientPhone String                     @db.VarChar(16)
+  templateName   String                     @db.VarChar(128)
+  payload        Json
+  metaMessageId  String?                    @unique @db.VarChar(128)
+  attemptCount   Int                        @default(0)
+  nextAttemptAt  DateTime                   @default(now()) @db.Timestamptz(3)
+  lastError      String?                    @db.VarChar(500)
+  sentAt         DateTime?                  @db.Timestamptz(3)
+  deliveredAt    DateTime?                  @db.Timestamptz(3)
+  readAt         DateTime?                  @db.Timestamptz(3)
+  failedAt       DateTime?                  @db.Timestamptz(3)
+  createdAt      DateTime                   @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime                   @updatedAt @db.Timestamptz(3)
+  business       Business                   @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  customer       Customer?                  @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  order          Order?                     @relation(fields: [orderId, businessId], references: [id, businessId], onDelete: Restrict)
+  payment        Payment?                   @relation(fields: [paymentId, businessId, orderId], references: [id, businessId, orderId], onDelete: Restrict)
 
   @@index([businessId, createdAt])
   @@index([businessId, customerId, createdAt])
@@ -626,77 +647,77 @@ model WhatsAppNotification {
 }
 
 model SubscriptionPlan {
-  id               String   @id @default(uuid()) @db.Uuid
-  name             String   @db.VarChar(100)
-  description      String?  @db.VarChar(1000)
-  monthlyPrice     Decimal  @db.Decimal(12, 2)
-  yearlyPrice      Decimal  @db.Decimal(12, 2)
-  currency         String   @default("PKR") @db.Char(3)
-  trialDays        Int      @default(0)
-  features         Json
-  limits           Json
-  active           Boolean  @default(true)
-  isDefault        Boolean  @default(false)
-  createdAt        DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
-  subscriptions     Subscription[]
-  payments         SubscriptionPayment[]
+  id            String                @id @default(uuid()) @db.Uuid
+  name          String                @db.VarChar(100)
+  description   String?               @db.VarChar(1000)
+  monthlyPrice  Decimal               @db.Decimal(12, 2)
+  yearlyPrice   Decimal               @db.Decimal(12, 2)
+  currency      String                @default("PKR") @db.Char(3)
+  trialDays     Int                   @default(0)
+  features      Json
+  limits        Json
+  active        Boolean               @default(true)
+  isDefault     Boolean               @default(false)
+  createdAt     DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime              @updatedAt @db.Timestamptz(3)
+  subscriptions Subscription[]
+  payments      SubscriptionPayment[]
 
   @@index([active, isDefault])
 }
 
 model Subscription {
-  id                String             @id @default(uuid()) @db.Uuid
-  businessId        String             @db.Uuid
-  planId            String             @db.Uuid
-  status            SubscriptionStatus
-  cycle             SubscriptionCycle
-  startsAt          DateTime           @db.Timestamptz(3)
-  endsAt            DateTime           @db.Timestamptz(3)
-  graceUntil        DateTime           @db.Timestamptz(3)
-  customPrice       Decimal?           @db.Decimal(12, 2)
-  discountAmount    Decimal            @default(0) @db.Decimal(12, 2)
-  complimentary     Boolean            @default(false)
-  grandfathered     Boolean            @default(false)
-  suspendedAt       DateTime?          @db.Timestamptz(3)
-  cancelledAt       DateTime?          @db.Timestamptz(3)
-  createdAt         DateTime           @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime           @updatedAt @db.Timestamptz(3)
-  business          Business           @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  plan              SubscriptionPlan   @relation(fields: [planId], references: [id], onDelete: Restrict)
-  payments          SubscriptionPayment[]
-  events            SubscriptionEvent[]
+  id             String                @id @default(uuid()) @db.Uuid
+  businessId     String                @db.Uuid
+  planId         String                @db.Uuid
+  status         SubscriptionStatus
+  cycle          SubscriptionCycle
+  startsAt       DateTime              @db.Timestamptz(3)
+  endsAt         DateTime              @db.Timestamptz(3)
+  graceUntil     DateTime              @db.Timestamptz(3)
+  customPrice    Decimal?              @db.Decimal(12, 2)
+  discountAmount Decimal               @default(0) @db.Decimal(12, 2)
+  complimentary  Boolean               @default(false)
+  grandfathered  Boolean               @default(false)
+  suspendedAt    DateTime?             @db.Timestamptz(3)
+  cancelledAt    DateTime?             @db.Timestamptz(3)
+  createdAt      DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime              @updatedAt @db.Timestamptz(3)
+  business       Business              @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  plan           SubscriptionPlan      @relation(fields: [planId], references: [id], onDelete: Restrict)
+  payments       SubscriptionPayment[]
+  events         SubscriptionEvent[]
 
   @@index([businessId, status, endsAt])
   @@index([endsAt, status])
 }
 
 model SubscriptionPayment {
-  id                   String                   @id @default(uuid()) @db.Uuid
-  businessId           String                   @db.Uuid
-  planId               String                   @db.Uuid
-  subscriptionId       String?                  @db.Uuid
-  submittedById        String                   @db.Uuid
-  reviewedById         String?                  @db.Uuid
+  id                   String                    @id @default(uuid()) @db.Uuid
+  businessId           String                    @db.Uuid
+  planId               String                    @db.Uuid
+  subscriptionId       String?                   @db.Uuid
+  submittedById        String                    @db.Uuid
+  reviewedById         String?                   @db.Uuid
   status               SubscriptionPaymentStatus @default(PENDING)
   cycle                SubscriptionCycle
-  transactionReference String                   @unique @db.VarChar(120)
-  senderName           String                   @db.VarChar(160)
-  amount               Decimal                  @db.Decimal(12, 2)
-  method               String                   @db.VarChar(60)
-  paymentDate          DateTime                 @db.Date
-  customPrice          Decimal?                 @db.Decimal(12, 2)
-  discountAmount       Decimal                  @default(0) @db.Decimal(12, 2)
-  invoiceNumber        String?                  @unique @db.VarChar(60)
-  rejectionReason      String?                  @db.VarChar(1000)
-  reviewedAt           DateTime?                @db.Timestamptz(3)
-  createdAt            DateTime                 @default(now()) @db.Timestamptz(3)
-  updatedAt            DateTime                 @updatedAt @db.Timestamptz(3)
-  business             Business                 @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  plan                 SubscriptionPlan         @relation(fields: [planId], references: [id], onDelete: Restrict)
-  subscription         Subscription?            @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
-  submittedBy          User                     @relation("SubscriptionPaymentSubmitter", fields: [submittedById], references: [id], onDelete: Restrict)
-  reviewedBy           User?                    @relation("SubscriptionPaymentReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
+  transactionReference String                    @unique @db.VarChar(120)
+  senderName           String                    @db.VarChar(160)
+  amount               Decimal                   @db.Decimal(12, 2)
+  method               String                    @db.VarChar(60)
+  paymentDate          DateTime                  @db.Date
+  customPrice          Decimal?                  @db.Decimal(12, 2)
+  discountAmount       Decimal                   @default(0) @db.Decimal(12, 2)
+  invoiceNumber        String?                   @unique @db.VarChar(60)
+  rejectionReason      String?                   @db.VarChar(1000)
+  reviewedAt           DateTime?                 @db.Timestamptz(3)
+  createdAt            DateTime                  @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime                  @updatedAt @db.Timestamptz(3)
+  business             Business                  @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  plan                 SubscriptionPlan          @relation(fields: [planId], references: [id], onDelete: Restrict)
+  subscription         Subscription?             @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+  submittedBy          User                      @relation("SubscriptionPaymentSubmitter", fields: [submittedById], references: [id], onDelete: Restrict)
+  reviewedBy           User?                     @relation("SubscriptionPaymentReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
   events               SubscriptionEvent[]
 
   @@index([businessId, status, createdAt])
@@ -704,18 +725,18 @@ model SubscriptionPayment {
 }
 
 model SubscriptionEvent {
-  id             String              @id @default(uuid()) @db.Uuid
-  businessId     String              @db.Uuid
-  subscriptionId String?             @db.Uuid
-  paymentId      String?             @db.Uuid
-  actorId        String?             @db.Uuid
-  action         String              @db.VarChar(100)
+  id             String               @id @default(uuid()) @db.Uuid
+  businessId     String               @db.Uuid
+  subscriptionId String?              @db.Uuid
+  paymentId      String?              @db.Uuid
+  actorId        String?              @db.Uuid
+  action         String               @db.VarChar(100)
   metadata       Json
-  createdAt      DateTime            @default(now()) @db.Timestamptz(3)
-  business       Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  subscription   Subscription?       @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+  createdAt      DateTime             @default(now()) @db.Timestamptz(3)
+  business       Business             @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  subscription   Subscription?        @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
   payment        SubscriptionPayment? @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  actor          User?               @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actor          User?                @relation(fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([businessId, createdAt])
   @@index([subscriptionId, createdAt])
@@ -729,17 +750,17 @@ model PlatformSetting {
 }
 
 model AuditEvent {
-  id          String   @id @default(uuid()) @db.Uuid
-  businessId  String?  @db.Uuid
-  actorId     String?  @db.Uuid
-  action      String   @db.VarChar(100)
-  entityType  String   @db.VarChar(80)
-  entityId    String?  @db.Uuid
-  metadata    Json
-  requestId   String   @db.VarChar(64)
-  createdAt   DateTime @default(now()) @db.Timestamptz(3)
-  business    Business? @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  actor       User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  id         String    @id @default(uuid()) @db.Uuid
+  businessId String?   @db.Uuid
+  actorId    String?   @db.Uuid
+  action     String    @db.VarChar(100)
+  entityType String    @db.VarChar(80)
+  entityId   String?   @db.Uuid
+  metadata   Json
+  requestId  String    @db.VarChar(64)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  business   Business? @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  actor      User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([businessId, createdAt])
   @@index([actorId, createdAt])
@@ -757,20 +778,20 @@ model BusinessSetting {
 }
 
 model SyncOperation {
-  id               String              @id @default(uuid()) @db.Uuid
-  businessId       String              @db.Uuid
-  userId           String              @db.Uuid
-  clientOperationId String             @db.VarChar(100)
-  entityType       String              @db.VarChar(40)
-  entityId         String              @db.Uuid
-  baseVersion      Int?
-  status           SyncOperationStatus
-  request          Json
-  response         Json?
-  createdAt        DateTime            @default(now()) @db.Timestamptz(3)
-  business         Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  user             User                @relation(fields: [userId], references: [id], onDelete: Restrict)
-  membership       Membership          @relation(fields: [businessId, userId], references: [businessId, userId], onDelete: Restrict)
+  id                String              @id @default(uuid()) @db.Uuid
+  businessId        String              @db.Uuid
+  userId            String              @db.Uuid
+  clientOperationId String              @db.VarChar(100)
+  entityType        String              @db.VarChar(40)
+  entityId          String              @db.Uuid
+  baseVersion       Int?
+  status            SyncOperationStatus
+  request           Json
+  response          Json?
+  createdAt         DateTime            @default(now()) @db.Timestamptz(3)
+  business          Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  user              User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  membership        Membership          @relation(fields: [businessId, userId], references: [businessId, userId], onDelete: Restrict)
 
   @@unique([businessId, clientOperationId])
   @@index([businessId, createdAt])

@@ -15,6 +15,8 @@ import {
 type NotificationTx = Prisma.TransactionClient;
 type NotificationSnapshot = Record<string, string>;
 type NotificationPayload = Record<string, Prisma.InputJsonValue>;
+let duePaymentCursor: string | undefined;
+let subscriptionExpiryCursor: string | undefined;
 
 function jsonInput(value: NotificationPayload): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -31,10 +33,11 @@ function dateLabel(value: Date): string {
   }).format(value);
 }
 
-function templateFor(kind: WhatsAppNotificationKind): string {
+function templateFor(kind: WhatsAppNotificationKind): string | null {
   if (kind === 'ORDER_CREATED') return env.WHATSAPP_ORDER_TEMPLATE;
   if (kind === 'PAYMENT_RECEIVED') return env.WHATSAPP_PAYMENT_TEMPLATE;
-  return env.WHATSAPP_READY_TEMPLATE;
+  if (kind === 'ORDER_READY') return env.WHATSAPP_READY_TEMPLATE;
+  return null;
 }
 
 function validatedPhone(phone: string): string | null {
@@ -49,26 +52,28 @@ async function queueNotification(
   tx: NotificationTx,
   input: {
     businessId: string;
-    customer: Pick<Customer, 'id' | 'phone' | 'whatsappConsent' | 'whatsappOptedOutAt'>;
-    orderId: string;
+    customer?: Pick<Customer, 'id' | 'phone' | 'name' | 'whatsappConsent' | 'whatsappOptedOutAt'>;
+    recipientName?: string;
+    recipientPhone?: string;
+    orderId?: string;
     paymentId?: string;
     kind: WhatsAppNotificationKind;
     idempotencyKey: string;
     payload: NotificationSnapshot;
   },
 ): Promise<void> {
-  const phone = validatedPhone(input.customer.phone);
+  const configuration = await tx.businessConfiguration.findUnique({
+    where: { businessId: input.businessId },
+    select: { notificationTemplates: true, contactPhone: true },
+  });
+  const phone = validatedPhone(input.recipientPhone ?? input.customer?.phone ?? configuration?.contactPhone ?? '');
   let notSentReason = !phone
-    ? 'Customer phone number is invalid'
-    : input.customer.whatsappOptedOutAt || !input.customer.whatsappConsent
+    ? 'Recipient phone number is invalid or not configured'
+    : input.customer && (input.customer.whatsappOptedOutAt || !input.customer.whatsappConsent)
       ? 'Customer has not consented or has opted out'
       : null;
   let templateName = templateFor(input.kind);
   let payload: NotificationPayload = input.payload;
-  const configuration = await tx.businessConfiguration.findUnique({
-    where: { businessId: input.businessId },
-    select: { notificationTemplates: true },
-  });
   const templates = isNotificationTemplateMap(configuration?.notificationTemplates)
     ? configuration.notificationTemplates
     : {};
@@ -82,8 +87,10 @@ async function queueNotification(
       try {
         const values: Record<NotificationTemplateVariable, string> = {
           'business.name': input.payload.businessName ?? '',
-          'business.phone': input.payload.businessPhone ?? '',
-          'customer.name': input.payload.customerName ?? '',
+          'business.phone': configuration?.contactPhone ?? '',
+          'recipient.name': input.recipientName ?? input.customer?.name ?? input.payload.customerName ?? '',
+          'recipient.phone': phone ?? '',
+          'customer.name': input.payload.customerName ?? input.customer?.name ?? '',
           'customer.phone': phone ?? '',
           'order.number': input.payload.orderNumber ?? '',
           'order.total': input.payload.total ?? '',
@@ -92,33 +99,47 @@ async function queueNotification(
           'order.status': input.payload.orderStatus ?? '',
           'order.readyDate': input.payload.readyDate ?? '',
           'item.name': input.payload.itemName ?? input.payload.garments ?? '',
+          'subscription.plan': input.payload.subscriptionPlan ?? '',
+          'subscription.cycle': input.payload.subscriptionCycle ?? '',
+          'subscription.status': input.payload.subscriptionStatus ?? '',
+          'subscription.endsAt': input.payload.subscriptionEndsAt ?? '',
+          'subscription.graceUntil': input.payload.subscriptionGraceUntil ?? '',
+          'subscription.daysRemaining': input.payload.subscriptionDaysRemaining ?? '',
         };
         const rendered = renderNotificationTemplate(configured.body, values);
         templateName = configured.providerTemplateName ?? templateName;
-        payload = {
-          ...input.payload,
-          renderedBody: rendered.body,
-          templateParameters: rendered.parameters,
-          templateLanguage: configured.language ?? env.WHATSAPP_TEMPLATE_LANGUAGE,
-        };
+        if (!templateName) {
+          notSentReason ??= 'An approved WhatsApp template name is required for this event';
+        } else {
+          payload = {
+            ...input.payload,
+            renderedBody: rendered.body,
+            templateParameters: rendered.parameters,
+            templateLanguage: configured.language ?? env.WHATSAPP_TEMPLATE_LANGUAGE,
+          };
+        }
       } catch (error) {
         notSentReason ??= error instanceof Error ? error.message.slice(0, 500) : 'Notification template is invalid';
       }
     }
+  }
+  if (!templateName) {
+    notSentReason ??= 'No approved WhatsApp template is configured for this event';
   }
   const now = new Date();
 
   await tx.whatsAppNotification.createMany({
     data: [{
       businessId: input.businessId,
-      customerId: input.customer.id,
+      customerId: input.customer?.id,
       orderId: input.orderId,
       paymentId: input.paymentId,
+      recipientName: input.recipientName ?? input.customer?.name ?? input.payload.customerName ?? null,
       kind: input.kind,
       status: notSentReason ? 'NOT_SENT' : 'QUEUED',
       idempotencyKey: input.idempotencyKey,
       recipientPhone: phone ?? '',
-      templateName,
+      templateName: templateName ?? '',
       payload: jsonInput(payload),
       lastError: notSentReason,
       updatedAt: now,
@@ -250,6 +271,202 @@ export async function queueOrderReady(
       itemName: order.items[0]?.itemName ?? order.items[0]?.garmentName ?? '',
     },
   });
+}
+
+export async function queueOrderStatusChanged(
+  tx: NotificationTx,
+  orderId: string,
+  fromStatus: string,
+  toStatus: string,
+  idempotencyKey: string,
+): Promise<void> {
+  const order = await tx.order.findUniqueOrThrow({
+    where: { id: orderId },
+    include: {
+      business: { select: { name: true } },
+      customer: true,
+      items: true,
+      payments: { select: { kind: true, amount: true } },
+    },
+  });
+  const paid = order.payments.reduce(
+    (total, payment) => payment.kind === 'PAYMENT' ? total.plus(payment.amount) : total.minus(payment.amount),
+    new Prisma.Decimal(0),
+  );
+  const balance = Prisma.Decimal.max(new Prisma.Decimal(0), order.total.minus(paid));
+  await queueNotification(tx, {
+    businessId: order.businessId,
+    customer: order.customer,
+    orderId: order.id,
+    kind: 'STATUS_CHANGED',
+    idempotencyKey,
+    payload: {
+      businessName: order.business.name,
+      customerName: order.customer.name,
+      orderNumber: order.orderNumber,
+      total: money(order.total),
+      totalPaid: money(paid),
+      remaining: money(balance),
+      orderStatus: toStatus,
+      fromStatus,
+      itemName: order.items[0]?.itemName ?? order.items[0]?.garmentName ?? '',
+      readyDate: dateLabel(order.promisedAt),
+    },
+  });
+}
+
+function businessDate(date: Date, timezone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const value = (type: string) => parts.find((part) => part.type === type)?.value;
+  const year = value('year');
+  const month = value('month');
+  const day = value('day');
+  if (!year || !month || !day) throw new Error('Could not determine the business-local notification date');
+  return `${year}-${month}-${day}`;
+}
+
+function daysBetweenDates(from: string, to: string): number {
+  const fromTime = Date.parse(`${from}T00:00:00.000Z`);
+  const toTime = Date.parse(`${to}T00:00:00.000Z`);
+  return Math.round((toTime - fromTime) / 86_400_000);
+}
+
+export async function enqueueSubscriptionExpiryNotifications(): Promise<void> {
+  const now = new Date();
+  const nextCursor = await prisma.$transaction(async (tx) => {
+    const setting = await tx.platformSetting.findUnique({ where: { key: 'billing' }, select: { value: true } });
+    const billing = setting?.value;
+    const reminderDays = typeof billing === 'object' && billing !== null && 'expiryReminderDays' in billing
+      && Array.isArray(billing.expiryReminderDays)
+      ? [...new Set(billing.expiryReminderDays.filter(
+        (day): day is number => typeof day === 'number' && Number.isInteger(day) && day >= 0 && day <= 365,
+      ))]
+      : [];
+    if (!reminderDays.length) return undefined;
+
+    const subscriptions = await tx.subscription.findMany({
+      where: {
+        status: { in: ['ACTIVE', 'TRIAL'] },
+        endsAt: { gte: now },
+      },
+      include: {
+        business: {
+          include: { configuration: true },
+        },
+        plan: { select: { name: true } },
+      },
+      orderBy: [{ endsAt: 'asc' }, { id: 'asc' }],
+      take: 100,
+      ...(subscriptionExpiryCursor ? { cursor: { id: subscriptionExpiryCursor }, skip: 1 } : {}),
+    });
+    for (const subscription of subscriptions) {
+      const localToday = businessDate(now, subscription.business.timezone);
+      const localExpiryDate = businessDate(subscription.endsAt, subscription.business.timezone);
+      const daysRemaining = daysBetweenDates(localToday, localExpiryDate);
+      if (!reminderDays.includes(daysRemaining)) continue;
+
+      const configured = isNotificationTemplateMap(subscription.business.configuration?.notificationTemplates)
+        ? subscription.business.configuration.notificationTemplates.SUBSCRIPTION_EXPIRING
+        : undefined;
+      const contactPhone = subscription.business.configuration?.contactPhone;
+      if (!isNotificationTemplate(configured) || !configured.enabled || !configured.providerTemplateName
+        || !contactPhone || !validatedPhone(contactPhone)) continue;
+
+      await queueNotification(tx, {
+        businessId: subscription.businessId,
+        recipientName: subscription.business.name,
+        recipientPhone: contactPhone,
+        kind: 'SUBSCRIPTION_EXPIRING',
+        idempotencyKey: `subscription-expiring:${subscription.id}:${localExpiryDate}:${daysRemaining}`,
+        payload: {
+          businessName: subscription.business.name,
+          subscriptionPlan: subscription.plan.name,
+          subscriptionCycle: subscription.cycle,
+          subscriptionStatus: subscription.status,
+          subscriptionEndsAt: localExpiryDate,
+          subscriptionGraceUntil: businessDate(subscription.graceUntil, subscription.business.timezone),
+          subscriptionDaysRemaining: String(daysRemaining),
+        },
+      });
+    }
+    return subscriptions.length === 100 ? subscriptions.at(-1)?.id : undefined;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  subscriptionExpiryCursor = nextCursor;
+}
+
+export async function enqueueDuePaymentNotifications(): Promise<void> {
+  const now = new Date();
+  const nextCursor = await prisma.$transaction(async (tx) => {
+    const dueOrders = await tx.order.findMany({
+      where: {
+        deletedAt: null,
+        promisedAt: { lte: now },
+        status: { notIn: ['COLLECTED', 'CANCELLED'] },
+        OR: [
+          { workflowStageId: null },
+          { currentWorkflowStage: { is: { isTerminal: false } } },
+        ],
+      },
+      include: {
+        business: { include: { configuration: true } },
+        customer: true,
+        items: true,
+        currentWorkflowStage: true,
+      },
+      orderBy: [{ promisedAt: 'asc' }, { id: 'asc' }],
+      take: 100,
+      ...(duePaymentCursor ? { cursor: { id: duePaymentCursor }, skip: 1 } : {}),
+    });
+    if (!dueOrders.length) return undefined;
+    const totals = await tx.payment.groupBy({
+      by: ['orderId', 'kind'],
+      where: {
+        orderId: { in: dueOrders.map((order) => order.id) },
+        businessId: { in: [...new Set(dueOrders.map((order) => order.businessId))] },
+      },
+      _sum: { amount: true },
+    });
+    for (const order of dueOrders) {
+      const configured = isNotificationTemplateMap(order.business.configuration?.notificationTemplates)
+        ? order.business.configuration.notificationTemplates.PAYMENT_DUE
+        : undefined;
+      if (!isNotificationTemplate(configured) || !configured.enabled) continue;
+      const paid = totals
+        .filter((payment) => payment.orderId === order.id)
+        .reduce((amount, payment) => {
+          const value = payment._sum.amount ?? new Prisma.Decimal(0);
+          return payment.kind === 'PAYMENT' ? amount.plus(value) : amount.minus(value);
+        }, new Prisma.Decimal(0));
+      const balance = Prisma.Decimal.max(new Prisma.Decimal(0), order.total.minus(paid));
+      if (!balance.greaterThan(0)) continue;
+      const localDate = businessDate(now, order.business.timezone);
+      await queueNotification(tx, {
+        businessId: order.businessId,
+        customer: order.customer,
+        orderId: order.id,
+        kind: 'PAYMENT_DUE',
+        idempotencyKey: `payment-due:${order.id}:${localDate}`,
+        payload: {
+          businessName: order.business.name,
+          customerName: order.customer.name,
+          orderNumber: order.orderNumber,
+          total: money(order.total),
+          totalPaid: money(paid),
+          remaining: money(balance),
+          orderStatus: order.currentWorkflowStage?.label ?? order.status,
+          itemName: order.items[0]?.itemName ?? order.items[0]?.garmentName ?? '',
+          readyDate: dateLabel(order.promisedAt),
+        },
+      });
+    }
+    return dueOrders.length === 100 ? dueOrders.at(-1)?.id : undefined;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  duePaymentCursor = nextCursor;
 }
 
 function objectValue(value: Prisma.JsonValue): Record<string, string> {
@@ -394,7 +611,9 @@ async function sendNotification(
     ? ['orderNumber', 'garments', 'total', 'advancePaid', 'outstanding', 'readyDate']
     : notification.kind === 'PAYMENT_RECEIVED'
       ? ['orderNumber', 'amount', 'totalPaid', 'remaining', 'receiptReference']
-      : ['orderNumber', 'readyDate'];
+      : notification.kind === 'ORDER_READY'
+        ? ['orderNumber', 'readyDate']
+        : [];
   const rawPayload = notification.payload;
   const configuredParameters = rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
     ? rawPayload.templateParameters
@@ -408,7 +627,7 @@ async function sendNotification(
     ? configuredParameters
     : parameters.map((key) => payload[key] ?? '');
   const components: Array<Record<string, unknown>> = [];
-  if (notification.kind !== 'ORDER_READY') {
+  if (notification.kind === 'ORDER_CREATED' || notification.kind === 'PAYMENT_RECEIVED') {
     const mediaId = await uploadReceipt(notification.payload, notification.kind);
     components.push({
       type: 'header',
@@ -459,20 +678,24 @@ export async function processNextWhatsAppNotification(): Promise<boolean> {
       id: next.id,
       status: 'QUEUED',
       nextAttemptAt: { lte: now },
-      customer: { is: { whatsappConsent: true, whatsappOptedOutAt: null, deletedAt: null } },
+      ...(next.customerId ? {
+        customer: { is: { whatsappConsent: true, whatsappOptedOutAt: null, deletedAt: null } },
+      } : {}),
     },
     data: { status: 'PROCESSING', attemptCount: { increment: 1 } },
   });
   if (!claim.count) {
-    const customer = await prisma.customer.findFirst({
-      where: { id: next.customerId, businessId: next.businessId },
-      select: { whatsappConsent: true, whatsappOptedOutAt: true, deletedAt: true },
-    });
-    if (!customer || !customer.whatsappConsent || customer.whatsappOptedOutAt || customer.deletedAt) {
-      await prisma.whatsAppNotification.updateMany({
-        where: { id: next.id, status: 'QUEUED' },
-        data: { status: 'NOT_SENT', lastError: 'Customer has not consented or has opted out', failedAt: new Date() },
+    if (next.customerId) {
+      const customer = await prisma.customer.findFirst({
+        where: { id: next.customerId, businessId: next.businessId },
+        select: { whatsappConsent: true, whatsappOptedOutAt: true, deletedAt: true },
       });
+      if (!customer || !customer.whatsappConsent || customer.whatsappOptedOutAt || customer.deletedAt) {
+        await prisma.whatsAppNotification.updateMany({
+          where: { id: next.id, status: 'QUEUED' },
+          data: { status: 'NOT_SENT', lastError: 'Customer has not consented or has opted out', failedAt: new Date() },
+        });
+      }
     }
     return true;
   }
@@ -482,16 +705,18 @@ export async function processNextWhatsAppNotification(): Promise<boolean> {
       where: { id: next.id },
       select: { id: true, kind: true, templateName: true, recipientPhone: true, payload: true },
     });
-    const consent = await prisma.customer.findFirst({
-      where: { id: next.customerId, businessId: next.businessId, whatsappConsent: true, whatsappOptedOutAt: null, deletedAt: null },
-      select: { id: true },
-    });
-    if (!consent) {
-      await prisma.whatsAppNotification.updateMany({
-        where: { id: next.id, status: 'PROCESSING' },
-        data: { status: 'NOT_SENT', lastError: 'Customer has not consented or has opted out', failedAt: new Date() },
+    if (next.customerId) {
+      const consent = await prisma.customer.findFirst({
+        where: { id: next.customerId, businessId: next.businessId, whatsappConsent: true, whatsappOptedOutAt: null, deletedAt: null },
+        select: { id: true },
       });
-      return true;
+      if (!consent) {
+        await prisma.whatsAppNotification.updateMany({
+          where: { id: next.id, status: 'PROCESSING' },
+          data: { status: 'NOT_SENT', lastError: 'Customer has not consented or has opted out', failedAt: new Date() },
+        });
+        return true;
+      }
     }
     const metaMessageId = await sendNotification(current);
     await prisma.whatsAppNotification.updateMany({
@@ -523,10 +748,20 @@ export function startWhatsAppWorker(logger: Logger): NodeJS.Timeout | undefined 
     return undefined;
   }
   let running = false;
+  let lastPaymentDueScan = 0;
+  let lastSubscriptionExpiryScan = 0;
   const poll = async () => {
     if (running) return;
     running = true;
     try {
+      if (Date.now() - lastPaymentDueScan >= 15 * 60_000) {
+        await enqueueDuePaymentNotifications();
+        lastPaymentDueScan = Date.now();
+      }
+      if (Date.now() - lastSubscriptionExpiryScan >= 15 * 60_000) {
+        await enqueueSubscriptionExpiryNotifications();
+        lastSubscriptionExpiryScan = Date.now();
+      }
       for (let sent = 0; sent < 10 && await processNextWhatsAppNotification(); sent += 1) {
         // Drain a small batch, then yield to the event loop.
       }

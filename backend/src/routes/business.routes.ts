@@ -8,6 +8,10 @@ import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { validateNotificationTemplateBody } from '../domain/notification-templates.js';
 
 const router = express.Router();
+const historyQuerySchema = z.object({
+  cursor: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
 const keySchema = z.string().trim().regex(/^[a-z][a-z0-9_-]{0,79}$/);
 const configurationSchema = z.object({
   version: z.number().int().min(0),
@@ -20,7 +24,7 @@ const configurationSchema = z.object({
   terminologyOverrides: z.record(keySchema, z.string().trim().min(1).max(120)).optional(),
   enabledModules: z.array(keySchema).max(40).optional(),
   paymentMethods: z.array(keySchema).min(1).max(30).optional(),
-  notificationTemplates: z.record(z.enum(['ORDER_CREATED', 'PAYMENT_RECEIVED', 'ORDER_READY']), z.object({
+  notificationTemplates: z.record(z.enum(['ORDER_CREATED', 'PAYMENT_RECEIVED', 'ORDER_READY', 'STATUS_CHANGED', 'PAYMENT_DUE', 'SUBSCRIPTION_EXPIRING']), z.object({
     enabled: z.boolean(),
     body: z.string().trim().min(1).max(2000),
     providerTemplateName: z.string().regex(/^[a-z0-9_]{1,128}$/).optional(),
@@ -36,6 +40,7 @@ const configurationSchema = z.object({
       });
     }
   })).optional(),
+  contactPhone: z.string().trim().min(6).max(32).regex(/^\+?[0-9][0-9\s().-]*$/).nullable().optional(),
   dashboardWidgets: z.array(keySchema).max(60).optional(),
   publish: z.boolean().default(true),
 }).strict().refine((input) =>
@@ -57,6 +62,10 @@ function jsonObject(value: Prisma.JsonValue | null | undefined): Record<string, 
     if (item !== undefined) result[key] = item;
   }
   return result;
+}
+
+function jsonSnapshot(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
 function validateTimezone(timezone: string): void {
@@ -127,11 +136,14 @@ router.get('/configuration', asyncHandler(async (req, res) => {
       paymentMethods: business.configuration?.paymentMethods ?? business.template.paymentMethods,
       dashboardWidgets: business.configuration?.dashboardWidgets ?? business.template.dashboardWidgets,
       notificationTemplates: business.configuration?.notificationTemplates ?? {},
+      contactPhone: business.configuration?.contactPhone ?? null,
       fields: [...fieldsByKey.values()].filter((field) => field.active),
+      tenantFields: business.customFields,
       workflow: {
         stages,
         transitions,
       },
+      workflowIsTenantScoped: business.workflowStages.length > 0,
       version: business.configuration?.version ?? 0,
       cacheVersion: (business.configuration?.version ?? 0) * 1_000_000 + business.template.version,
       configurationVersion: business.configuration?.version ?? 0,
@@ -139,6 +151,42 @@ router.get('/configuration', asyncHandler(async (req, res) => {
       publishedAt: business.configuration?.publishedAt ?? null,
     },
   });
+}));
+
+router.get('/configuration/history', requireBusinessPermission('settings:manage'), asyncHandler(async (req, res) => {
+  const businessId = getBusinessId(req);
+  const query = historyQuerySchema.parse(req.query);
+  if (query.cursor) {
+    const cursor = await prisma.auditEvent.findFirst({
+      where: { id: query.cursor, businessId, entityType: 'business_configuration' },
+      select: { id: true },
+    });
+    if (!cursor) throw new HttpError(400, 'Configuration history cursor is invalid', 'INVALID_CURSOR');
+  }
+  const events = await prisma.auditEvent.findMany({
+    where: {
+      businessId,
+      entityType: 'business_configuration',
+      action: { in: ['business.configuration_published', 'business.configuration_updated', 'business.structure_published'] },
+    },
+    select: { id: true, actor: { select: { name: true } }, metadata: true, createdAt: true },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+    take: query.limit + 1,
+  });
+  const hasMore = events.length > query.limit;
+  const items = (hasMore ? events.slice(0, query.limit) : events).map((event) => {
+    const metadata = jsonObject(event.metadata);
+    return {
+      id: event.id,
+      actorName: event.actor?.name ?? 'Former user',
+      version: typeof metadata.version === 'number' ? metadata.version : null,
+      templateVersion: typeof metadata.templateVersion === 'number' ? metadata.templateVersion : null,
+      snapshot: metadata.snapshot ?? null,
+      createdAt: event.createdAt,
+    };
+  });
+  res.json({ data: { items, nextCursor: hasMore ? items.at(-1)?.id ?? null : null } });
 }));
 
 router.put('/configuration', requireBusinessPermission('settings:manage'), asyncHandler(async (req, res) => {
@@ -171,6 +219,7 @@ router.put('/configuration', requireBusinessPermission('settings:manage'), async
         enabledModules: input.enabledModules ?? business.configuration?.enabledModules ?? business.template.enabledModules,
         paymentMethods: input.paymentMethods ?? business.configuration?.paymentMethods ?? business.template.paymentMethods,
         notificationTemplates: input.notificationTemplates ?? business.configuration?.notificationTemplates ?? {},
+        contactPhone: input.contactPhone !== undefined ? input.contactPhone : business.configuration?.contactPhone ?? null,
         dashboardWidgets: input.dashboardWidgets ?? business.configuration?.dashboardWidgets ?? business.template.dashboardWidgets,
         publishedAt: input.publish ? new Date() : business.configuration?.publishedAt ?? null,
         version: { increment: 1 },
@@ -203,6 +252,56 @@ router.put('/configuration', requireBusinessPermission('settings:manage'), async
       if (Object.keys(businessData).length > 0) {
         await tx.business.update({ where: { id: businessId }, data: businessData });
       }
+      const currentBusiness = await tx.business.findUniqueOrThrow({
+        where: { id: businessId },
+        include: {
+          template: {
+            include: {
+              fields: { where: { active: true }, orderBy: [{ module: 'asc' }, { screen: 'asc' }, { sortOrder: 'asc' }] },
+              workflowStages: { where: { active: true }, orderBy: { sortOrder: 'asc' } },
+              workflowTransitions: { include: { fromStage: { select: { key: true } }, toStage: { select: { key: true } } } },
+            },
+          },
+          configuration: true,
+          customFields: { where: { active: true }, orderBy: [{ module: 'asc' }, { screen: 'asc' }, { sortOrder: 'asc' }] },
+          workflowStages: { where: { active: true }, orderBy: { sortOrder: 'asc' } },
+          workflowTransitions: { include: { fromStage: { select: { key: true } }, toStage: { select: { key: true } } } },
+        },
+      });
+      const fields = new Map(currentBusiness.template?.fields.map((field) => [field.key, field]) ?? []);
+      for (const field of currentBusiness.customFields) fields.set(field.key, field);
+      const workflowStages = currentBusiness.workflowStages.length
+        ? currentBusiness.workflowStages : currentBusiness.template?.workflowStages ?? [];
+      const workflowTransitions = currentBusiness.workflowStages.length
+        ? currentBusiness.workflowTransitions : currentBusiness.template?.workflowTransitions ?? [];
+      const snapshot = jsonSnapshot({
+        business: {
+          name: currentBusiness.name,
+          logoUrl: currentBusiness.logoUrl,
+          currency: currentBusiness.currency,
+          timezone: currentBusiness.timezone,
+        },
+        configuration: {
+          version: configuration.version,
+          terminologyOverrides: configuration.terminologyOverrides,
+          enabledModules: configuration.enabledModules,
+          paymentMethods: configuration.paymentMethods,
+          notificationTemplates: configuration.notificationTemplates,
+          dashboardWidgets: configuration.dashboardWidgets,
+          publishedAt: configuration.publishedAt,
+        },
+        templateVersion: currentBusiness.template?.version ?? 0,
+        fields: [...fields.values()],
+        workflow: {
+          stages: workflowStages,
+          transitions: workflowTransitions.map((transition) => ({
+            from: transition.fromStage.key,
+            to: transition.toStage.key,
+            allowedRoleKeys: transition.allowedRoleKeys,
+            actions: transition.actions,
+          })),
+        },
+      });
       await tx.auditEvent.create({
         data: {
           businessId,
@@ -210,7 +309,12 @@ router.put('/configuration', requireBusinessPermission('settings:manage'), async
           action: input.publish ? 'business.configuration_published' : 'business.configuration_updated',
           entityType: 'business_configuration',
           entityId: businessId,
-          metadata: { version: configuration.version, changedKeys: Object.keys(input).filter((key) => key !== 'version') },
+          metadata: {
+            version: configuration.version,
+            templateVersion: currentBusiness.template?.version ?? 0,
+            changedKeys: Object.keys(input).filter((key) => key !== 'version'),
+            snapshot,
+          },
           requestId: req.requestId,
         },
       });

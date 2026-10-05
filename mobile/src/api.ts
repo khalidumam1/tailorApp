@@ -24,6 +24,7 @@ export interface BusinessConfiguration {
   paymentMethods: string[];
   dashboardWidgets: string[];
   notificationTemplates: Record<string, unknown>;
+  contactPhone: string | null;
   fields: Array<{
     id: string;
     module: string;
@@ -62,6 +63,7 @@ export function parseBusinessConfiguration(value: unknown): BusinessConfiguratio
     || !stringArray(value.availableModules) || !stringArray(value.availablePaymentMethods)
     || !stringArray(value.availableDashboardWidgets) || !stringArray(value.enabledModules) || !stringArray(value.paymentMethods)
     || !stringArray(value.dashboardWidgets) || typeof value.version !== 'number'
+    || !(value.contactPhone === null || typeof value.contactPhone === 'string')
     || (value.publishedAt !== null && typeof value.publishedAt !== 'string')) {
     throw new Error('The server returned an invalid business configuration');
   }
@@ -159,6 +161,7 @@ export function parseBusinessConfiguration(value: unknown): BusinessConfiguratio
     paymentMethods: value.paymentMethods,
     dashboardWidgets: value.dashboardWidgets,
     notificationTemplates,
+    contactPhone: typeof value.contactPhone === 'string' ? value.contactPhone : null,
     fields,
     workflow: { stages, transitions },
     version: value.version,

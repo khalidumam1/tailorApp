@@ -7,8 +7,8 @@ export function loadEnvironmentFile(): void {
     path.resolve(process.cwd(), '.env'),
     path.resolve(process.cwd(), '..', '.env'),
   ];
-  const envFile = candidates.find((candidate) => existsSync(candidate));
-  if (!envFile) return;
-  const result = loadDotEnv({ path: envFile });
-  if (result.error) throw result.error;
+  for (const envFile of new Set(candidates.filter((candidate) => existsSync(candidate)))) {
+    const result = loadDotEnv({ path: envFile, override: false });
+    if (result.error) throw result.error;
+  }
 }

@@ -101,6 +101,42 @@ export function validateTemplate(input: TemplateInput): void {
   }
 }
 
+export function buildTemplateRevisionSnapshot(
+  input: TemplateInput,
+  version: number,
+  isSystem: boolean,
+): Prisma.InputJsonValue {
+  return {
+    version,
+    key: input.key,
+    name: input.name,
+    category: input.category,
+    description: input.description ?? null,
+    terminology: input.terminology,
+    enabledModules: input.enabledModules,
+    itemTypes: input.itemTypes,
+    paymentMethods: input.paymentMethods,
+    dashboardWidgets: input.dashboardWidgets,
+    isSystem,
+    active: true,
+    fields: input.fields.map((field) => ({
+      module: field.module,
+      screen: field.screen,
+      key: field.key,
+      label: field.label,
+      type: field.type,
+      required: field.required,
+      sortOrder: field.sortOrder,
+      ...(field.defaultValue !== undefined ? { defaultValue: field.defaultValue } : {}),
+      ...(field.validation !== undefined ? { validation: field.validation } : {}),
+      ...(field.options !== undefined ? { options: field.options } : {}),
+      ...(field.visibility !== undefined ? { visibility: field.visibility } : {}),
+    })),
+    stages: input.stages,
+    transitions: input.transitions,
+  };
+}
+
 async function persistTemplate(
   input: TemplateInput,
   actorId: string,
@@ -133,6 +169,15 @@ async function persistTemplate(
         data: { ...scalarData, version: { increment: 1 } },
       })
       : await tx.businessTemplate.create({ data: scalarData });
+    await tx.businessTemplateRevision.create({
+      data: {
+        templateId: template.id,
+        version: template.version,
+        snapshot: buildTemplateRevisionSnapshot(input, template.version, template.isSystem),
+        actorId,
+        requestId,
+      },
+    });
 
     const fieldKeys = input.fields.map((field) => field.key);
     for (const field of input.fields) {
@@ -284,6 +329,21 @@ router.get('/', asyncHandler(async (req, res) => {
       workflowTransitions: true,
     },
     orderBy: [{ isSystem: 'desc' }, { name: 'asc' }],
+  });
+  res.json({ data: { items } });
+}));
+
+router.get('/:templateId/revisions', requirePlatformPermission('platform:templates:manage'), asyncHandler(async (req, res) => {
+  const templateId = idSchema.parse(req.params.templateId);
+  const template = await prisma.businessTemplate.findUnique({
+    where: { id: templateId },
+    select: { id: true },
+  });
+  if (!template) throw new HttpError(404, 'Business template not found', 'TEMPLATE_NOT_FOUND');
+  const items = await prisma.businessTemplateRevision.findMany({
+    where: { templateId },
+    include: { actor: { select: { id: true, name: true, email: true } } },
+    orderBy: [{ version: 'desc' }, { createdAt: 'desc' }],
   });
   res.json({ data: { items } });
 }));

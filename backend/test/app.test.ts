@@ -53,10 +53,21 @@ test('offline sync endpoints require a valid authenticated session', async () =>
   assert.equal(body.error.code, 'UNAUTHENTICATED');
 });
 
-test('business configuration and template builder APIs require authentication', async () => {
-  for (const path of ['/api/v1/business/configuration', '/api/v1/platform/templates']) {
-    const response = await fetch(`${baseUrl}${path}`);
-    assert.equal(response.status, 401, `${path} must require a session`);
+test('business configuration, notifications and template builder APIs require authentication', async () => {
+  for (const [path, method] of [
+    ['/api/v1/business/configuration', 'GET'],
+    ['/api/v1/business/configuration/history', 'GET'],
+    ['/api/v1/business/configuration/structure', 'PUT'],
+    ['/api/v1/notifications', 'GET'],
+    ['/api/v1/platform/templates', 'GET'],
+    ['/api/v1/platform/templates/00000000-0000-4000-8000-000000000001/revisions', 'GET'],
+    ['/api/v1/catalog', 'GET'],
+  ] as const) {
+    const response = await fetch(`${baseUrl}${path}`, {
+      method,
+      ...(method === 'PUT' ? { headers: { 'content-type': 'application/json' }, body: '{}' } : {}),
+    });
+    assert.equal(response.status, 401, `${method} ${path} must require a session`);
     const body = await response.json() as { error: { code: string } };
     assert.equal(body.error.code, 'UNAUTHENTICATED');
   }

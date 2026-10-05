@@ -61,11 +61,30 @@ before(async () => {
     data: {
       businessId: businessA.id,
       enabledModules: ['customers', 'measurements', 'orders', 'payments', 'reports', 'notifications', 'catalog'],
+      contactPhone: '+923001234567',
       notificationTemplates: {
         ORDER_CREATED: {
           enabled: true,
           body: '{{customer.name}}: {{item.name}} for {{order.total}}',
           providerTemplateName: 'tenant_order_created',
+          language: 'en',
+        },
+        STATUS_CHANGED: {
+          enabled: true,
+          body: '{{order.number}} is now {{order.status}}',
+          providerTemplateName: 'tenant_status_changed',
+          language: 'en',
+        },
+        PAYMENT_DUE: {
+          enabled: true,
+          body: 'Balance for {{order.number}} is {{order.balance}}',
+          providerTemplateName: 'tenant_payment_due',
+          language: 'en',
+        },
+        SUBSCRIPTION_EXPIRING: {
+          enabled: true,
+          body: '{{recipient.name}}: {{subscription.plan}} ends {{subscription.endsAt}} in {{subscription.daysRemaining}} days',
+          providerTemplateName: 'tenant_subscription_expiring',
           language: 'en',
         },
       },
@@ -365,6 +384,108 @@ test('business queries and mutations remain scoped to the authenticated membersh
   assert.ok([400, 404].includes(crossTenantOrder.status));
 });
 
+test('business field and workflow editing is versioned and restricted to the authenticated tenant', { skip: !enabled }, async () => {
+  const configurationResponse = await fetch(`${baseUrl}/api/v1/business/configuration`, {
+    headers: { authorization: authHeader },
+  });
+  assert.equal(configurationResponse.status, 200);
+  const configuration = (await configurationResponse.json() as {
+    data: {
+      configurationVersion: number;
+      templateVersion: number;
+      workflow: {
+        stages: Array<{ id: string; key: string; label: string; sortOrder: number; isInitial: boolean; isTerminal: boolean; actions: string[] }>;
+        transitions: Array<{ fromStageId: string; toStageId: string; allowedRoleKeys: string[]; actions: string[] }>;
+      };
+    };
+  }).data;
+  const stageKeys = new Map(configuration.workflow.stages.map((stage) => [stage.id, stage.key]));
+  const input = {
+    version: configuration.configurationVersion,
+    templateVersion: configuration.templateVersion,
+    fields: [{
+      module: 'customers',
+      screen: 'customer',
+      key: 'tenant_business_note',
+      label: 'Tenant business note',
+      type: 'TEXT',
+      required: false,
+      sortOrder: 0,
+    }],
+    stages: configuration.workflow.stages.map((stage) => ({
+      key: stage.key,
+      label: stage.label,
+      sortOrder: stage.sortOrder,
+      isInitial: stage.isInitial,
+      isTerminal: stage.isTerminal,
+      actions: stage.actions,
+    })),
+    transitions: configuration.workflow.transitions.map((transition) => ({
+      from: stageKeys.get(transition.fromStageId)!,
+      to: stageKeys.get(transition.toStageId)!,
+      allowedRoleKeys: transition.allowedRoleKeys,
+      actions: transition.actions,
+    })),
+  };
+  const savedResponse = await fetch(`${baseUrl}/api/v1/business/configuration/structure`, {
+    method: 'PUT',
+    headers: { authorization: authHeader, 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  assert.equal(savedResponse.status, 200);
+  const saved = (await savedResponse.json() as { data: { version: number; templateVersion: number } }).data;
+  assert.equal(saved.version, input.version + 1);
+  assert.equal(saved.templateVersion, input.templateVersion);
+  assert.equal(await prisma.customFieldDefinition.count({
+    where: { businessId: businessAId, key: 'tenant_business_note', active: true },
+  }), 1);
+  assert.equal(await prisma.customFieldDefinition.count({
+    where: { businessId: businessBId, key: 'tenant_business_note' },
+  }), 0);
+  assert.equal(await prisma.auditEvent.count({
+    where: { businessId: businessAId, action: 'business.structure_published', entityId: businessAId },
+  }), 1);
+
+  const staleResponse = await fetch(`${baseUrl}/api/v1/business/configuration/structure`, {
+    method: 'PUT',
+    headers: { authorization: authHeader, 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  assert.equal(staleResponse.status, 409);
+  const latestConfiguration = (await (await fetch(`${baseUrl}/api/v1/business/configuration`, {
+    headers: { authorization: authHeader },
+  })).json() as { data: { configurationVersion: number } }).data;
+  const staleTemplateResponse = await fetch(`${baseUrl}/api/v1/business/configuration/structure`, {
+    method: 'PUT',
+    headers: { authorization: authHeader, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      ...input,
+      version: latestConfiguration.configurationVersion,
+      templateVersion: input.templateVersion + 1,
+    }),
+  });
+  assert.equal(staleTemplateResponse.status, 409);
+
+  const crossTenantResponse = await fetch(`${baseUrl}/api/v1/business/configuration/structure`, {
+    method: 'PUT',
+    headers: { authorization: authHeaderB, 'content-type': 'application/json' },
+    body: JSON.stringify({ ...input, businessId: businessAId }),
+  });
+  assert.equal(crossTenantResponse.status, 400);
+  const platformResponse = await fetch(`${baseUrl}/api/v1/business/configuration/structure`, {
+    method: 'PUT',
+    headers: {
+      authorization: `Bearer ${process.env.TENANT_TEST_PLATFORM_TOKEN}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(input),
+  });
+  assert.equal(platformResponse.status, 403);
+  assert.equal(await prisma.customFieldDefinition.count({
+    where: { businessId: businessBId, key: 'tenant_business_note' },
+  }), 0);
+});
+
 test('generic catalog validates configured fields and stays tenant-scoped', { skip: !enabled }, async () => {
   await prisma.customFieldDefinition.create({
     data: {
@@ -651,8 +772,30 @@ test('offline order retries and duplicate payment requests create one notificati
     orderVersion = transitionBody.data.version;
   }
   assert.equal(await prisma.whatsAppNotification.count({
+    where: { businessId: businessAId, orderId: offlineOrderId, kind: 'STATUS_CHANGED' },
+  }), workflow.length);
+  assert.equal(await prisma.whatsAppNotification.count({
     where: { businessId: businessAId, orderId: offlineOrderId, kind: 'ORDER_READY' },
   }), 1);
+  await prisma.order.updateMany({
+    where: { id: offlineOrderId, businessId: businessAId },
+    data: { promisedAt: new Date(Date.now() - 86_400_000) },
+  });
+  const { enqueueDuePaymentNotifications } = await import('../src/whatsapp.js');
+  await enqueueDuePaymentNotifications();
+  await enqueueDuePaymentNotifications();
+  assert.equal(await prisma.whatsAppNotification.count({
+    where: { businessId: businessAId, orderId: offlineOrderId, kind: 'PAYMENT_DUE' },
+  }), 1);
+  const dueNotification = await prisma.whatsAppNotification.findFirstOrThrow({
+    where: { businessId: businessAId, orderId: offlineOrderId, kind: 'PAYMENT_DUE' },
+  });
+  const dueOrder = await prisma.order.findFirstOrThrow({
+    where: { id: offlineOrderId, businessId: businessAId },
+    select: { orderNumber: true },
+  });
+  assert.equal(dueNotification.templateName, 'tenant_payment_due');
+  assert.deepEqual((dueNotification.payload as { templateParameters: string[] }).templateParameters, [dueOrder.orderNumber, 'PKR 750.00']);
 
   const foreignNotification = await prisma.whatsAppNotification.create({
     data: {
@@ -673,6 +816,141 @@ test('offline order retries and duplicate payment requests create one notificati
   assert.equal(scopedHistory.status, 200);
   const history = await scopedHistory.json() as { data: { items: Array<{ id: string }> } };
   assert.equal(history.data.items.some((item) => item.id === foreignNotification.id), false);
+});
+
+test('subscription expiry reminders use configured business contact, idempotency and generic history fields', { skip: !enabled }, async () => {
+  const existingBillingSetting = await prisma.platformSetting.findUnique({ where: { key: 'billing' } });
+  await prisma.platformSetting.upsert({
+    where: { key: 'billing' },
+    create: { key: 'billing', value: { expiryReminderDays: [14] } },
+    update: { value: { expiryReminderDays: [14] } },
+  });
+  const now = new Date();
+  const endsAt = new Date(now.getTime() + 14 * 86_400_000);
+  const subscription = await prisma.subscription.create({
+    data: {
+      businessId: businessAId,
+      planId: subscriptionPlanId,
+      status: 'ACTIVE',
+      cycle: 'YEARLY',
+      startsAt: new Date(now.getTime() - 86_400_000),
+      endsAt,
+      graceUntil: new Date(endsAt.getTime() + 7 * 86_400_000),
+    },
+  });
+  try {
+    const configurationResponse = await fetch(`${baseUrl}/api/v1/business/configuration`, {
+      headers: { authorization: authHeader },
+    });
+    assert.equal(configurationResponse.status, 200);
+    const configurationBody = await configurationResponse.json() as {
+      data: { version: number; contactPhone: string | null; notificationTemplates: Record<string, unknown> };
+    };
+    assert.equal(configurationBody.data.contactPhone, '+923001234567');
+    const template = {
+      enabled: true,
+      body: '{{recipient.name}}: {{subscription.plan}} ends {{subscription.endsAt}} in {{subscription.daysRemaining}} days',
+      providerTemplateName: 'tenant_subscription_expiring',
+      language: 'en',
+    };
+    const invalidTemplateResponse = await fetch(`${baseUrl}/api/v1/business/configuration`, {
+      method: 'PUT',
+      headers: { authorization: authHeader, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        version: configurationBody.data.version,
+        notificationTemplates: { SUBSCRIPTION_EXPIRING: { ...template, body: 'Ends {{subscription.unknown}}' } },
+        publish: false,
+      }),
+    });
+    assert.equal(invalidTemplateResponse.status, 400);
+    const templateResponse = await fetch(`${baseUrl}/api/v1/business/configuration`, {
+      method: 'PUT',
+      headers: { authorization: authHeader, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        version: configurationBody.data.version,
+        contactPhone: '+923001234567',
+        notificationTemplates: { SUBSCRIPTION_EXPIRING: template },
+        publish: false,
+      }),
+    });
+    assert.equal(templateResponse.status, 200);
+
+    const { enqueueSubscriptionExpiryNotifications, processNextWhatsAppNotification } = await import('../src/whatsapp.js');
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await enqueueSubscriptionExpiryNotifications();
+      if (await prisma.whatsAppNotification.count({
+        where: { businessId: businessAId, kind: 'SUBSCRIPTION_EXPIRING' },
+      })) break;
+    }
+    const notification = await prisma.whatsAppNotification.findFirstOrThrow({
+      where: {
+        businessId: businessAId,
+        kind: 'SUBSCRIPTION_EXPIRING',
+        idempotencyKey: {
+          startsWith: `subscription-expiring:${subscription.id}:`,
+        },
+      },
+    });
+    assert.equal(notification.customerId, null);
+    assert.equal(notification.orderId, null);
+    assert.match(notification.recipientName ?? '', /^Tenant A /);
+    assert.equal(notification.recipientPhone, '+923001234567');
+    assert.equal(notification.templateName, 'tenant_subscription_expiring');
+    assert.equal(await prisma.whatsAppNotification.count({
+      where: { idempotencyKey: notification.idempotencyKey },
+    }), 1);
+    assert.deepEqual(
+      (notification.payload as { templateParameters: string[] }).templateParameters.slice(0, 1),
+      [notification.recipientName],
+    );
+    assert.equal((notification.payload as { templateParameters: string[] }).templateParameters.at(-1), '14');
+
+    const historyResponse = await fetch(`${baseUrl}/api/v1/notifications?limit=100`, {
+      headers: { authorization: authHeader },
+    });
+    assert.equal(historyResponse.status, 200);
+    const history = await historyResponse.json() as {
+      data: { items: Array<{ id: string; customerId: string | null; orderId: string | null; recipientName: string | null }> };
+    };
+    const historyItem = history.data.items.find((item) => item.id === notification.id);
+    assert.deepEqual(historyItem && {
+      customerId: historyItem.customerId,
+      orderId: historyItem.orderId,
+      recipientName: historyItem.recipientName,
+    }, { customerId: null, orderId: null, recipientName: notification.recipientName });
+
+    await prisma.whatsAppNotification.update({
+      where: { id: notification.id },
+      data: { createdAt: new Date(0) },
+    });
+    const originalFetch = globalThis.fetch;
+    let sentRequest = '';
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      sentRequest = typeof input === 'string' ? input : input.toString();
+      assert.match(sentRequest, /\/messages$/);
+      const body = JSON.parse(String(init?.body)) as { to: string; template: { name: string } };
+      assert.equal(body.to, '923001234567');
+      assert.equal(body.template.name, 'tenant_subscription_expiring');
+      return new Response(JSON.stringify({ messages: [{ id: 'wamid.subscription-test' }] }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      assert.equal(await processNextWhatsAppNotification(), true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    assert.match(sentRequest, /\/messages$/);
+    assert.equal((await prisma.whatsAppNotification.findUniqueOrThrow({ where: { id: notification.id } })).status, 'SENT');
+  } finally {
+    await prisma.subscription.delete({ where: { id: subscription.id } });
+    if (existingBillingSetting) {
+      await prisma.platformSetting.update({
+        where: { key: 'billing' },
+        data: { value: existingBillingSetting.value },
+      });
+    } else {
+      await prisma.platformSetting.deleteMany({ where: { key: 'billing' } });
+    }
+  }
 });
 
 test('expired subscriptions preserve business reads and billing while blocking tenant writes', { skip: !enabled }, async () => {

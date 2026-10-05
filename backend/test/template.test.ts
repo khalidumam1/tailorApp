@@ -8,7 +8,7 @@ process.env.DATABASE_URL = 'postgresql://localhost:5432/tailor_test';
 process.env.ACCESS_TOKEN_SECRET = 'test-only-secret-that-is-long-enough-to-pass';
 process.env.CORS_ORIGINS = 'http://localhost:5173';
 process.env.WHATSAPP_ENABLED = 'false';
-const { validateTemplate } = await import('../src/routes/template.routes.js');
+const { validateTemplate, buildTemplateRevisionSnapshot } = await import('../src/routes/template.routes.js');
 
 const genericTemplate: TemplateInput = {
   key: 'auto-workshop',
@@ -41,6 +41,16 @@ const genericTemplate: TemplateInput = {
 
 test('accepts configurable business fields and a connected workflow', () => {
   assert.doesNotThrow(() => validateTemplate(genericTemplate));
+});
+
+test('captures complete versioned template content in a revision snapshot', () => {
+  const snapshot = buildTemplateRevisionSnapshot(genericTemplate, 7, true) as Record<string, unknown>;
+  assert.equal(snapshot.version, 7);
+  assert.equal(snapshot.key, genericTemplate.key);
+  assert.deepEqual(snapshot.itemTypes, genericTemplate.itemTypes);
+  assert.deepEqual(snapshot.fields, genericTemplate.fields);
+  assert.deepEqual(snapshot.stages, genericTemplate.stages);
+  assert.deepEqual(snapshot.transitions, genericTemplate.transitions);
 });
 
 test('accepts Tailor, Furniture, and Auto workflows through the same template validator', () => {

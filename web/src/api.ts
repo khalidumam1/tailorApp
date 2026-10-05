@@ -151,10 +151,11 @@ const paymentSchema = z.object({
 
 const notificationSchema = z.object({
   id: z.string().uuid(),
-  customerId: z.string().uuid(),
-  orderId: z.string().uuid(),
+  customerId: z.string().uuid().nullable(),
+  orderId: z.string().uuid().nullable(),
   paymentId: z.string().uuid().nullable(),
-  kind: z.enum(['ORDER_CREATED', 'PAYMENT_RECEIVED', 'ORDER_READY']),
+  recipientName: z.string().nullable(),
+  kind: z.enum(['ORDER_CREATED', 'PAYMENT_RECEIVED', 'ORDER_READY', 'STATUS_CHANGED', 'PAYMENT_DUE', 'SUBSCRIPTION_EXPIRING']),
   status: z.enum(['QUEUED', 'SENT', 'DELIVERED', 'READ', 'FAILED', 'NOT_SENT']),
   recipientPhone: z.string(),
   templateName: z.string(),
@@ -239,7 +240,7 @@ const notificationTemplateSchema = z.object({
   language: z.string().optional(),
 });
 const notificationTemplatesSchema = z.record(
-  z.enum(['ORDER_CREATED', 'PAYMENT_RECEIVED', 'ORDER_READY']),
+  z.enum(['ORDER_CREATED', 'PAYMENT_RECEIVED', 'ORDER_READY', 'STATUS_CHANGED', 'PAYMENT_DUE', 'SUBSCRIPTION_EXPIRING']),
   notificationTemplateSchema,
 );
 export function parseNotificationTemplates(value: unknown) {
@@ -261,6 +262,16 @@ const businessTemplateSchema = z.object({
   fields: z.array(customFieldSchema),
   workflowStages: z.array(workflowStageSchema),
   workflowTransitions: z.array(workflowTransitionSchema),
+});
+const businessTemplateRevisionSchema = z.object({
+  id: z.string().uuid(),
+  templateId: z.string().uuid(),
+  version: z.number().int(),
+  snapshot: z.record(z.string(), z.unknown()),
+  actorId: z.string().uuid().nullable(),
+  requestId: z.string(),
+  createdAt: z.string(),
+  actor: z.object({ id: z.string().uuid(), name: z.string(), email: z.string() }).nullable(),
 });
 const businessConfigurationSchema = z.object({
   business: z.object({
@@ -284,15 +295,66 @@ const businessConfigurationSchema = z.object({
   terminology: z.record(z.string(), z.string()),
   enabledModules: z.array(z.string()),
   paymentMethods: z.array(z.string()),
+  contactPhone: z.string().nullable(),
   dashboardWidgets: z.array(z.string()),
   notificationTemplates: notificationTemplatesSchema,
   fields: z.array(customFieldSchema),
+  tenantFields: z.array(customFieldSchema),
   workflow: z.object({
     stages: z.array(workflowStageSchema),
     transitions: z.array(workflowTransitionSchema),
   }),
+  workflowIsTenantScoped: z.boolean(),
   version: z.number().int(),
+  configurationVersion: z.number().int(),
+  templateVersion: z.number().int(),
+  cacheVersion: z.number().int(),
   publishedAt: z.string().nullable(),
+});
+const businessFieldInputSchema = z.object({
+  module: z.string(),
+  screen: z.string(),
+  key: z.string(),
+  label: z.string(),
+  type: z.enum([
+    'TEXT', 'LONG_TEXT', 'NUMBER', 'CURRENCY', 'DATE', 'DATETIME', 'DROPDOWN',
+    'MULTI_SELECT', 'BOOLEAN', 'MEASUREMENT', 'REFERENCE', 'NOTES',
+  ]),
+  required: z.boolean(),
+  defaultValue: z.unknown().optional(),
+  validation: z.unknown().optional(),
+  options: z.unknown().optional(),
+  visibility: z.unknown().optional(),
+  sortOrder: z.number().int(),
+});
+const businessStageInputSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  sortOrder: z.number().int(),
+  isInitial: z.boolean(),
+  isTerminal: z.boolean(),
+  actions: z.array(z.string()),
+});
+const businessTransitionInputSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  allowedRoleKeys: z.array(z.string()),
+  actions: z.array(z.string()),
+});
+const businessStructureResultSchema = z.object({
+  version: z.number().int(),
+  templateVersion: z.number().int(),
+});
+const businessConfigurationHistorySchema = z.object({
+  items: z.array(z.object({
+    id: z.string().uuid(),
+    actorName: z.string(),
+    version: z.number().int().nullable(),
+    templateVersion: z.number().int().nullable(),
+    snapshot: z.unknown().nullable(),
+    createdAt: z.string(),
+  })),
+  nextCursor: z.string().uuid().nullable(),
 });
 const templateFieldInputSchema = z.object({
   module: z.string(),
@@ -338,7 +400,12 @@ const templateEditSchema = z.object({
 });
 export type BusinessConfiguration = z.infer<typeof businessConfigurationSchema>;
 export type BusinessTemplate = z.infer<typeof businessTemplateSchema>;
+export type BusinessTemplateRevision = z.infer<typeof businessTemplateRevisionSchema>;
 export type BusinessTemplateInput = z.infer<typeof templateEditSchema>;
+export type BusinessFieldInput = z.infer<typeof businessFieldInputSchema>;
+export type BusinessStageInput = z.infer<typeof businessStageInputSchema>;
+export type BusinessTransitionInput = z.infer<typeof businessTransitionInputSchema>;
+export type BusinessConfigurationHistoryEntry = z.infer<typeof businessConfigurationHistorySchema>['items'][number];
 export function parseBusinessTemplateInput(value: unknown): BusinessTemplateInput {
   return templateEditSchema.parse(value);
 }
@@ -656,6 +723,11 @@ export const api = {
   businessConfiguration(token: string) {
     return request('/business/configuration', businessConfigurationSchema, { token });
   },
+  businessConfigurationHistory(token: string, cursor?: string) {
+    const params = new URLSearchParams({ limit: '20' });
+    if (cursor) params.set('cursor', cursor);
+    return request(`/business/configuration/history?${params}`, businessConfigurationHistorySchema, { token });
+  },
   updateBusinessConfiguration(token: string, input: {
     version: number;
     business?: Partial<BusinessConfiguration['business']>;
@@ -663,10 +735,24 @@ export const api = {
     enabledModules?: string[];
     paymentMethods?: string[];
     notificationTemplates?: z.infer<typeof notificationTemplatesSchema>;
+    contactPhone?: string | null;
     dashboardWidgets?: string[];
     publish?: boolean;
   }) {
     return request('/business/configuration', z.unknown(), { token, method: 'PUT', body: input });
+  },
+  updateBusinessStructure(token: string, input: {
+    version: number;
+    templateVersion: number;
+    fields: BusinessFieldInput[];
+    stages: BusinessStageInput[];
+    transitions: BusinessTransitionInput[];
+  }) {
+    return request('/business/configuration/structure', businessStructureResultSchema, {
+      token,
+      method: 'PUT',
+      body: input,
+    });
   },
   measurements(token: string, customerId: string) {
     return request(`/measurements/customers/${customerId}`, z.object({ items: z.array(profileSchema) }), { token });
@@ -705,6 +791,11 @@ export const api = {
   },
   updatePlatformTemplate(token: string, templateId: string, input: BusinessTemplateInput) {
     return request(`/platform/templates/${templateId}`, businessTemplateSchema, { token, method: 'PUT', body: input });
+  },
+  platformTemplateRevisions(token: string, templateId: string) {
+    return request(`/platform/templates/${templateId}/revisions`, z.object({
+      items: z.array(businessTemplateRevisionSchema),
+    }), { token });
   },
   createPlatformBusiness(token: string, input: { name: string; slug: string; templateKey?: string }) {
     return request('/platform/businesses', platformBusinessSchema, { token, method: 'POST', body: input });

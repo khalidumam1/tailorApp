@@ -2,6 +2,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { loadEnvironmentFile } from '../src/environment.js';
 import { businessPermissions, platformPermissions } from '../src/permissions.js';
+import { customFieldValueData } from '../src/domain/custom-fields.js';
 
 loadEnvironmentFile();
 
@@ -39,9 +40,9 @@ async function seed() {
     });
     const business = await tx.business.upsert({
       where: { slug: 'karachi-demo-tailors' },
-      update: { templateId: tailorTemplate.id, businessType: 'TAILOR' },
+      update: { name: 'Tailor Demo', templateId: tailorTemplate.id, businessType: 'TAILOR' },
       create: {
-        name: 'Karachi Demo Tailors',
+        name: 'Tailor Demo',
         slug: 'karachi-demo-tailors',
         businessType: 'TAILOR',
         templateId: tailorTemplate.id,
@@ -58,10 +59,17 @@ async function seed() {
     });
     const existingOwner = await tx.user.findUnique({
       where: { email: ownerEmail },
-      include: { memberships: { select: { businessId: true, role: { select: { name: true } } } } },
+      include: { memberships: { select: { business: { select: { slug: true } }, role: { select: { name: true } } } } },
     });
+    const demoSlugs = new Set([
+      'karachi-demo-tailors',
+      'furniture-demo',
+      'carpenter-demo',
+      'auto-workshop-demo',
+      'printing-demo',
+    ]);
     if (existingOwner?.platformRole || existingOwner?.memberships.some((membership) =>
-      membership.businessId !== business.id || membership.role.name !== 'Owner')) {
+      !demoSlugs.has(membership.business.slug) || membership.role.name !== 'Owner')) {
       throw new Error('The configured seed owner email is already associated with another role or business');
     }
     const owner = existingOwner ?? await tx.user.create({
@@ -173,6 +181,309 @@ async function seed() {
       create: { businessId: business.id, userId: owner.id, roleId: role.id },
     });
 
+    const demoConfigurations = [
+      {
+        key: 'furniture',
+        name: 'Furniture Demo',
+        slug: 'furniture-demo',
+        businessType: 'FURNITURE',
+        itemTypeKey: 'furniture_item',
+        itemName: 'Two-seat sofa',
+        unit: 'piece',
+        price: '85000.00',
+        dueDays: 12,
+        orderNumber: 'FURN-000001',
+        receiptNumber: 'FURN-R000001',
+        customValues: { dimensions: 210, material: 'Oak' },
+        stages: [
+          ['new', 'New'], ['design', 'Design'], ['material_confirmation', 'Material Confirmation'],
+          ['production', 'Production'], ['finishing', 'Finishing'], ['ready', 'Ready'], ['completed', 'Completed'],
+        ],
+      },
+      {
+        key: 'carpenter',
+        name: 'Carpenter Demo',
+        slug: 'carpenter-demo',
+        businessType: 'CARPENTER',
+        itemTypeKey: 'project',
+        itemName: 'Oak dining table',
+        unit: 'project',
+        price: '62000.00',
+        dueDays: 18,
+        orderNumber: 'CARP-000001',
+        receiptNumber: 'CARP-R000001',
+        customValues: { dimensions: 180 },
+        stages: [
+          ['new', 'New'], ['measurement', 'Measurement'], ['material', 'Material'],
+          ['production', 'Production'], ['installation', 'Installation'], ['completed', 'Completed'],
+        ],
+      },
+      {
+        key: 'auto-workshop',
+        name: 'Auto Workshop Demo',
+        slug: 'auto-workshop-demo',
+        businessType: 'AUTO-WORKSHOP',
+        itemTypeKey: 'vehicle',
+        itemName: 'Honda Civic repair job',
+        unit: 'job',
+        price: '32000.00',
+        dueDays: 3,
+        orderNumber: 'AUTO-000001',
+        receiptNumber: 'AUTO-R000001',
+        customValues: {
+          vehicle: 'Honda Civic · demo registration ABC-123',
+          inspection_notes: 'Inspect engine, brakes, and suspension.',
+          registration: 'ABC-123',
+          service_type: 'Repair',
+        },
+        stages: [
+          ['inspection', 'Inspection'], ['estimate', 'Estimate'], ['approved', 'Approved'],
+          ['repair', 'Repair'], ['quality_check', 'Quality Check'], ['ready', 'Ready'], ['completed', 'Completed'],
+        ],
+      },
+      {
+        key: 'printing',
+        name: 'Printing Demo',
+        slug: 'printing-demo',
+        businessType: 'PRINTING',
+        itemTypeKey: 'print_product',
+        itemName: 'A5 product flyer',
+        unit: 'bundle',
+        price: '14500.00',
+        dueDays: 5,
+        orderNumber: 'PRINT-000001',
+        receiptNumber: 'PRINT-R000001',
+        customValues: {
+          specifications: 'A5, 4-color, 170gsm glossy, 500 copies.',
+          size: 'A5',
+          material: 'Glossy paper',
+          quantity: 500,
+          finishing: 'Lamination',
+        },
+        stages: [
+          ['new', 'New'], ['design', 'Design'], ['production', 'Production'],
+          ['quality_check', 'Quality Check'], ['ready', 'Ready'], ['completed', 'Completed'],
+        ],
+      },
+    ] as const;
+    const disabledNotificationTemplates = {
+      ORDER_CREATED: { enabled: false, body: 'Order {{order.number}} for {{item.name}} was received by {{business.name}}.' },
+      PAYMENT_RECEIVED: { enabled: false, body: 'Payment received for order {{order.number}}. Balance: {{order.balance}}.' },
+      ORDER_READY: { enabled: false, body: '{{item.name}} for order {{order.number}} is ready at {{business.name}}.' },
+      STATUS_CHANGED: { enabled: false, body: 'Order {{order.number}} is now {{order.status}}.' },
+      PAYMENT_DUE: { enabled: false, body: 'Payment due for order {{order.number}}. Balance: {{order.balance}}.' },
+      SUBSCRIPTION_EXPIRING: {
+        enabled: false,
+        body: '{{recipient.name}}, your {{subscription.plan}} plan expires {{subscription.endsAt}} in {{subscription.daysRemaining}} days.',
+      },
+    };
+    for (const [index, definition] of demoConfigurations.entries()) {
+      const template = await tx.businessTemplate.findUniqueOrThrow({
+        where: { key: definition.key },
+        include: { fields: { where: { active: true } }, workflowStages: { where: { active: true }, orderBy: { sortOrder: 'asc' } } },
+      });
+      const demoBusiness = await tx.business.upsert({
+        where: { slug: definition.slug },
+        update: { name: definition.name, businessType: definition.businessType, templateId: template.id, status: 'ACTIVE' },
+        create: {
+          name: definition.name,
+          slug: definition.slug,
+          businessType: definition.businessType,
+          templateId: template.id,
+          status: 'ACTIVE',
+        },
+      });
+      let workflowStages = await tx.workflowStage.findMany({
+        where: { businessId: demoBusiness.id, active: true },
+        orderBy: { sortOrder: 'asc' },
+      });
+      if (!workflowStages.length) {
+        const readyKey = definition.stages.some(([key]) => key === 'ready') ? 'ready' : undefined;
+        workflowStages = [];
+        for (const [sortOrder, [key, label]] of definition.stages.entries()) {
+          workflowStages.push(await tx.workflowStage.create({
+            data: {
+              businessId: demoBusiness.id,
+              key,
+              label,
+              sortOrder,
+              isInitial: sortOrder === 0,
+              isTerminal: sortOrder === definition.stages.length - 1,
+              actions: key === readyKey ? ['ORDER_READY'] : [],
+            },
+          }));
+        }
+        await tx.workflowTransition.createMany({
+          data: workflowStages.slice(0, -1).map((stage, index) => ({
+            businessId: demoBusiness.id,
+            fromStageId: stage.id,
+            toStageId: workflowStages[index + 1]!.id,
+            allowedRoleKeys: [],
+            actions: workflowStages[index + 1]!.key === readyKey ? ['ORDER_READY'] : [],
+          })),
+        });
+      }
+      const demoRole = await tx.role.upsert({
+        where: { businessId_name: { businessId: demoBusiness.id, name: 'Owner' } },
+        update: { isSystem: true },
+        create: { businessId: demoBusiness.id, name: 'Owner', isSystem: true },
+      });
+      for (const [permissionKey, description] of businessPermissions) {
+        const permission = await tx.permission.upsert({
+          where: { key: permissionKey },
+          update: { description },
+          create: { key: permissionKey, description },
+        });
+        await tx.rolePermissionGrant.upsert({
+          where: { roleId_permissionId: { roleId: demoRole.id, permissionId: permission.id } },
+          update: {},
+          create: { roleId: demoRole.id, permissionId: permission.id },
+        });
+      }
+      await tx.membership.upsert({
+        where: { businessId_userId: { businessId: demoBusiness.id, userId: owner.id } },
+        update: { roleId: demoRole.id, active: true },
+        create: { businessId: demoBusiness.id, userId: owner.id, roleId: demoRole.id },
+      });
+      const existingConfiguration = await tx.businessConfiguration.findUnique({
+        where: { businessId: demoBusiness.id },
+        select: { notificationTemplates: true },
+      });
+      if (existingConfiguration) {
+        const currentTemplates = existingConfiguration.notificationTemplates
+          && typeof existingConfiguration.notificationTemplates === 'object'
+          && !Array.isArray(existingConfiguration.notificationTemplates)
+          ? existingConfiguration.notificationTemplates
+          : {};
+        if (!Object.hasOwn(currentTemplates, 'SUBSCRIPTION_EXPIRING')) {
+          await tx.businessConfiguration.update({
+            where: { businessId: demoBusiness.id },
+            data: {
+              notificationTemplates: {
+                ...currentTemplates,
+                SUBSCRIPTION_EXPIRING: disabledNotificationTemplates.SUBSCRIPTION_EXPIRING,
+              },
+              version: { increment: 1 },
+            },
+          });
+        }
+      }
+      await tx.businessConfiguration.upsert({
+        where: { businessId: demoBusiness.id },
+        update: {},
+        create: {
+          businessId: demoBusiness.id,
+          enabledModules: template.enabledModules,
+          paymentMethods: template.paymentMethods,
+          dashboardWidgets: template.dashboardWidgets,
+          notificationTemplates: disabledNotificationTemplates,
+          publishedAt: new Date(),
+        },
+      });
+      const customerPhone = `9230012345${String(index + 1).padStart(2, '0')}`;
+      const demoCustomer = await tx.customer.upsert({
+        where: { businessId_phoneNormalized: { businessId: demoBusiness.id, phoneNormalized: customerPhone } },
+        update: { name: `Demo ${template.name} Customer`, deletedAt: null },
+        create: {
+          businessId: demoBusiness.id,
+          name: `Demo ${template.name} Customer`,
+          phone: `+${customerPhone}`,
+          phoneNormalized: customerPhone,
+          notes: `${template.name} demo workspace customer`,
+        },
+      });
+      const item = await tx.businessItem.upsert({
+        where: { businessId_typeKey_name: { businessId: demoBusiness.id, typeKey: definition.itemTypeKey, name: definition.itemName } },
+        update: { unit: definition.unit, unitPrice: new Prisma.Decimal(definition.price), active: true },
+        create: {
+          businessId: demoBusiness.id,
+          typeKey: definition.itemTypeKey,
+          name: definition.itemName,
+          description: `Sample ${template.name.toLowerCase()} catalog entry`,
+          unit: definition.unit,
+          unitPrice: new Prisma.Decimal(definition.price),
+        },
+      });
+      const initialStage = workflowStages.find((stage) => stage.isInitial);
+      if (!initialStage) throw new Error(`Template ${definition.key} has no initial workflow stage`);
+      const fieldByKey = new Map(template.fields.map((field) => [field.key, field]));
+      const orderValues = Object.entries(definition.customValues)
+        .flatMap(([key, value]) => {
+          const field = fieldByKey.get(key);
+          if (!field || field.screen === 'order-item') return [];
+          return [customFieldValueData({
+            fieldDefinitionId: field.id,
+            key,
+            type: field.type,
+            value: field.type === 'NUMBER' || field.type === 'CURRENCY' || field.type === 'MEASUREMENT'
+              ? Number(value) : String(value),
+          })];
+        });
+      const itemValues = Object.entries(definition.customValues)
+        .flatMap(([key, value]) => {
+          const field = fieldByKey.get(key);
+          if (!field || field.screen !== 'order-item') return [];
+          return [customFieldValueData({
+            fieldDefinitionId: field.id,
+            key,
+            type: field.type,
+            value: field.type === 'NUMBER' || field.type === 'CURRENCY' || field.type === 'MEASUREMENT'
+              ? Number(value) : String(value),
+          })];
+        });
+      const demoOrder = await tx.order.upsert({
+        where: { businessId_orderNumber: { businessId: demoBusiness.id, orderNumber: definition.orderNumber } },
+        update: {},
+        create: {
+          businessId: demoBusiness.id,
+          customerId: demoCustomer.id,
+          createdById: owner.id,
+          orderNumber: definition.orderNumber,
+          status: 'NEW',
+          workflowStageId: initialStage.id,
+          workflowStageKey: initialStage.key,
+          promisedAt: new Date(Date.now() + definition.dueDays * 86400000),
+          total: new Prisma.Decimal(definition.price),
+          ...(orderValues.length ? { customFieldValues: { create: orderValues } } : {}),
+          items: {
+            create: {
+              itemId: item.id,
+              itemTypeKey: definition.itemTypeKey,
+              itemName: definition.itemName,
+              garmentName: definition.itemName,
+              quantity: 1,
+              unitPrice: new Prisma.Decimal(definition.price),
+              measurementSnapshot: definition.customValues,
+              ...(itemValues.length ? { customFieldValues: { create: itemValues } } : {}),
+            },
+          },
+          statusHistory: { create: { toStatus: 'NEW', changedById: owner.id, note: 'Demo order created' } },
+          workflowHistory: {
+            create: {
+              toStageId: initialStage.id,
+              toStageKey: initialStage.key,
+              toStageLabel: initialStage.label,
+              changedById: owner.id,
+              note: 'Demo order created',
+            },
+          },
+        },
+      });
+      await tx.payment.upsert({
+        where: { businessId_idempotencyKey: { businessId: demoBusiness.id, idempotencyKey: `demo-payment-${definition.key}` } },
+        update: {},
+        create: {
+          businessId: demoBusiness.id,
+          orderId: demoOrder.id,
+          recordedById: owner.id,
+          amount: new Prisma.Decimal((Number(definition.price) * 0.25).toFixed(2)),
+          method: 'CASH',
+          receiptNumber: definition.receiptNumber,
+          idempotencyKey: `demo-payment-${definition.key}`,
+        },
+      });
+    }
+
     const customer = await tx.customer.upsert({
       where: { businessId_phoneNormalized: { businessId: business.id, phoneNormalized: '923001234567' } },
       update: { name: 'Demo Customer', deletedAt: null },
@@ -210,6 +521,43 @@ async function seed() {
     const template = await tx.garmentTemplate.findFirstOrThrow({
       where: { businessId: business.id, name: 'Shalwar Kameez' },
     });
+    const tailorCatalogItem = await tx.businessItem.upsert({
+      where: {
+        businessId_typeKey_name: {
+          businessId: business.id,
+          typeKey: 'garment',
+          name: 'Shalwar Kameez',
+        },
+      },
+      update: { unit: 'garment', unitPrice: new Prisma.Decimal('18000.00'), active: true },
+      create: {
+        businessId: business.id,
+        typeKey: 'garment',
+        name: 'Shalwar Kameez',
+        unit: 'garment',
+        unitPrice: new Prisma.Decimal('18000.00'),
+      },
+    });
+    const shirtCatalogItem = await tx.businessItem.upsert({
+      where: {
+        businessId_typeKey_name: {
+          businessId: business.id,
+          typeKey: 'garment',
+          name: 'Shirt',
+        },
+      },
+      update: { unit: 'garment', unitPrice: new Prisma.Decimal('9500.00'), active: true },
+      create: {
+        businessId: business.id,
+        typeKey: 'garment',
+        name: 'Shirt',
+        unit: 'garment',
+        unitPrice: new Prisma.Decimal('9500.00'),
+      },
+    });
+    const tailorInitialStage = await tx.workflowStage.findFirstOrThrow({
+      where: { templateId: tailorTemplate.id, key: 'NEW', active: true },
+    });
     let profile = await tx.measurementProfile.findFirst({
       where: { businessId: business.id, customerId: customer.id, garmentTemplateId: template.id },
     });
@@ -243,8 +591,13 @@ async function seed() {
           orderNumber: 'KARACHI-000001',
           promisedAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
           total: new Prisma.Decimal('18000.00'),
+          workflowStageId: tailorInitialStage.id,
+          workflowStageKey: tailorInitialStage.key,
           items: {
             create: {
+              itemId: tailorCatalogItem.id,
+              itemTypeKey: 'garment',
+              itemName: 'Shalwar Kameez',
               garmentName: 'Shalwar Kameez',
               quantity: 1,
               unitPrice: new Prisma.Decimal('18000.00'),
@@ -252,8 +605,57 @@ async function seed() {
             },
           },
           statusHistory: { create: { toStatus: 'NEW', changedById: owner.id } },
+          workflowHistory: {
+            create: {
+              toStageId: tailorInitialStage.id,
+              toStageKey: tailorInitialStage.key,
+              toStageLabel: tailorInitialStage.label,
+              changedById: owner.id,
+              note: 'Demo order created',
+            },
+          },
         },
       });
+    }
+    await tx.order.updateMany({
+      where: { id: order.id, businessId: business.id, status: 'NEW', workflowStageId: null },
+      data: { workflowStageId: tailorInitialStage.id, workflowStageKey: tailorInitialStage.key },
+    });
+    const tailorOrderItem = await tx.orderItem.findFirstOrThrow({
+      where: { orderId: order.id, businessId: business.id },
+    });
+    await tx.orderItem.update({
+      where: { id: tailorOrderItem.id },
+      data: {
+        itemId: tailorCatalogItem.id,
+        itemTypeKey: 'garment',
+        itemName: tailorOrderItem.garmentName,
+      },
+    });
+    const tailorOrderFields = await tx.customFieldDefinition.findMany({
+      where: { templateId: tailorTemplate.id, module: 'orders', screen: 'order-item', active: true },
+    });
+    const tailorSampleValues = new Map<string, string | number>([
+      ['garment_name', tailorOrderItem.garmentName],
+      ['quantity', tailorOrderItem.quantity],
+    ]);
+    const tailorFieldValues = tailorOrderFields.flatMap((field) => {
+      const value = tailorSampleValues.get(field.key);
+      if (value === undefined) return [];
+      return [{
+        businessId: business.id,
+        orderItemId: tailorOrderItem.id,
+        ...customFieldValueData({
+          fieldDefinitionId: field.id,
+          key: field.key,
+          type: field.type,
+          value: field.type === 'NUMBER' || field.type === 'CURRENCY' || field.type === 'MEASUREMENT'
+            ? Number(value) : String(value),
+        }),
+      }];
+    });
+    if (tailorFieldValues.length) {
+      await tx.customFieldValue.createMany({ data: tailorFieldValues, skipDuplicates: true });
     }
 
     await tx.payment.upsert({
@@ -310,6 +712,61 @@ async function seed() {
         },
       },
     });
+    const stitchingStage = await tx.workflowStage.findFirst({
+      where: { templateId: tailorTemplate.id, key: 'STITCHING', active: true },
+    });
+    if (stitchingStage) {
+      await tx.order.updateMany({
+        where: { id: secondOrder.id, businessId: business.id, workflowStageId: null },
+        data: { workflowStageId: stitchingStage.id, workflowStageKey: stitchingStage.key },
+      });
+      const historyExists = await tx.orderWorkflowHistory.findFirst({
+        where: { orderId: secondOrder.id, businessId: business.id },
+        select: { id: true },
+      });
+      if (!historyExists) {
+        await tx.orderWorkflowHistory.create({
+          data: {
+            businessId: business.id,
+            orderId: secondOrder.id,
+            toStageId: stitchingStage.id,
+            toStageKey: stitchingStage.key,
+            toStageLabel: stitchingStage.label,
+            changedById: staff.id,
+            note: 'Demo workflow history',
+          },
+        });
+      }
+    }
+    const tailorSecondItem = await tx.orderItem.findFirstOrThrow({
+      where: { orderId: secondOrder.id, businessId: business.id },
+    });
+    await tx.orderItem.update({
+      where: { id: tailorSecondItem.id },
+      data: {
+        itemId: tailorSecondItem.garmentName === 'Shirt' ? shirtCatalogItem.id : tailorCatalogItem.id,
+        itemTypeKey: 'garment',
+        itemName: tailorSecondItem.garmentName,
+      },
+    });
+    const tailorSecondFieldValues = tailorOrderFields.flatMap((field) => {
+      const value = tailorSampleValues.get(field.key);
+      if (value === undefined) return [];
+      return [{
+        businessId: business.id,
+        orderItemId: tailorSecondItem.id,
+        ...customFieldValueData({
+          fieldDefinitionId: field.id,
+          key: field.key,
+          type: field.type,
+          value: field.type === 'NUMBER' || field.type === 'CURRENCY' || field.type === 'MEASUREMENT'
+            ? Number(value) : String(value),
+        }),
+      }];
+    });
+    if (tailorSecondFieldValues.length) {
+      await tx.customFieldValue.createMany({ data: tailorSecondFieldValues, skipDuplicates: true });
+    }
     await tx.payment.upsert({
       where: { businessId_idempotencyKey: { businessId: business.id, idempotencyKey: 'demo-advance-0002' } },
       update: {},
@@ -325,10 +782,10 @@ async function seed() {
     });
 
     return {
-      business: business.name,
-      owner: owner.email,
-      staff: staff.email,
-      platformAdmin: platformAdmin.email,
+      businesses: ['Tailor Demo', ...demoConfigurations.map((definition) => definition.name)],
+      ownerLogin: 'SEED_OWNER_EMAIL',
+      staffLogin: 'SEED_STAFF_EMAIL',
+      platformAdminLogin: 'SEED_PLATFORM_ADMIN_EMAIL',
       customers: [customer.name, secondCustomer.name],
       orders: [order.orderNumber, secondOrder.orderNumber],
     };

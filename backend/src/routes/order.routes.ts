@@ -17,7 +17,7 @@ import { isAllowedOrderTransition } from '../domain/orders.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { assertPlanLimit } from '../plan-limits.js';
-import { queueOrderCreated, queueOrderReady } from '../whatsapp.js';
+import { queueOrderCreated, queueOrderReady, queueOrderStatusChanged } from '../whatsapp.js';
 
 const router = express.Router();
 const idSchema = z.string().uuid();
@@ -419,6 +419,16 @@ router.post('/:orderId/workflow', requireBusinessPermission('orders:transition')
           requestId: req.requestId,
         },
       });
+      await queueOrderStatusChanged(
+        tx,
+        order.id,
+        fromStage.label,
+        toStage.label,
+        `status-changed:${order.id}:${order.version}:${toStage.id}`,
+      );
+      if (Array.isArray(toStage.actions) && toStage.actions.includes('ORDER_READY')) {
+        await queueOrderReady(tx, order.id);
+      }
       const resultOrder = await tx.order.findFirstOrThrow({
         where: { id: orderId, businessId },
         include: { currentWorkflowStage: true, workflowHistory: { orderBy: { createdAt: 'asc' } } },
@@ -536,6 +546,13 @@ router.post('/:orderId/status', requireBusinessPermission('orders:transition'), 
           requestId: req.requestId,
         },
       });
+      await queueOrderStatusChanged(
+        tx,
+        order.id,
+        fromStage?.label ?? order.status,
+        toStage?.label ?? input.toStatus,
+        `status-changed:${order.id}:${order.version}:${input.toStatus}`,
+      );
       if (input.toStatus === 'READY_FOR_PICKUP') await queueOrderReady(tx, order.id);
       return next;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });

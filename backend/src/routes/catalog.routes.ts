@@ -228,9 +228,17 @@ router.patch('/:itemId', requireBusinessPermission('settings:manage'), asyncHand
       const { fields, itemTypes } = await itemFieldDefinitions(tx, businessId);
       const typeKey = input.typeKey ?? existing.typeKey;
       assertItemType(itemTypes, typeKey);
+      const activeFieldKeys = new Set(fields.map((field) => field.key));
       const values = input.customFields === undefined
         ? undefined
-        : validateCustomFieldValues(fields, { ...valueMap(existing), ...input.customFields }, { itemTypeKey: typeKey });
+        : validateCustomFieldValues(
+          fields,
+          {
+            ...Object.fromEntries(Object.entries(valueMap(existing)).filter(([key]) => activeFieldKeys.has(key))),
+            ...input.customFields,
+          },
+          { itemTypeKey: typeKey },
+        );
       const data: Prisma.BusinessItemUpdateManyMutationInput = {
         ...(input.typeKey !== undefined ? { typeKey } : {}),
         ...(input.name !== undefined ? { name: input.name } : {}),

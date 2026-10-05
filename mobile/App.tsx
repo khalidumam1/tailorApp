@@ -68,6 +68,10 @@ type CatalogItem = {
 };
 type WhatsAppNotification = {
   id: string;
+  customerId: string | null;
+  orderId: string | null;
+  paymentId: string | null;
+  recipientName: string | null;
   kind: string;
   status: 'QUEUED' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'NOT_SENT';
   recipientPhone: string;
