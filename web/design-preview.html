@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TailorApp — Design preview (no login needed)</title>
+<link rel="stylesheet" href="/src/styles.css" />
+<style>
+  .preview-banner { position: sticky; top: 0; z-index: 50; padding: 10px 18px; background: #0d7057; color: #fff; font-size: .85rem; font-weight: 700; text-align: center; }
+  .preview-banner span { font-weight: 500; opacity: .9; }
+  svg.i { width: 21px; height: 21px; }
+</style>
+</head>
+<body>
+<div class="preview-banner">Design preview — static mock-up, not connected to real data. <span>Use this to review the new look only.</span></div>
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="brand-lockup" href="#">
+      <span class="brand-mark" aria-hidden="true">T</span>
+      <span><strong>TailorApp</strong><small>Workroom desk</small></span>
+    </a>
+    <div class="shop-switcher">
+      <span class="shop-avatar" aria-hidden="true">R</span>
+      <span><strong>Rizwan Tailors</strong><small>Tailor shop workspace</small></span>
+    </div>
+    <nav aria-label="Main navigation" class="main-nav">
+      <button class="nav-item active">
+        <span class="nav-icon"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.2 12 4l8 7.2"/><path d="M6 9.8V20h12V9.8"/><path d="M10 20v-5.5h4V20"/></svg></span>
+        <span class="nav-label">Overview</span>
+      </button>
+      <button class="nav-item">
+        <span class="nav-icon"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l1.6 2.1L19 7.6l-2.3 2.3-.7-.6V19a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V9.3l-.7.6L5 7.6l2.4-1.5L9 4Z"/></svg></span>
+        <span class="nav-label">Orders</span>
+      </button>
+      <button class="nav-item">
+        <span class="nav-icon"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.6 3.6 20 11l-8.4 8.4a2 2 0 0 1-2.8 0L4 14.6a2 2 0 0 1 0-2.8L12.6 3.6Z"/><path d="M4 14.6 12.6 6"/><circle cx="14.7" cy="8.9" r="1.3"/></svg></span>
+        <span class="nav-label">Catalog</span>
+      </button>
+      <button class="nav-item">
+        <span class="nav-icon"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3.5 20c0-3.3 2.5-5.5 5.5-5.5s5.5 2.2 5.5 5.5"/><circle cx="17" cy="8.5" r="2.3"/><path d="M15.3 14.8c2.6.2 4.7 2.3 4.7 5.2"/></svg></span>
+        <span class="nav-label">Customers</span>
+      </button>
+      <button class="nav-item">
+        <span class="nav-icon"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.3" y="7.8" width="17.4" height="8.4" rx="1.4" transform="rotate(-18 12 12)"/><path d="m8.1 9.8.9 2.4M11.2 8.7l.9 2.4M14.3 7.6l.9 2.4"/></svg></span>
+        <span class="nav-label">Measurements</span>
+      </button>
+      <button class="nav-item">
+        <span class="nav-icon"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6.5" width="18" height="11" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6.3 6.5v11M17.7 6.5v11"/></svg></span>
+        <span class="nav-label">Payments</span>
+      </button>
+      <button class="nav-item">
+        <span class="nav-icon"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4a8 8 0 0 0-6.9 12.1L4 20l4-1a8 8 0 1 0 4-15Z"/><path d="M9 11.2c.3 1.9 2 3.6 3.9 3.9"/></svg></span>
+        <span class="nav-label">WhatsApp notifications</span>
+      </button>
+    </nav>
+    <div class="sidebar-bottom">
+      <span class="connection-dot is-online" aria-hidden="true"></span>
+      <span>Online</span>
+    </div>
+  </aside>
+
+  <main class="workspace">
+    <header class="workspace-header">
+      <div>
+        <p class="eyebrow">Rizwan Tailors</p>
+        <h1>Overview</h1>
+      </div>
+      <div class="user-menu">
+        <span class="user-avatar" aria-hidden="true">A</span>
+        <span class="user-name">Ahmed Khan</span>
+        <button class="button button-quiet"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:17px;height:17px"><path d="M13 4H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6"/><path d="M11 12h9m0 0-3-3m3 3-3 3"/></svg> Sign out</button>
+      </div>
+    </header>
+
+    <section aria-label="Business overview">
+      <div class="metric-grid">
+        <article class="metric-card tone-green">
+          <span class="metric-icon" aria-hidden="true"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          <span class="metric-label">New orders today</span>
+          <strong>6</strong>
+        </article>
+        <article class="metric-card tone-amber">
+          <span class="metric-icon" aria-hidden="true"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.5V12l3.2 2"/></svg></span>
+          <span class="metric-label">Due today</span>
+          <strong>3</strong>
+        </article>
+        <article class="metric-card tone-blue">
+          <span class="metric-icon" aria-hidden="true"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 7.5A7.9 7.9 0 0 0 12 4a8 8 0 0 0-7.6 5.5"/><path d="M5 4.3v3.8h3.8"/><path d="M5 16.5A7.9 7.9 0 0 0 12 20a8 8 0 0 0 7.6-5.5"/><path d="M19 19.7v-3.8h-3.8"/></svg></span>
+          <span class="metric-label">In progress</span>
+          <strong>14</strong>
+        </article>
+        <article class="metric-card tone-rose">
+          <span class="metric-icon" aria-hidden="true"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.2 21 19H3L12 4.2Z"/><path d="M12 10.2v3.6"/></svg></span>
+          <span class="metric-label">Overdue</span>
+          <strong>1</strong>
+        </article>
+        <article class="metric-card tone-violet">
+          <span class="metric-icon" aria-hidden="true"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6.5" width="18" height="11" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6.3 6.5v11M17.7 6.5v11"/></svg></span>
+          <span class="metric-label">Outstanding</span>
+          <strong>PKR 18,500</strong>
+        </article>
+        <article class="metric-card tone-green">
+          <span class="metric-icon" aria-hidden="true"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m4 16 5.2-5.4 3.4 3 6.4-7"/><path d="M14 6.6h5v5"/></svg></span>
+          <span class="metric-label">Collected today</span>
+          <strong>PKR 7,200</strong>
+        </article>
+      </div>
+
+      <div class="content-stack" style="margin-top:20px">
+        <div class="section-heading">
+          <div><p class="eyebrow">Today's work</p><h2>Recent orders</h2><p class="muted">Big, plain cards — customer name, what they ordered, and when it's due, at a glance.</p></div>
+        </div>
+        <div class="order-list">
+          <article class="order-card">
+            <div class="order-card-main">
+              <div class="order-heading">
+                <span class="order-number">#1042</span>
+                <span class="status-pill status-stitching">Stitching</span>
+              </div>
+              <h3>Imran Sheikh — 2 Shalwar Kameez</h3>
+              <p class="muted">Due Friday, 10 Oct · Measured on 2 Oct</p>
+              <ul class="garment-list"><li>Kameez</li><li>Shalwar</li></ul>
+            </div>
+            <div class="order-card-side">
+              <span class="money-total">PKR 4,500</span>
+              <span class="muted">Paid PKR 2,000</span>
+              <div class="row-actions">
+                <button class="button button-secondary">Open order</button>
+                <button class="button button-primary">Next stage</button>
+              </div>
+            </div>
+          </article>
+          <article class="order-card">
+            <div class="order-card-main">
+              <div class="order-heading">
+                <span class="order-number">#1041</span>
+                <span class="status-pill status-ready_for_pickup">Ready for pickup</span>
+              </div>
+              <h3>Sana Malik — Bridal Suit</h3>
+              <p class="muted">Due today · Measured on 28 Sep</p>
+              <ul class="garment-list"><li>Lehnga</li><li>Blouse</li></ul>
+            </div>
+            <div class="order-card-side">
+              <span class="money-total">PKR 22,000</span>
+              <span class="muted">Fully paid</span>
+              <div class="row-actions">
+                <button class="button button-secondary">Open order</button>
+                <button class="button button-primary">Mark collected</button>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div class="empty-state" style="margin-top:6px">
+          <span class="empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:24px;height:24px"><path d="M4 12.5 6.3 5h11.4l2.3 7.5"/><path d="M4 12.5h5.2l1 2.2h3.6l1-2.2H20V18a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 18v-5.5Z"/></svg></span>
+          <h3>No overdue orders</h3>
+          <p class="muted">Great — every promised order is on time. New overdue orders will show up here with a clear warning icon.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+</body>
+</html>

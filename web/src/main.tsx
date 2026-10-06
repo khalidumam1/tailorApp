@@ -32,6 +32,7 @@ import {
 } from './api';
 import { BusinessStructureEditors } from './BusinessStructureEditors';
 import { BusinessTeamAdmin } from './BusinessTeamAdmin';
+import { Icon, type IconName } from './Icons';
 import './styles.css';
 
 type View = 'dashboard' | 'orders' | 'catalog' | 'customers' | 'measurements' | 'payments' | 'notifications' | 'subscription' | 'configuration';
@@ -1500,7 +1501,7 @@ function App() {
               <span className="user-avatar" aria-hidden="true">{currentUser.user.name.trim().charAt(0).toUpperCase()}</span>
               <span className="platform-identity-name">{currentUser.user.name}<small>Super admin</small></span>
             </div>
-            <button className="button button-secondary" onClick={() => void signOut()}>Sign out</button>
+            <button className="button button-secondary" onClick={() => void signOut()}><Icon name="signOut" /> Sign out</button>
           </div>
         </header>
         <section className="platform-welcome">
@@ -1519,8 +1520,8 @@ function App() {
                   aria-current={platformView === item.view ? 'page' : undefined}
                   onClick={() => { setPlatformView(item.view); setError(null); }}
                 >
-                  <span className={`platform-nav-icon icon-${item.view}`} aria-hidden="true" />
-                  {item.label}
+                  <span className="platform-nav-icon"><Icon name={item.view} /></span>
+                  <span className="nav-label">{item.label}</span>
                 </button>
               ))}
             </nav>
@@ -1534,10 +1535,10 @@ function App() {
           <section className="content-stack">
             <div className="section-heading"><div><p className="eyebrow">Workspace management</p><h2>Business directory</h2><p className="muted">Onboard businesses, assign owners, and manage account status.</p></div></div>
             <div className="platform-metrics" aria-label="Business account summary">
-              <article className="platform-metric"><span className="platform-metric-icon">▦</span><span className="platform-metric-label">Registered businesses</span><strong>{loading ? '—' : platformBusinesses.length}</strong></article>
-              <article className="platform-metric"><span className="platform-metric-icon is-green">✓</span><span className="platform-metric-label">Active</span><strong>{loading ? '—' : activeBusinesses}</strong></article>
-              <article className="platform-metric"><span className="platform-metric-icon is-amber">◷</span><span className="platform-metric-label">Pending review</span><strong>{loading ? '—' : pendingBusinesses}</strong></article>
-              <article className="platform-metric"><span className="platform-metric-icon is-rose">!</span><span className="platform-metric-label">Suspended</span><strong>{loading ? '—' : suspendedBusinesses}</strong></article>
+              <article className="platform-metric"><span className="platform-metric-icon"><Icon name="businesses" /></span><span className="platform-metric-label">Registered businesses</span><strong>{loading ? '—' : platformBusinesses.length}</strong></article>
+              <article className="platform-metric"><span className="platform-metric-icon is-green"><Icon name="check" /></span><span className="platform-metric-label">Active</span><strong>{loading ? '—' : activeBusinesses}</strong></article>
+              <article className="platform-metric"><span className="platform-metric-icon is-amber"><Icon name="clock" /></span><span className="platform-metric-label">Pending review</span><strong>{loading ? '—' : pendingBusinesses}</strong></article>
+              <article className="platform-metric"><span className="platform-metric-icon is-rose"><Icon name="warning" /></span><span className="platform-metric-label">Suspended</span><strong>{loading ? '—' : suspendedBusinesses}</strong></article>
             </div>
             {grants.has('platform:businesses:manage') && (
               <form className="panel form-panel platform-create-panel" onSubmit={createBusiness}>
@@ -1897,8 +1898,8 @@ function App() {
         <nav aria-label="Main navigation" className="main-nav">
           {visibleNavigation.map((item) => (
             <button key={item.view} className={view === item.view ? 'nav-item active' : 'nav-item'} onClick={() => { setView(item.view); setError(null); }}>
-              <span className={`nav-icon icon-${item.view}`} aria-hidden="true" />
-              {item.label}
+              <span className="nav-icon"><Icon name={item.view} /></span>
+              <span className="nav-label">{item.label}</span>
             </button>
           ))}
         </nav>
@@ -1916,7 +1917,7 @@ function App() {
           <div className="user-menu">
             <span className="user-avatar" aria-hidden="true">{currentUser?.user.name.slice(0, 1).toUpperCase()}</span>
             <span className="user-name">{currentUser?.user.name}</span>
-            <button className="button button-quiet" onClick={() => void signOut()}>Sign out</button>
+            <button className="button button-quiet" onClick={() => void signOut()}><Icon name="signOut" /> Sign out</button>
           </div>
         </header>
 
@@ -1929,12 +1930,12 @@ function App() {
             {loading && !dashboard ? <LoadingState /> : dashboard ? (
               <>
                 <div className="metric-grid">
-                  {widgetEnabled('newOrders') && <MetricCard label={`New ${term('orders', 'orders').toLowerCase()} today`} value={String(dashboard.newOrders)} icon="＋" />}
-                  {widgetEnabled('dueToday') && <MetricCard label="Due today" value={String(dashboard.dueToday)} icon="◷" tone="amber" />}
-                  {widgetEnabled('inProgress') && <MetricCard label="In progress" value={String(dashboard.inProgress)} icon="⌁" tone="blue" />}
-                  {widgetEnabled('overdue') && <MetricCard label="Overdue" value={String(dashboard.overdue)} icon="!" tone="rose" />}
-                  {widgetEnabled('outstanding') && permissions.has('payments:read') && <MetricCard label="Outstanding" value={money(dashboard.outstanding, businessConfiguration?.business.currency)} icon="₨" tone="violet" />}
-                  {widgetEnabled('collectedToday') && permissions.has('payments:read') && <MetricCard label="Collected today" value={money(dashboard.collectedToday, businessConfiguration?.business.currency)} icon="↗" tone="green" />}
+                  {widgetEnabled('newOrders') && <MetricCard label={`New ${term('orders', 'orders').toLowerCase()} today`} value={String(dashboard.newOrders)} icon="plus" />}
+                  {widgetEnabled('dueToday') && <MetricCard label="Due today" value={String(dashboard.dueToday)} icon="clock" tone="amber" />}
+                  {widgetEnabled('inProgress') && <MetricCard label="In progress" value={String(dashboard.inProgress)} icon="progress" tone="blue" />}
+                  {widgetEnabled('overdue') && <MetricCard label="Overdue" value={String(dashboard.overdue)} icon="warning" tone="rose" />}
+                  {widgetEnabled('outstanding') && permissions.has('payments:read') && <MetricCard label="Outstanding" value={money(dashboard.outstanding, businessConfiguration?.business.currency)} icon="payments" tone="violet" />}
+                  {widgetEnabled('collectedToday') && permissions.has('payments:read') && <MetricCard label="Collected today" value={money(dashboard.collectedToday, businessConfiguration?.business.currency)} icon="trendUp" tone="green" />}
                 </div>
                 {businessConfiguration?.template.key === 'tailor' && <section className="panel dashboard-note">
                   <div>
@@ -2599,8 +2600,8 @@ function App() {
   );
 }
 
-function MetricCard({ label, value, icon, tone = 'green' }: { label: string; value: string; icon: string; tone?: string }) {
-  return <article className={`metric-card tone-${tone}`}><span className="metric-icon" aria-hidden="true">{icon}</span><span className="metric-label">{label}</span><strong>{value}</strong></article>;
+function MetricCard({ label, value, icon, tone = 'green' }: { label: string; value: string; icon: IconName; tone?: string }) {
+  return <article className={`metric-card tone-${tone}`}><span className="metric-icon" aria-hidden="true"><Icon name={icon} /></span><span className="metric-label">{label}</span><strong>{value}</strong></article>;
 }
 
 function StatusPill({ status }: { status: string }) {
@@ -2720,7 +2721,7 @@ function LoadingState() {
 }
 
 function EmptyState({ title, detail, action, onAction }: { title: string; detail?: string; action?: string; onAction?: () => void }) {
-  return <div className="empty-state"><span className="empty-icon" aria-hidden="true">⌂</span><h3>{title}</h3>{detail && <p className="muted">{detail}</p>}{action && onAction && <button className="button button-secondary" onClick={onAction}>{action}</button>}</div>;
+  return <div className="empty-state"><span className="empty-icon" aria-hidden="true"><Icon name="inbox" /></span><h3>{title}</h3>{detail && <p className="muted">{detail}</p>}{action && onAction && <button className="button button-secondary" onClick={onAction}>{action}</button>}</div>;
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>);
