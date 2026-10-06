@@ -4,6 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>TailorApp — Design preview (no login needed)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
 <link rel="stylesheet" href="/src/styles.css" />
 <style>
   .preview-banner { position: sticky; top: 0; z-index: 50; padding: 10px 18px; background: #0d7057; color: #fff; font-size: .85rem; font-weight: 700; text-align: center; }
@@ -155,6 +158,50 @@
           <span class="empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:24px;height:24px"><path d="M4 12.5 6.3 5h11.4l2.3 7.5"/><path d="M4 12.5h5.2l1 2.2h3.6l1-2.2H20V18a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 18v-5.5Z"/></svg></span>
           <h3>No overdue orders</h3>
           <p class="muted">Great — every promised order is on time. New overdue orders will show up here with a clear warning icon.</p>
+        </div>
+      </div>
+
+      <div class="content-stack" style="margin-top:26px">
+        <div class="section-heading">
+          <div><p class="eyebrow">Design system</p><h2>Components</h2><p class="muted">Buttons, inputs, tables, statuses and messages — all from the same tokens.</p></div>
+          <form class="search-form" onsubmit="return false"><input placeholder="Search customers or orders" /><button class="button button-secondary" type="submit">Search</button></form>
+        </div>
+
+        <section class="panel form-panel">
+          <div class="panel-heading">
+            <span class="panel-kicker">New order</span>
+            <h3>Customer and garment details</h3>
+            <p class="muted">Labelled fields, 42px targets, one clear primary action.</p>
+          </div>
+          <div class="form-grid">
+            <label>Customer name<input value="Imran Sheikh" /></label>
+            <label>Phone number<input value="0300 1234567" /></label>
+            <label>Garment type<select><option>Shalwar Kameez</option><option>Waistcoat</option></select></label>
+            <label>Promised date<input type="date" value="2026-10-10" /></label>
+            <label class="span-all">Notes<textarea>Loose cuffs, same as last order.</textarea></label>
+          </div>
+          <div class="platform-form-footer">
+            <p class="fine-print">Changes are saved to this shop only.</p>
+            <div class="row-actions">
+              <button class="button button-quiet">Cancel</button>
+              <button class="button button-primary">Create order</button>
+            </div>
+          </div>
+        </section>
+
+        <div class="alert alert-success" role="status">Order #1042 moved to Stitching.</div>
+        <div class="alert alert-error" role="alert">Payment could not be recorded — amount is higher than the balance due.</div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Due</th><th>Total</th><th>Balance</th></tr></thead>
+            <tbody>
+              <tr><td><strong>#1042</strong></td><td>Imran Sheikh</td><td><span class="status-pill status-stitching">Stitching</span></td><td>10 Oct 2026</td><td>PKR 4,500</td><td>PKR 2,500</td></tr>
+              <tr><td><strong>#1041</strong></td><td>Sana Malik</td><td><span class="status-pill status-ready_for_pickup">Ready for pickup</span></td><td>6 Oct 2026</td><td>PKR 22,000</td><td>PKR 0</td></tr>
+              <tr><td><strong>#1039</strong></td><td>Bilal Ahmed</td><td><span class="status-pill status-new">New</span></td><td>14 Oct 2026</td><td>PKR 3,200</td><td>PKR 3,200</td></tr>
+              <tr><td><strong>#1035</strong></td><td>Hira Qureshi</td><td><span class="status-pill status-cancelled">Cancelled</span></td><td>—</td><td>PKR 0</td><td class="negative-money">PKR -1,000</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>
