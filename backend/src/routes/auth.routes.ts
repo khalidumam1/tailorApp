@@ -86,6 +86,10 @@ router.post('/login', loginLimiter, asyncHandler(async (req, res) => {
       memberships: {
         where: { active: true, business: { status: 'ACTIVE' } },
         include: { business: true },
+        // Without an explicit order PostgreSQL returns memberships in an arbitrary
+        // (physical row) order, so the business picker reshuffled on every sign-in.
+        // Owners pick their shop by position/recognition, so keep it stable.
+        orderBy: { business: { name: 'asc' } },
       },
     },
   });

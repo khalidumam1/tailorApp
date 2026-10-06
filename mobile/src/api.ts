@@ -1,6 +1,20 @@
 import * as SecureStore from 'expo-secure-store';
 
-export const API_BASE_URL = 'https://tailorapp.on.shiper.app/backend';
+// `mobile/.env.example` documents EXPO_PUBLIC_API_BASE_URL, but this value used to be
+// hardcoded, so the setting had no effect and the app could only ever talk to one hosted
+// backend — local development, staging and self-hosted deployments were impossible.
+// Expo inlines EXPO_PUBLIC_* variables at build time. The previous literal stays as the
+// fallback so existing builds keep working when nothing is configured.
+const DEFAULT_API_BASE_URL = 'https://tailorapp.on.shiper.app/backend';
+
+function resolveApiBaseUrl(): string {
+  const configured = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
+  if (!configured) return DEFAULT_API_BASE_URL;
+  // A trailing slash would produce `//api/v1/...` once a route is appended.
+  return configured.replace(/\/+$/, '');
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 const SESSION_KEY = 'tailorapp.session.v1';
 const ACCESS_TOKEN_LIFETIME_MS = 15 * 60 * 1000;
 

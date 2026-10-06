@@ -1754,7 +1754,21 @@ function AppContent() {
         ) : null}
         </ScrollView>
 
-        <View style={styles.tabBar}>
+        {/*
+          Up to eight tabs can be visible. They used to share one fixed row with
+          `flex: 1`, so on a 360dp phone each tab was ~45dp wide and every longer
+          label ("Measurements", "Notifications", and their Urdu equivalents) was
+          truncated to a few characters — exactly the text a non-confident reader
+          depends on. The row now scrolls horizontally and each tab keeps a width
+          that fits its label.
+        */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.tabBar}
+          contentContainerStyle={styles.tabBarContent}
+          keyboardShouldPersistTaps="handled"
+        >
           {pages.map((item) => {
             const active = page === item.id;
             return (
@@ -1771,7 +1785,7 @@ function AppContent() {
               </Pressable>
             );
           })}
-        </View>
+        </ScrollView>
       </View>
     </SafeAreaView>
   );
@@ -1790,31 +1804,31 @@ const styles = StyleSheet.create({
   brandLetter: { color: '#FFFFFF', fontSize: 25, fontWeight: '900' },
   brandName: { color: '#0D7057', fontSize: 18, fontWeight: '900', letterSpacing: 0.3 },
   tagline: { color: '#55665D', fontSize: 15, marginTop: 6, marginBottom: 28, lineHeight: 21 },
-  shopName: { color: '#55665D', fontSize: 13, marginTop: 3 },
+  shopName: { color: '#55665D', fontSize: 15, marginTop: 3 },
   connection: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 11, paddingVertical: 8, backgroundColor: '#F2F6F3', borderWidth: 1, borderColor: '#E4EBE6', borderRadius: 18 },
   connectionDot: { width: 8, height: 8, borderRadius: 4 },
   onlineDot: { backgroundColor: '#17966B' },
   offlineDot: { backgroundColor: '#C68A31' },
-  connectionText: { color: '#45574D', fontSize: 13, fontWeight: '700' },
+  connectionText: { color: '#45574D', fontSize: 15, fontWeight: '700' },
   content: { flexGrow: 1, paddingHorizontal: 17, paddingTop: 18, paddingBottom: 24 },
   syncCard: { backgroundColor: '#EAF3EE', borderWidth: 1, borderColor: '#DCEAE1', borderRadius: 14, padding: 14, flexDirection: 'row', alignItems: 'center', marginBottom: 21 },
   attentionCard: { backgroundColor: '#FCEDEA', borderWidth: 1, borderColor: '#F1D8D2', borderRadius: 12, padding: 13, marginTop: -12, marginBottom: 16 },
-  attentionTitle: { color: '#8D342B', fontSize: 13, fontWeight: '800', marginBottom: 3 },
+  attentionTitle: { color: '#8D342B', fontSize: 15, fontWeight: '800', marginBottom: 3 },
   syncCopy: { flex: 1, paddingRight: 8 },
-  syncTitle: { color: '#245A45', fontSize: 14, fontWeight: '800' },
-  syncMeta: { color: '#5E7069', fontSize: 12.5, marginTop: 4 },
-  syncError: { color: '#A54334', fontSize: 12.5, marginTop: 4 },
+  syncTitle: { color: '#245A45', fontSize: 15, fontWeight: '800' },
+  syncMeta: { color: '#5E7069', fontSize: 14, marginTop: 4 },
+  syncError: { color: '#A54334', fontSize: 14, marginTop: 4 },
   syncButton: { backgroundColor: '#FFFFFF', borderRadius: 10, paddingHorizontal: 11, paddingVertical: 8 },
-  syncButtonText: { color: '#0D7057', fontSize: 13, fontWeight: '800' },
+  syncButtonText: { color: '#0D7057', fontSize: 15, fontWeight: '800' },
   pageTitle: { color: '#182A25', fontSize: 27, fontWeight: '900', letterSpacing: -0.4, marginBottom: 14 },
-  subtitle: { color: '#55665D', fontSize: 14.5, marginTop: -6, marginBottom: 14, lineHeight: 20 },
+  subtitle: { color: '#55665D', fontSize: 15, marginTop: -6, marginBottom: 14, lineHeight: 20 },
   metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
   metricCard: { width: '48%', flexGrow: 1, minHeight: 92, borderRadius: 14, padding: 16, backgroundColor: '#FFFFFF', borderColor: '#E3E9E5', borderWidth: 1, shadowColor: '#18372B', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.045, shadowRadius: 9, elevation: 2 },
   metricValue: { color: '#0D7057', fontSize: 28, fontWeight: '900', letterSpacing: -0.5 },
-  metricLabel: { color: '#4E5F56', fontSize: 13, fontWeight: '600', marginTop: 5 },
+  metricLabel: { color: '#4E5F56', fontSize: 15, fontWeight: '600', marginTop: 5 },
   moneyCard: { backgroundColor: '#17362E', borderRadius: 15, padding: 17, marginBottom: 23, shadowColor: '#18372B', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 3 },
   moneyRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 5 },
-  moneyLabel: { color: '#C4D9CE', fontSize: 14 },
+  moneyLabel: { color: '#C4D9CE', fontSize: 15 },
   moneyValue: { color: '#FFFFFF', fontSize: 17, fontWeight: '800' },
   sectionTitle: { color: '#263B32', fontSize: 18, fontWeight: '800', marginTop: 6, marginBottom: 11 },
   pageHeadingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 10 },
@@ -1822,7 +1836,7 @@ const styles = StyleSheet.create({
   paymentForm: { borderTopWidth: 1, borderTopColor: '#E7EEEA', marginTop: 9, paddingTop: 10 },
   heading: { color: '#182A25', fontSize: 21, fontWeight: '800', marginBottom: 14 },
   field: { marginBottom: 12 },
-  fieldLabel: { color: '#3C544A', fontSize: 14, fontWeight: '800', marginBottom: 7 },
+  fieldLabel: { color: '#3C544A', fontSize: 15, fontWeight: '800', marginBottom: 7 },
   input: { minHeight: 50, borderRadius: 10, borderWidth: 1, borderColor: '#D8E2DC', paddingHorizontal: 12, color: '#203B33', fontSize: 16, backgroundColor: '#FFFFFF' },
   multiline: { minHeight: 76, textAlignVertical: 'top', paddingTop: 11 },
   actionButton: { minHeight: 52, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: '#0D7057', paddingHorizontal: 15, paddingVertical: 11, marginTop: 5 },
@@ -1832,38 +1846,43 @@ const styles = StyleSheet.create({
   disabled: { opacity: 0.5 },
   pressed: { opacity: 0.75 },
   spinner: { marginTop: 10 },
-  errorText: { color: '#A33E32', fontSize: 14, lineHeight: 20, marginTop: 8 },
-  errorBanner: { color: '#9F3A30', backgroundColor: '#FCEDEA', borderRadius: 10, padding: 12, fontSize: 14, lineHeight: 19, marginBottom: 13 },
-  serverNote: { color: '#6E7D76', fontSize: 12, marginTop: 2 },
-  offlineHint: { color: '#56675D', fontSize: 13.5, lineHeight: 19, marginBottom: 7 },
+  errorText: { color: '#A33E32', fontSize: 15, lineHeight: 20, marginTop: 8 },
+  errorBanner: { color: '#9F3A30', backgroundColor: '#FCEDEA', borderRadius: 10, padding: 12, fontSize: 15, lineHeight: 19, marginBottom: 13 },
+  serverNote: { color: '#6E7D76', fontSize: 14, marginTop: 2 },
+  offlineHint: { color: '#56675D', fontSize: 15, lineHeight: 19, marginBottom: 7 },
   listCard: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E3E9E5', borderRadius: 13, padding: 14, flexDirection: 'row', alignItems: 'center', marginBottom: 9, gap: 11 },
   orderCard: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E3E9E5', borderRadius: 15, padding: 15, marginBottom: 10 },
   orderTop: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 7 },
   listMain: { flex: 1 },
   listTitle: { color: '#263B32', fontSize: 15.5, fontWeight: '800' },
-  listMeta: { color: '#56675D', fontSize: 13, marginTop: 4 },
+  listMeta: { color: '#56675D', fontSize: 15, marginTop: 4 },
   listPrice: { color: '#0D7057', fontSize: 15, fontWeight: '900' },
   avatar: { height: 40, width: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: '#E7F2EB' },
   avatarText: { color: '#0D7057', fontSize: 16, fontWeight: '900' },
   syncBadge: { color: '#7C9A89', fontWeight: '900' },
-  pendingLabel: { color: '#8F5C1E', fontSize: 12.5, fontWeight: '700', marginBottom: 4 },
+  pendingLabel: { color: '#8F5C1E', fontSize: 14, fontWeight: '700', marginBottom: 4 },
   emptyCard: { backgroundColor: '#FFFFFF', borderRadius: 15, padding: 22, borderWidth: 1, borderColor: '#E8EEEA' },
   emptyText: { color: '#58685F', fontSize: 15, textAlign: 'center', lineHeight: 21 },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginBottom: 12 },
   chip: { borderWidth: 1, borderColor: '#DCE6DF', borderRadius: 18, paddingHorizontal: 11, paddingVertical: 7, backgroundColor: '#FFFFFF' },
   chipSelected: { backgroundColor: '#E7F2EB', borderColor: '#91BFA7' },
-  chipText: { color: '#45564C', fontSize: 13.5, fontWeight: '700' },
+  chipText: { color: '#45564C', fontSize: 15, fontWeight: '700' },
   chipTextSelected: { color: '#0D7057' },
   twoFields: { flexDirection: 'row', gap: 10 },
   halfField: { flex: 1 },
   languageRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 },
   languageChip: { backgroundColor: '#FFFFFF', borderRadius: 18, paddingHorizontal: 11, paddingVertical: 8, borderWidth: 1, borderColor: '#E3EBE5' },
   languageChipSelected: { backgroundColor: '#E7F2EB', borderColor: '#91BFA7' },
-  languageChipText: { color: '#3C544A', fontSize: 13, fontWeight: '700' },
+  languageChipText: { color: '#3C544A', fontSize: 15, fontWeight: '700' },
   radio: { color: '#0D7057', fontSize: 17 },
-  tabBar: { minHeight: 76, paddingTop: 6, paddingBottom: 8, paddingHorizontal: 4, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#E3E9E5' },
-  tab: { flex: 1, minHeight: 60, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 4 },
+  // The bar itself must not grow: `flexGrow: 0` keeps the horizontal ScrollView
+  // pinned to the bottom instead of expanding to fill the screen.
+  tabBar: { flexGrow: 0, flexShrink: 0, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#E3E9E5' },
+  tabBarContent: { minHeight: 76, paddingTop: 6, paddingBottom: 8, paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center', gap: 2 },
+  // Sized to the label rather than an equal share of the row, so longer labels
+  // stay fully readable; minWidth keeps a comfortable tap target.
+  tab: { minWidth: 76, minHeight: 60, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 10 },
   tabActive: { backgroundColor: '#E7F4EE' },
-  tabLabel: { color: '#5E6F67', fontSize: 11.5, fontWeight: '700' },
+  tabLabel: { color: '#5E6F67', fontSize: 14, fontWeight: '700' },
   tabLabelActive: { color: '#0D7057', fontWeight: '800' },
 });

@@ -102,3 +102,37 @@ Both apps still type-check cleanly (`tsc --noEmit`) after these changes.
    (`BusinessStructureEditors.tsx`, `BusinessTeamAdmin.tsx`) for full
    consistency — lower priority since those are typically used by platform
    staff, not the shop owner.
+
+---
+
+## Second pass — verified against a running stack
+
+The first pass raised *some* sizes but left a long tail of small text and
+undersized controls. Measured again and enforced a hard floor.
+
+**Web (`web/src/styles.css`)**
+- 59 `font-size` rules were still below 14px (the smallest was **9.6px**).
+  Applied a floor that preserves the existing hierarchy: anything under
+  ~11px → 12.8px, ~11–12.8px → 13.6px, ~12.8–14px → 14.7px. Nothing was
+  shrunk.
+- 12 interactive controls (quiet buttons, row actions, inputs, filter
+  selects, platform nav items, the reject-payment field) had tap targets of
+  36–43px. All are now **44px minimum**.
+
+**Mobile (`mobile/App.tsx`)**
+- 20 text styles were below 14px (smallest **11px**). Floor is now 14px,
+  with primary data rows at 15px.
+- **Real layout bug fixed:** the bottom tab bar put up to eight tabs in one
+  fixed row with `flex: 1`. On a 360dp phone that is ~45dp per tab, so
+  "Measurements"/"Notifications" (and the Urdu labels) were truncated to a
+  few characters — the exact text a non-confident reader relies on. The bar
+  now scrolls horizontally with a `minWidth: 76` per tab, so every label is
+  fully readable. This is the same class of bug the first pass fixed on web.
+
+### Why the floor, not just "bigger"
+A single blanket size would have flattened the hierarchy that tells a
+shopkeeper *what matters most on this screen*. The mapping above lifts the
+smallest text the most and leaves already-comfortable text alone, so the
+amount due and the order status still read as the biggest things on screen.
+
+Both apps type-check cleanly and the web bundle builds after these changes.
