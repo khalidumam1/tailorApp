@@ -7,14 +7,16 @@
     "node": ">=22"
   },
   "scripts": {
-    "start": "expo start",
-    "android": "expo run:android",
-    "ios": "expo run:ios",
-    "typecheck": "tsc --noEmit"
+    "start": "npm run build --prefix shared && expo start",
+    "android": "npm run build --prefix shared && expo run:android",
+    "ios": "npm run build --prefix shared && expo run:ios",
+    "typecheck": "npm run build --prefix shared && tsc --noEmit",
+    "build:shared": "npm run build --prefix shared"
   },
   "dependencies": {
     "@morrowdigital/watermelondb-expo-plugin": "2.3.3",
     "@nozbe/watermelondb": "0.28.0",
+    "@tailor/shared": "file:./shared",
     "expo": "57.0.26",
     "expo-build-properties": "~57.0.22",
     "expo-crypto": "57.0.3",

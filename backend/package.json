@@ -7,11 +7,11 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "npm run build:shared && node scripts/dev-server.mjs",
-    "build": "npm run build:shared && tsc -p tsconfig.json",
+    "dev": "npm run build:shared && npm run db:generate && node scripts/dev-server.mjs",
+    "build": "npm run build:shared && npm run db:generate && tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "typecheck": "npm run build:shared && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.seed.json",
-    "test": "tsx --test test/*.test.ts",
+    "typecheck": "npm run build:shared && npm run db:generate && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.seed.json",
+    "test": "npm run db:generate && tsx --test test/*.test.ts",
     "test:db": "tsx scripts/test-db.ts",
     "test:acceptance:templates": "tsx --test test/business-templates.acceptance.test.ts",
     "db:generate": "prisma generate",
