@@ -8,6 +8,66 @@ loadEnvironmentFile();
 
 const prisma = new PrismaClient();
 
+/**
+ * Billing enforcement is switched on globally by the subscription migration, and
+ * `assertSubscriptionAccess` treats "no entitlement row" as an expired subscription.
+ * `POST /api/v1/platform/businesses` therefore provisions a trial whenever it onboards a
+ * business. Seeded businesses are created straight through Prisma and used to skip that
+ * step, which left every demo tenant able to read but unable to write: creating a
+ * customer, order, payment, catalog item or staff member failed with HTTP 402
+ * SUBSCRIPTION_REQUIRED. Mirror the onboarding behaviour here so a freshly seeded
+ * environment is actually usable. Idempotent, so re-running the seed is safe.
+ */
+async function ensureTrialSubscription(tx: Prisma.TransactionClient, businessId: string): Promise<void> {
+  const now = new Date();
+  const active = await tx.subscription.findFirst({
+    where: {
+      businessId,
+      status: { in: ['TRIAL', 'ACTIVE'] },
+      startsAt: { lte: now },
+      graceUntil: { gt: now },
+    },
+  });
+  if (active) return;
+
+  const plan = await tx.subscriptionPlan.findFirst({ where: { active: true, isDefault: true } })
+    ?? await tx.subscriptionPlan.findFirst({ where: { active: true } });
+  if (!plan) return;
+
+  const billing = await tx.platformSetting.findUnique({ where: { key: 'billing' }, select: { value: true } });
+  const settingValue = billing?.value;
+  const graceDays = typeof settingValue === 'object' && settingValue !== null
+    && 'gracePeriodDays' in settingValue && typeof settingValue.gracePeriodDays === 'number'
+    ? settingValue.gracePeriodDays
+    : 7;
+  // A zero-trial default plan must still yield a usable demo window.
+  const trialDays = plan.trialDays && plan.trialDays > 0 ? plan.trialDays : 30;
+
+  const startsAt = now;
+  const endsAt = new Date(startsAt);
+  endsAt.setUTCDate(endsAt.getUTCDate() + trialDays);
+
+  const subscription = await tx.subscription.create({
+    data: {
+      businessId,
+      planId: plan.id,
+      status: 'TRIAL',
+      cycle: 'MONTHLY',
+      startsAt,
+      endsAt,
+      graceUntil: new Date(endsAt.getTime() + graceDays * 86400000),
+    },
+  });
+  await tx.subscriptionEvent.create({
+    data: {
+      businessId,
+      subscriptionId: subscription.id,
+      action: 'subscription.trial_provisioned',
+      metadata: { trialDays, plan: plan.name, source: 'seed' },
+    },
+  });
+}
+
 async function seed() {
   if (process.env.NODE_ENV === 'production') {
     throw new Error('Demo seed data cannot be created in production');
@@ -57,6 +117,7 @@ async function seed() {
       where: { id: business.id, receiptSequence: { lt: 2 } },
       data: { receiptSequence: 2 },
     });
+    await ensureTrialSubscription(tx, business.id);
     const existingOwner = await tx.user.findUnique({
       where: { email: ownerEmail },
       include: { memberships: { select: { business: { select: { slug: true } }, role: { select: { name: true } } } } },
@@ -315,6 +376,7 @@ async function seed() {
           status: 'ACTIVE',
         },
       });
+      await ensureTrialSubscription(tx, demoBusiness.id);
       let workflowStages = await tx.workflowStage.findMany({
         where: { businessId: demoBusiness.id, active: true },
         orderBy: { sortOrder: 'asc' },
