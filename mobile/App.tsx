@@ -1114,7 +1114,7 @@ function AppContent() {
     return (
       <SafeAreaView style={styles.centered}>
         <StatusBar style="dark" />
-        <ActivityIndicator color="#116B55" size="large" />
+        <ActivityIndicator color="#0D7057" size="large" />
         <Text style={styles.subtitle}>{copy.loading}</Text>
       </SafeAreaView>
     );
@@ -1172,7 +1172,7 @@ function AppContent() {
                 </>
               )}
               {shopChoices.length && error ? <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text> : null}
-              {authBusy ? <ActivityIndicator color="#116B55" style={styles.spinner} /> : null}
+              {authBusy ? <ActivityIndicator color="#0D7057" style={styles.spinner} /> : null}
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -1846,16 +1846,16 @@ const styles = StyleSheet.create({
   emptyText: { color: '#74847B', fontSize: 13, textAlign: 'center', lineHeight: 20 },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginBottom: 12 },
   chip: { borderWidth: 1, borderColor: '#DCE6DF', borderRadius: 18, paddingHorizontal: 11, paddingVertical: 7, backgroundColor: '#FFFFFF' },
-  chipSelected: { backgroundColor: '#E7F2EB', borderColor: '#95BFA9' },
+  chipSelected: { backgroundColor: '#E7F2EB', borderColor: '#91BFA7' },
   chipText: { color: '#62746A', fontSize: 11, fontWeight: '700' },
-  chipTextSelected: { color: '#176B54' },
+  chipTextSelected: { color: '#0D7057' },
   twoFields: { flexDirection: 'row', gap: 10 },
   halfField: { flex: 1 },
   languageRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 },
   languageChip: { backgroundColor: '#FFFFFF', borderRadius: 18, paddingHorizontal: 11, paddingVertical: 8, borderWidth: 1, borderColor: '#E3EBE5' },
-  languageChipSelected: { backgroundColor: '#E7F2EB', borderColor: '#9ABFA9' },
+  languageChipSelected: { backgroundColor: '#E7F2EB', borderColor: '#91BFA7' },
   languageChipText: { color: '#456155', fontSize: 10, fontWeight: '700' },
-  radio: { color: '#176B54', fontSize: 17 },
+  radio: { color: '#0D7057', fontSize: 17 },
   tabBar: { minHeight: 66, paddingTop: 5, paddingBottom: 5, paddingHorizontal: 5, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#E3E9E5' },
   tab: { flex: 1, minHeight: 50, alignItems: 'center', justifyContent: 'center', gap: 4 },
   tabMark: { width: 18, height: 3, borderRadius: 2, backgroundColor: 'transparent' },

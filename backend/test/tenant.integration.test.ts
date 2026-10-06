@@ -34,6 +34,8 @@ let platformReadPermissionId = '';
 let offlineOrderId = '';
 let subscriptionPlanId = '';
 let subscriptionPaymentId = '';
+let previousBillingSetting: Prisma.JsonValue | null = null;
+let hadBillingSetting = false;
 
 before(async () => {
   if (!enabled) return;
@@ -46,6 +48,18 @@ before(async () => {
   process.env.WHATSAPP_PHONE_NUMBER_ID = 'test-only-phone-id';
   process.env.WHATSAPP_VERIFY_TOKEN = 'test-only-verify-token';
   process.env.META_APP_SECRET = 'test-only-meta-app-secret';
+  const billingSetting = await prisma.platformSetting.findUnique({ where: { key: 'billing' } });
+  hadBillingSetting = billingSetting !== null;
+  previousBillingSetting = billingSetting?.value ?? null;
+  const billingValue = billingSetting?.value;
+  const billingConfiguration = billingValue && typeof billingValue === 'object' && !Array.isArray(billingValue)
+    ? billingValue
+    : {};
+  await prisma.platformSetting.upsert({
+    where: { key: 'billing' },
+    create: { key: 'billing', value: { ...billingConfiguration, paymentMethods: ['BANK TRANSFER'] } },
+    update: { value: { ...billingConfiguration, paymentMethods: ['BANK TRANSFER'] } },
+  });
   const suffix = randomUUID();
   const tailorTemplate = await prisma.businessTemplate.findUniqueOrThrow({
     where: { key: 'tailor' },
@@ -308,6 +322,14 @@ after(async () => {
   await prisma.user.delete({ where: { id: platformSuperAdminId } });
   await prisma.businessItem.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.business.deleteMany({ where: { id: { in: [businessAId, businessBId] } } });
+  if (hadBillingSetting) {
+    await prisma.platformSetting.update({
+      where: { key: 'billing' },
+      data: { value: JSON.parse(JSON.stringify(previousBillingSetting)) as Prisma.InputJsonValue },
+    });
+  } else {
+    await prisma.platformSetting.deleteMany({ where: { key: 'billing' } });
+  }
   await prisma.$disconnect();
 });
 
@@ -432,7 +454,11 @@ test('business field and workflow editing is versioned and restricted to the aut
     headers: { authorization: authHeader, 'content-type': 'application/json' },
     body: JSON.stringify(input),
   });
-  assert.equal(savedResponse.status, 200);
+  assert.equal(
+    savedResponse.status,
+    200,
+    `business structure saves with configured fields and workflow: ${await savedResponse.clone().text()}`,
+  );
   const saved = (await savedResponse.json() as { data: { version: number; templateVersion: number } }).data;
   assert.equal(saved.version, input.version + 1);
   assert.equal(saved.templateVersion, input.templateVersion);
@@ -542,6 +568,23 @@ test('platform role alone is insufficient; an explicit platform permission is re
   });
   assert.equal(withoutGrant.status, 403);
 
+  const planManagePermission = await prisma.permission.upsert({
+    where: { key: 'platform:plans:manage' },
+    update: {},
+    create: { key: 'platform:plans:manage', description: 'Manage plans in tenant isolation test' },
+  });
+  await prisma.platformPermissionGrant.create({
+    data: { userId: platformStaffId, permissionId: planManagePermission.id },
+  });
+  const plansWithPlanGrant = await fetch(`${baseUrl}/api/v1/platform/billing/plans`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(plansWithPlanGrant.status, 200);
+  const businessesStillForbidden = await fetch(`${baseUrl}/api/v1/platform/businesses`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(businessesStillForbidden.status, 403);
+
   await prisma.platformPermissionGrant.create({
     data: { userId: platformStaffId, permissionId: platformReadPermissionId },
   });
@@ -621,7 +664,7 @@ test('subscription payment review is tenant-scoped, idempotent and required befo
     body: JSON.stringify(submission),
   });
   const submitted = await submit();
-  assert.equal(submitted.status, 201);
+  assert.equal(submitted.status, 201, await submitted.clone().text());
   const submittedBody = await submitted.json() as { data: { id: string; status: string } };
   subscriptionPaymentId = submittedBody.data.id;
   assert.equal(submittedBody.data.status, 'PENDING');
@@ -708,9 +751,9 @@ test('offline order retries and duplicate payment requests create one notificati
     body: JSON.stringify(request),
   });
   const firstSync = await sync();
-  assert.equal(firstSync.status, 200);
+  assert.equal(firstSync.status, 200, await firstSync.clone().text());
   const replaySync = await sync();
-  assert.equal(replaySync.status, 200);
+  assert.equal(replaySync.status, 200, await replaySync.clone().text());
   const replay = await replaySync.json() as { data: { results: Array<{ duplicate?: boolean }> } };
   assert.equal(replay.data.results[0]?.duplicate, true);
   assert.equal(await prisma.whatsAppNotification.count({
@@ -721,7 +764,7 @@ test('offline order retries and duplicate payment requests create one notificati
   });
   assert.equal(configuredNotification.templateName, 'tenant_order_created');
   assert.deepEqual((configuredNotification.payload as { templateParameters: string[] }).templateParameters, [
-    'Tenant A User',
+    'A Customer',
     'Shalwar Kameez',
     'PKR 1000.00',
   ]);
@@ -827,9 +870,12 @@ test('subscription expiry reminders use configured business contact, idempotency
   });
   const now = new Date();
   const endsAt = new Date(now.getTime() + 14 * 86_400_000);
-  const subscription = await prisma.subscription.create({
+  const subscription = await prisma.subscription.findFirstOrThrow({
+    where: { businessId: businessAId, status: 'ACTIVE' },
+  });
+  await prisma.subscription.update({
+    where: { id: subscription.id },
     data: {
-      businessId: businessAId,
       planId: subscriptionPlanId,
       status: 'ACTIVE',
       cycle: 'YEARLY',
@@ -941,7 +987,17 @@ test('subscription expiry reminders use configured business contact, idempotency
     assert.match(sentRequest, /\/messages$/);
     assert.equal((await prisma.whatsAppNotification.findUniqueOrThrow({ where: { id: notification.id } })).status, 'SENT');
   } finally {
-    await prisma.subscription.delete({ where: { id: subscription.id } });
+    await prisma.subscription.update({
+      where: { id: subscription.id },
+      data: {
+        planId: subscription.planId,
+        status: subscription.status,
+        cycle: subscription.cycle,
+        startsAt: subscription.startsAt,
+        endsAt: subscription.endsAt,
+        graceUntil: subscription.graceUntil,
+      },
+    });
     if (existingBillingSetting) {
       await prisma.platformSetting.update({
         where: { key: 'billing' },

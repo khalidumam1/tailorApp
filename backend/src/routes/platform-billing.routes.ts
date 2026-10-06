@@ -156,7 +156,13 @@ router.get('/dashboard', requirePlatformPermission('platform:subscriptions:read'
   });
 }));
 
-router.get('/plans', requirePlatformPermission('platform:subscriptions:read'), asyncHandler(async (_req, res) => {
+router.get('/plans', asyncHandler(async (req, res, next) => {
+  if (req.auth?.scope !== 'platform'
+    || (!req.auth.platformPermissions.includes('platform:subscriptions:read')
+      && !req.auth.platformPermissions.includes('platform:plans:manage'))) {
+    next(new HttpError(403, 'Platform permission is not granted', 'PLATFORM_PERMISSION_DENIED'));
+    return;
+  }
   const plans = await prisma.subscriptionPlan.findMany({
     include: { _count: { select: { subscriptions: true, payments: true } } },
     orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],

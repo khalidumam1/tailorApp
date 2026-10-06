@@ -7,7 +7,7 @@ process.env.DATABASE_URL = 'postgresql://localhost:5432/tailor_test';
 process.env.ACCESS_TOKEN_SECRET = 'test-only-secret-that-is-long-enough-to-pass';
 process.env.CORS_ORIGINS = 'http://localhost:5173';
 process.env.WHATSAPP_ENABLED = 'false';
-const { validateBusinessStructure } = await import('../src/routes/business-structure.routes.js');
+const { businessStructureSchema, validateBusinessStructure } = await import('../src/routes/business-structure.routes.js');
 
 const validStructure: Parameters<typeof validateBusinessStructure>[0] = {
   version: 2,
@@ -31,6 +31,24 @@ const validStructure: Parameters<typeof validateBusinessStructure>[0] = {
 
 test('accepts tenant custom fields and a complete workflow configuration', () => {
   assert.doesNotThrow(() => validateBusinessStructure(validStructure));
+});
+
+test('accepts persisted uppercase workflow keys and notification actions', () => {
+  const configuration = {
+    ...validStructure,
+    stages: [
+      { ...validStructure.stages[0]!, key: 'NEW', actions: [] },
+      { ...validStructure.stages[1]!, key: 'READY_FOR_PICKUP', actions: ['ORDER_READY'] },
+    ],
+    transitions: [{
+      from: 'NEW',
+      to: 'READY_FOR_PICKUP',
+      allowedRoleKeys: [],
+      actions: ['ORDER_READY'],
+    }],
+  };
+
+  assert.doesNotThrow(() => businessStructureSchema.parse(configuration));
 });
 
 test('rejects duplicate keys, stage ordering, and invalid transitions', () => {

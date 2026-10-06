@@ -9,6 +9,8 @@ import { authenticate, requirePlatformPermission } from '../middleware/auth.js';
 const router = express.Router();
 const idSchema = z.string().uuid();
 const keySchema = z.string().trim().regex(/^[a-z][a-z0-9_-]{0,79}$/);
+const stageKeySchema = z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,79}$/);
+const actionKeySchema = z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,79}$/);
 const paymentMethodSchema = z.string().trim().regex(/^[A-Z][A-Z0-9_-]{0,79}$/);
 const dashboardWidgetSchema = z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,79}$/);
 const fieldTypes = [
@@ -43,20 +45,20 @@ const fieldSchema = z.object({
   sortOrder: z.number().int().min(0).max(10000),
 }).strict();
 const stageSchema = z.object({
-  key: keySchema,
+  key: stageKeySchema,
   label: z.string().trim().min(1).max(120),
   sortOrder: z.number().int().min(0).max(10000),
   isInitial: z.boolean().default(false),
   isTerminal: z.boolean().default(false),
-  actions: z.array(keySchema).max(30).default([]),
+  actions: z.array(actionKeySchema).max(30).default([]),
 }).strict();
 const transitionSchema = z.object({
-  from: keySchema,
-  to: keySchema,
+  from: stageKeySchema,
+  to: stageKeySchema,
   allowedRoleKeys: z.array(keySchema).max(50).default([]),
-  actions: z.array(keySchema).max(30).default([]),
+  actions: z.array(actionKeySchema).max(30).default([]),
 }).strict();
-const templateSchema = z.object({
+export const templateSchema = z.object({
   key: keySchema,
   name: z.string().trim().min(1).max(120),
   category: z.string().trim().min(1).max(80),

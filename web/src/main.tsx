@@ -446,13 +446,15 @@ function App() {
         const result = await withSession(api.platformHealth);
         if (active) setPlatformHealth(result);
       } else if (platformView === 'billing' && currentUser.context.platformPermissions.includes('platform:subscriptions:read')) {
-        const [dashboard, businesses] = await Promise.all([
+        const [dashboard, businesses, plans] = await Promise.all([
           withSession(api.platformBillingDashboard),
           withSession(api.platformBillingBusinesses),
+          withSession(api.platformSubscriptionPlans),
         ]);
         if (active) {
           setBillingDashboard(dashboard);
           setBillingBusinesses(businesses.items);
+          setBillingPlans(plans.items);
         }
       } else if (platformView === 'plans' && currentUser.context.platformPermissions.includes('platform:plans:manage')) {
         setBillingPlans((await withSession(api.platformSubscriptionPlans)).items);
@@ -1713,6 +1715,7 @@ function App() {
                 {grants.has('platform:subscriptions:manage') && (
                   <details className="panel disclosure-panel">
                     <summary><span><strong>Manage a business subscription</strong><small>Assign a plan, free trial or complimentary access</small></span><span className="disclosure-action">Open form</span></summary>
+                    {billingPlans.length === 0 && <p className="alert alert-error" role="alert">No active subscription plans are available. Create or activate a plan before assigning access.</p>}
                     <form className="form-grid disclosure-content" onSubmit={assignSubscription}>
                       <label>Business<select value={billingBusinessId} onChange={(event) => setBillingBusinessId(event.target.value)} required><option value="">Choose business</option>{billingBusinesses.map((business) => <option key={business.id} value={business.id}>{business.name}</option>)}</select></label>
                       <label>Plan<select value={assignDraft.planId} onChange={(event) => setAssignDraft((current) => ({ ...current, planId: event.target.value }))} required><option value="">Choose plan</option>{billingPlans.filter((plan) => plan.active).map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select></label>
@@ -1723,7 +1726,7 @@ function App() {
                       {!assignDraft.complimentary && <label>Custom price (PKR)<input inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" value={assignDraft.customPrice} onChange={(event) => setAssignDraft((current) => ({ ...current, customPrice: event.target.value }))} required /></label>}
                       <label>Discount amount (PKR)<input inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" value={assignDraft.discountAmount} onChange={(event) => setAssignDraft((current) => ({ ...current, discountAmount: event.target.value }))} required /></label>
                       <label className="span-all">Reason<input value={assignDraft.reason} onChange={(event) => setAssignDraft((current) => ({ ...current, reason: event.target.value }))} minLength={5} maxLength={1000} required /></label>
-                      <div className="span-all"><button className="button button-primary" disabled={working || !online}>Assign subscription</button></div>
+                      <div className="span-all"><button className="button button-primary" disabled={working || !online || billingPlans.filter((plan) => plan.active).length === 0}>Assign subscription</button></div>
                     </form>
                   </details>
                 )}

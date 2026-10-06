@@ -10,6 +10,7 @@ import { businessRoleKey } from '../domain/orders.js';
 const router = express.Router();
 const keySchema = z.string().trim().regex(/^[a-z][a-z0-9_-]{0,79}$/);
 const stageKeySchema = z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,79}$/);
+const actionKeySchema = z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,79}$/);
 const fieldTypes = [
   'TEXT', 'LONG_TEXT', 'NUMBER', 'CURRENCY', 'DATE', 'DATETIME', 'DROPDOWN',
   'MULTI_SELECT', 'BOOLEAN', 'MEASUREMENT', 'REFERENCE', 'NOTES',
@@ -40,15 +41,15 @@ const stageSchema = z.object({
   sortOrder: z.number().int().min(0).max(10000),
   isInitial: z.boolean().default(false),
   isTerminal: z.boolean().default(false),
-  actions: z.array(keySchema).max(30).default([]),
+  actions: z.array(actionKeySchema).max(30).default([]),
 }).strict();
 const transitionSchema = z.object({
   from: stageKeySchema,
   to: stageKeySchema,
   allowedRoleKeys: z.array(keySchema).max(50).default([]),
-  actions: z.array(keySchema).max(30).default([]),
+  actions: z.array(actionKeySchema).max(30).default([]),
 }).strict();
-const structureSchema = z.object({
+export const businessStructureSchema = z.object({
   version: z.number().int().min(0),
   templateVersion: z.number().int().min(1),
   fields: z.array(fieldSchema).max(300),
@@ -56,7 +57,7 @@ const structureSchema = z.object({
   transitions: z.array(transitionSchema).max(300),
 }).strict();
 
-type StructureInput = z.infer<typeof structureSchema>;
+type StructureInput = z.infer<typeof businessStructureSchema>;
 
 export function validateBusinessStructure(input: StructureInput): void {
   const unique = (values: string[]) => new Set(values).size === values.length;
@@ -175,7 +176,7 @@ function jsonOrDbNull(value: unknown): Prisma.InputJsonValue | typeof Prisma.DbN
 
 router.put('/configuration/structure', authenticate, requireBusinessPermission('settings:manage'), asyncHandler(async (req, res) => {
   const businessId = getBusinessId(req);
-  const input = structureSchema.parse(req.body);
+  const input = businessStructureSchema.parse(req.body);
   validateBusinessStructure(input);
 
   try {
@@ -424,7 +425,11 @@ router.put('/configuration/structure', authenticate, requireBusinessPermission('
         },
       });
       return { version: nextVersion, templateVersion: business.template.version };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 20_000,
+      timeout: 60_000,
+    });
 
     res.json({ data: saved });
   } catch (error) {

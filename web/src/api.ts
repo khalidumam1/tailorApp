@@ -701,7 +701,7 @@ export const api = {
     sortOrder: number;
     customFields: Record<string, unknown>;
   }) {
-    return request('/catalog', z.object({ data: catalogItemSchema }), { token, method: 'POST', body: input });
+    return request('/catalog', catalogItemSchema, { token, method: 'POST', body: input });
   },
   updateCatalogItem(token: string, itemId: string, input: {
     version: number;
@@ -715,7 +715,7 @@ export const api = {
     active?: boolean;
     customFields?: Record<string, unknown>;
   }) {
-    return request(`/catalog/${itemId}`, z.object({ data: catalogItemSchema }), {
+    return request(`/catalog/${itemId}`, catalogItemSchema, {
       token,
       method: 'PATCH',
       body: input,

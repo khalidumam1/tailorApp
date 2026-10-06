@@ -8,7 +8,11 @@ process.env.DATABASE_URL = 'postgresql://localhost:5432/tailor_test';
 process.env.ACCESS_TOKEN_SECRET = 'test-only-secret-that-is-long-enough-to-pass';
 process.env.CORS_ORIGINS = 'http://localhost:5173';
 process.env.WHATSAPP_ENABLED = 'false';
-const { validateTemplate, buildTemplateRevisionSnapshot } = await import('../src/routes/template.routes.js');
+const {
+  validateTemplate,
+  buildTemplateRevisionSnapshot,
+  templateSchema,
+} = await import('../src/routes/template.routes.js');
 
 const genericTemplate: TemplateInput = {
   key: 'auto-workshop',
@@ -41,6 +45,20 @@ const genericTemplate: TemplateInput = {
 
 test('accepts configurable business fields and a connected workflow', () => {
   assert.doesNotThrow(() => validateTemplate(genericTemplate));
+});
+
+test('request schema accepts uppercase workflow stages and notification actions', () => {
+  const template = {
+    ...genericTemplate,
+    stages: genericTemplate.stages.map((stage, index) => index === 1
+      ? { ...stage, actions: ['ORDER_READY'] }
+      : stage),
+    transitions: genericTemplate.transitions.map((transition, index) => index === 1
+      ? { ...transition, actions: ['ORDER_READY'] }
+      : transition),
+  };
+
+  assert.doesNotThrow(() => templateSchema.parse(template));
 });
 
 test('captures complete versioned template content in a revision snapshot', () => {

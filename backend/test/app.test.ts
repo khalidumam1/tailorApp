@@ -105,6 +105,7 @@ test('shop billing and platform billing APIs require authentication', async () =
     ['/api/v1/subscriptions', 'GET'],
     ['/api/v1/subscriptions/payments', 'POST'],
     ['/api/v1/platform/billing/dashboard', 'GET'],
+    ['/api/v1/platform/billing/plans', 'GET'],
   ] as const) {
     const response = await fetch(`${baseUrl}${path}`, {
       method,
