@@ -34,6 +34,23 @@ const billingSchema = z.object({
   enforcementEnabled: z.boolean(),
   supportContact: z.string().max(200),
 });
+
+// Older installations may not have received the subscription migration/seed yet.
+// Returning a valid, safe configuration keeps the settings screen usable and lets a
+// platform administrator save the setting instead of exposing a raw Zod 400 error.
+const defaultBillingSettings = {
+  paymentMethods: ['BANK TRANSFER', 'EASYPAISA', 'JAZZCASH', 'CASH'],
+  paymentInstructions: '',
+  gracePeriodDays: 7,
+  expiryReminderDays: [14, 7, 3, 1],
+  enforcementEnabled: false,
+  supportContact: '',
+};
+
+function parseBillingSettings(value: unknown) {
+  const parsed = billingSchema.safeParse(value);
+  return parsed.success ? parsed.data : defaultBillingSettings;
+}
 const reviewSchema = z.discriminatedUnion('decision', [
   z.object({ decision: z.literal('APPROVE') }),
   z.object({ decision: z.literal('REJECT'), reason: z.string().trim().min(5).max(1000) }),
@@ -586,7 +603,7 @@ router.post('/payments/:paymentId/adjustments', requireSuperAdminPermission('pla
 
 router.get('/settings', requirePlatformPermission('platform:billing:settings'), asyncHandler(async (_req, res) => {
   const value = await settingValue(prisma, 'billing');
-  res.json({ data: billingSchema.parse(value) });
+  res.json({ data: parseBillingSettings(value) });
 }));
 
 router.put('/settings', requirePlatformPermission('platform:billing:settings'), asyncHandler(async (req, res) => {
