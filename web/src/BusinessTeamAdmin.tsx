@@ -126,6 +126,21 @@ export function BusinessTeamAdmin({ canManage, online, actorPermissions, withSes
     }
   }
 
+  async function removeMember(member: BusinessMember) {
+    if (!window.confirm(`Remove ${member.user.name} from this business?\n\nThey are signed out immediately and cannot open this business again. Customers, orders and payments stay untouched.`)) return;
+    setWorking(true);
+    setError(null);
+    try {
+      const updated = await withSession((token) => api.removeBusinessStaff(token, member.id));
+      setMembers((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setNotice(`${updated.user.name} was removed from the business and signed out of it.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to remove this member.');
+    } finally {
+      setWorking(false);
+    }
+  }
+
   if (!canManage) return null;
 
   return (
@@ -187,12 +202,14 @@ export function BusinessTeamAdmin({ canManage, online, actorPermissions, withSes
             <h4>Business team</h4>
             {members.length ? members.map((member) => (
               <article className="business-role-row" key={member.id}>
-                <div><strong>{member.user.name}</strong><small className="table-note">{member.user.email} · {member.active ? 'Active' : 'Inactive'}</small></div>
+                <div><strong>{member.user.name}</strong><small className="table-note">{member.user.email} · {member.active ? 'Active' : 'Removed — no access'}</small></div>
                 <div className="row-actions">
                   <select aria-label={`Role for ${member.user.name}`} value={member.role.id} disabled={working || !online || member.role.name === 'Owner'} onChange={(event) => void updateMember(member, { roleId: event.target.value })}>
                     {roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
                   </select>
-                  {member.role.name !== 'Owner' && <button className={member.active ? 'button button-danger-quiet' : 'button button-secondary'} type="button" disabled={working || !online} onClick={() => void updateMember(member, { active: !member.active })}>{member.active ? 'Deactivate' : 'Reactivate'}</button>}
+                  {member.role.name !== 'Owner' && (member.active
+                    ? <button className="button button-danger-quiet" type="button" disabled={working || !online} onClick={() => void removeMember(member)}>Remove from business</button>
+                    : <button className="button button-secondary" type="button" disabled={working || !online} onClick={() => void updateMember(member, { active: true })}>Restore access</button>)}
                 </div>
               </article>
             )) : <p className="muted">No team members have been added.</p>}

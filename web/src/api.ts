@@ -206,6 +206,20 @@ const platformBusinessSchema = z.object({
   createdAt: z.string(),
   template: z.object({ id: z.string().uuid(), key: z.string(), name: z.string() }).optional(),
   _count: z.object({ memberships: z.number().int() }).optional(),
+  /** Currently active owner, or null when nobody owns the workspace. */
+  owner: z.object({ id: z.string().uuid(), name: z.string(), email: z.string() }).nullable().optional(),
+  /** Memberships with access today (removed members are excluded). */
+  activeMemberships: z.number().int().optional(),
+});
+
+const platformBusinessMemberSchema = z.object({
+  id: z.string().uuid(),
+  active: z.boolean(),
+  createdAt: z.string(),
+  user: z.object({ id: z.string().uuid(), name: z.string(), email: z.string(), active: z.boolean() }),
+  role: z.object({ id: z.string().uuid(), name: z.string() }),
+  /** How many other businesses this user can still sign in to. */
+  otherActiveBusinesses: z.number().int(),
 });
 
 const customFieldSchema = z.object({
@@ -571,6 +585,14 @@ export type Payment = z.infer<typeof paymentSchema>;
 export type WhatsAppNotification = z.infer<typeof notificationSchema>;
 export type Receipt = z.infer<typeof receiptSchema>;
 export type PlatformBusiness = z.infer<typeof platformBusinessSchema>;
+export type PlatformBusinessMember = z.infer<typeof platformBusinessMemberSchema>;
+export type PlatformBusinessMembers = {
+  business: { id: string; name: string; slug: string; status: PlatformBusiness['status'] };
+  items: PlatformBusinessMember[];
+  totalCount: number;
+  activeCount: number;
+  activeOwnerCount: number;
+};
 export type PlatformStaff = z.infer<typeof platformStaffSchema>;
 export type PlatformPermission = z.infer<typeof platformPermissionSchema>;
 export type AuditEvent = z.infer<typeof auditEventSchema>;
@@ -798,6 +820,13 @@ export const api = {
   updateBusinessStaff(token: string, membershipId: string, input: { roleId?: string; active?: boolean }) {
     return request(`/business/staff/${membershipId}`, businessMemberSchema, { token, method: 'PATCH', body: input });
   },
+  removeBusinessStaff(token: string, membershipId: string, reason?: string) {
+    return request(`/business/staff/${membershipId}`, businessMemberSchema, {
+      token,
+      method: 'DELETE',
+      ...(reason ? { body: { reason } } : {}),
+    });
+  },
   updateBusinessConfiguration(token: string, input: {
     version: number;
     business?: Partial<BusinessConfiguration['business']>;
@@ -878,6 +907,34 @@ export const api = {
       membershipId: z.string().uuid(),
       accountCreated: z.boolean(),
     }), { token, method: 'POST', body: input });
+  },
+  platformBusinessMembers(token: string, businessId: string) {
+    return request(`/platform/businesses/${businessId}/members`, z.object({
+      business: z.object({
+        id: z.string().uuid(),
+        name: z.string(),
+        slug: z.string(),
+        status: z.enum(['ACTIVE', 'SUSPENDED', 'PENDING']),
+      }),
+      items: z.array(platformBusinessMemberSchema),
+      totalCount: z.number().int(),
+      activeCount: z.number().int(),
+      activeOwnerCount: z.number().int(),
+    }), { token });
+  },
+  removeBusinessMember(token: string, businessId: string, membershipId: string, reason?: string) {
+    return request(`/platform/businesses/${businessId}/members/${membershipId}`, platformBusinessMemberSchema, {
+      token,
+      method: 'DELETE',
+      ...(reason ? { body: { reason } } : {}),
+    });
+  },
+  restoreBusinessMember(token: string, businessId: string, membershipId: string) {
+    return request(`/platform/businesses/${businessId}/members/${membershipId}`, platformBusinessMemberSchema, {
+      token,
+      method: 'PATCH',
+      body: { active: true },
+    });
   },
   setBusinessStatus(token: string, businessId: string, status: PlatformBusiness['status']) {
     return request(`/platform/businesses/${businessId}/status`, platformBusinessSchema, {

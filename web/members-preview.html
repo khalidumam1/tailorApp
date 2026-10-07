@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TailorApp — Business members screen preview (mock data)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&family=Inter:wght@400;500;600;700&display=swap" />
+<link rel="stylesheet" href="src/styles.css" />
+<style>
+  .preview-banner { position: sticky; top: 0; z-index: 50; padding: 10px 18px; background: #0d7057; color: #fff; font-size: .85rem; font-weight: 700; text-align: center; }
+  .preview-banner span { font-weight: 500; opacity: .9; }
+  .preview-backdrop { position: relative; min-height: 0; padding: 24px 0 48px; background: rgb(8 28 22 / 52%); }
+  .preview-backdrop .dialog-backdrop { position: static; display: block; padding: 0; background: transparent; backdrop-filter: none; }
+  .preview-backdrop .dialog-card { margin: 0 auto; }
+</style>
+</head>
+<body>
+<div class="preview-banner">Static preview — the new “remove a business from a user” screen, mock data. <span>Sign in on the main app to use it for real.</span></div>
+
+<main class="page platform-state">
+  <header class="platform-header">
+    <div class="platform-brand" aria-label="TailorApp platform">
+      <span class="platform-brand-mark" aria-hidden="true">T</span>
+      <span><strong>TailorApp</strong><small>Platform console</small></span>
+    </div>
+    <div class="platform-header-actions">
+      <span class="platform-access-badge"><span aria-hidden="true">●</span> Platform administrator</span>
+      <div class="platform-identity">
+        <span class="user-avatar" aria-hidden="true">A</span>
+        <span class="platform-identity-name">Ayesha Khan<small>Super admin</small></span>
+      </div>
+      <button class="button button-secondary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="21" height="21" aria-hidden="true"><path d="M13 4H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6"/><path d="M11 12h9m0 0-3-3m3 3-3 3"/></svg> Sign out</button>
+    </div>
+  </header>
+  <section class="platform-welcome">
+    <div><p class="eyebrow">Administration</p><h1>Platform control center</h1><p>Manage businesses, access, and service health from one place.</p></div>
+    <span class="platform-scope-label"><span aria-hidden="true">✓</span> Secure platform scope</span>
+  </section>
+  <div class="platform-layout">
+    <aside class="platform-sidebar" aria-label="Platform workspace">
+      <p class="platform-sidebar-label">WORKSPACE</p>
+      <nav class="platform-nav" aria-label="Platform navigation">
+        <button type="button" class="platform-nav-item is-active" aria-current="page"><span class="platform-nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="21" height="21" aria-hidden="true"><path d="M5 20V5.5A1.5 1.5 0 0 1 6.5 4h7A1.5 1.5 0 0 1 15 5.5V20"/><path d="M15 11h3.5A1.5 1.5 0 0 1 20 12.5V20"/><path d="M5 20h15"/><path d="M8 7.5h1M8 11h1M8 14.5h1M11.5 7.5h1M11.5 11h1M11.5 14.5h1M16.5 14.5h1"/></svg></span><span class="nav-label">Businesses</span></button>
+        <button type="button" class="platform-nav-item"><span class="platform-nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="21" height="21" aria-hidden="true"><circle cx="12" cy="8" r="3.4"/><path d="M5 20c0-3.6 3.1-6 7-6s7 2.4 7 6"/><path d="M12 12.5v3M10.6 14h2.8"/></svg></span><span class="nav-label">Platform staff</span></button>
+      </nav>
+      <div class="platform-sidebar-footer"><span class="connection-dot is-online"></span>Secure platform scope</div>
+    </aside>
+
+    <section class="platform-content-window" aria-label="Platform content">
+      <section class="content-stack">
+        <div class="section-heading"><div><p class="eyebrow">Workspace management</p><h2>Business directory</h2><p class="muted">Onboard businesses, assign owners, and manage account status.</p></div></div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Business</th><th>Slug</th><th>Members</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>Rizwan Tailors</strong><small class="table-note">Tailor template</small><small class="table-note">Owner: Rizwan Ahmed</small></td>
+                <td>rizwan-tailors</td>
+                <td><strong>3</strong><small class="table-note">4 total</small></td>
+                <td><span class="status-pill status-active">Active</span></td>
+                <td><div class="row-actions">
+                  <button class="button button-secondary">Members</button>
+                  <button class="button button-danger-quiet">Suspend</button>
+                </div></td>
+              </tr>
+              <tr>
+                <td><strong>Karachi Furniture House</strong><small class="table-note">Furniture template</small><small class="table-note table-note-warn">No owner assigned</small></td>
+                <td>karachi-furniture</td>
+                <td><strong>0</strong><small class="table-note">0 total</small></td>
+                <td><span class="status-pill status-pending">Pending</span></td>
+                <td><div class="row-actions">
+                  <button class="button button-secondary">Members</button>
+                  <button class="button button-secondary">Assign owner</button>
+                  <button class="button button-primary" title="Assign an owner before activating">Activate</button>
+                </div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </div>
+</main>
+
+<div class="preview-backdrop">
+  <div class="dialog-backdrop" role="presentation">
+    <section class="dialog-card dialog-card-wide" role="dialog" aria-modal="true" aria-labelledby="members-title">
+      <button type="button" class="dialog-close" aria-label="Close">×</button>
+      <p class="eyebrow">Business access</p>
+      <h2 id="members-title">Rizwan Tailors members</h2>
+      <p class="muted">Everyone who can sign in to this business. Removing a member stops their access immediately and signs them out of this business; business records, orders and payments stay untouched.</p>
+      <div class="member-summary">
+        <span class="member-summary-item"><strong>2</strong> with access</span>
+        <span class="member-summary-item"><strong>1</strong> removed</span>
+        <span class="status-pill status-active">Active</span>
+      </div>
+      <div class="member-list">
+        <article class="member-row">
+          <div class="member-identity">
+            <span class="member-avatar" aria-hidden="true">R</span>
+            <div>
+              <strong>Rizwan Ahmed</strong>
+              <small class="table-note">rizwan@example.com</small>
+              <small class="table-note">Owner · only this business</small>
+            </div>
+          </div>
+          <div class="row-actions"></div>
+        </article>
+
+        <article class="member-row">
+          <div class="member-identity">
+            <span class="member-avatar" aria-hidden="true">S</span>
+            <div>
+              <strong>Sana Iqbal</strong>
+              <small class="table-note">sana@example.com</small>
+              <small class="table-note">Manager · 1 other business</small>
+            </div>
+          </div>
+          <div class="row-actions">
+            <button class="button button-danger-quiet" type="button">Remove from business</button>
+          </div>
+          <div class="member-removal">
+            <p><strong>Remove Sana Iqbal from this business?</strong> Their sign-in for this business stops now; they keep access to 1 other business.</p>
+            <label>Reason (optional, kept in the audit trail)<input value="Left the shop" maxlength="1000" /></label>
+            <div class="row-actions">
+              <button class="button button-danger-quiet" type="button">Yes, remove access</button>
+              <button class="button button-quiet" type="button">Cancel</button>
+            </div>
+          </div>
+        </article>
+
+        <article class="member-row is-removed">
+          <div class="member-identity">
+            <span class="member-avatar" aria-hidden="true">B</span>
+            <div>
+              <strong>Bilal Khan</strong>
+              <small class="table-note">bilal@example.com</small>
+              <small class="table-note">Tailor · access removed · only this business</small>
+            </div>
+          </div>
+          <div class="row-actions">
+            <button class="button button-secondary" type="button">Restore access</button>
+          </div>
+        </article>
+      </div>
+      <div class="dialog-actions">
+        <button class="button button-secondary" type="button">Refresh</button>
+        <button class="button button-quiet" type="button">Close</button>
+      </div>
+    </section>
+  </div>
+</div>
+</body>
+</html>

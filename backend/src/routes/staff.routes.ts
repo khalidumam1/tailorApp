@@ -27,6 +27,9 @@ const memberUpdateSchema = z.object({
   roleId: idSchema.optional(),
   active: z.boolean().optional(),
 }).strict().refine((input) => Object.keys(input).length > 0, 'Provide a role or active-state change');
+const memberRemovalSchema = z.object({
+  reason: z.string().trim().min(5).max(1000).optional(),
+}).strict();
 
 function businessId(req: express.Request): string {
   if (req.auth?.scope !== 'business' || !req.auth.business) {
@@ -351,6 +354,55 @@ router.patch('/staff/:membershipId', requireBusinessPermission('staff:manage'), 
       createdAt: updated.createdAt,
       user: updated.user,
       role: updated.role,
+    },
+  });
+}));
+
+router.delete('/staff/:membershipId', requireBusinessPermission('staff:manage'), asyncHandler(async (req, res) => {
+  const tenantId = businessId(req);
+  const membershipId = idSchema.parse(req.params.membershipId);
+  const input = memberRemovalSchema.parse(req.body ?? {});
+  const removed = await prisma.$transaction(async (tx) => {
+    const current = await tx.membership.findFirst({
+      where: { id: membershipId, businessId: tenantId },
+      include: {
+        user: { select: { id: true, name: true, email: true, active: true } },
+        role: { select: { id: true, name: true } },
+      },
+    });
+    if (!current) throw new HttpError(404, 'Business membership not found', 'BUSINESS_MEMBERSHIP_NOT_FOUND');
+    if (current.role.name === 'Owner') {
+      throw new HttpError(403, 'The business owner cannot be removed from the business', 'BUSINESS_OWNER_REQUIRED');
+    }
+    if (current.userId === req.auth!.userId) {
+      throw new HttpError(409, 'You cannot remove your own business access', 'SELF_REMOVAL_DENIED');
+    }
+    await tx.refreshToken.updateMany({
+      where: { membershipId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    const membership = await tx.membership.update({
+      where: { id: membershipId },
+      data: { active: false },
+      include: {
+        user: { select: { id: true, name: true, email: true, active: true } },
+        role: { select: { id: true, name: true } },
+      },
+    });
+    await writeAudit(tx, req, tenantId, 'business.staff_removed', 'membership', membershipId, {
+      email: current.user.email,
+      role: current.role.name,
+      ...(input.reason ? { reason: input.reason } : {}),
+    });
+    return membership;
+  });
+  res.json({
+    data: {
+      id: removed.id,
+      active: removed.active,
+      createdAt: removed.createdAt,
+      user: removed.user,
+      role: removed.role,
     },
   });
 }));
