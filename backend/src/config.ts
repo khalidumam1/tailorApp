@@ -16,15 +16,23 @@ const environmentSchema = z.object({
     return protocol === 'postgresql:' || protocol === 'postgres:';
   }, 'DATABASE_URL must use the PostgreSQL protocol'),
   ACCESS_TOKEN_SECRET: z.string().min(32),
+  // Either a comma-separated allowlist of HTTP(S) origins, or the single
+  // wildcard `*` to accept any origin. The wildcard exists for container and
+  // preview deployments where the public hostname is not known up front; the
+  // API is Bearer-token based and sets no cookies, so reflecting any origin
+  // does not expose ambient credentials.
   CORS_ORIGINS: z.string()
     .default('http://localhost:5173')
     .transform((value) => value.split(',').map((origin) => origin.trim()).filter(Boolean))
-    .pipe(z.array(z.string().url()).min(1))
+    .pipe(z.array(z.string()).min(1))
     .refine((origins) => origins.every((origin) => {
+      if (origin === '*') return true;
       if (!URL.canParse(origin)) return false;
       const parsed = new URL(origin);
       return parsed.origin === origin && (parsed.protocol === 'http:' || parsed.protocol === 'https:');
-    }), 'CORS_ORIGINS must contain only HTTP(S) origins'),
+    }), 'CORS_ORIGINS must contain only HTTP(S) origins, or the single wildcard *')
+    .refine((origins) => !origins.includes('*') || origins.length === 1,
+      'CORS_ORIGINS cannot mix the wildcard * with specific origins'),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   WHATSAPP_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
@@ -46,6 +54,7 @@ const environmentSchema = z.object({
 
 export const env = environmentSchema.parse(process.env);
 export const corsOrigins = new Set(env.CORS_ORIGINS);
+export const allowAnyCorsOrigin = corsOrigins.has('*');
 
 if (env.NODE_ENV === 'production' && corsOrigins.has('http://localhost:5173')) {
   throw new Error('Production CORS_ORIGINS must not include the local development origin');

@@ -136,3 +136,34 @@ smallest text the most and leaves already-comfortable text alone, so the
 amount due and the order status still read as the biggest things on screen.
 
 Both apps type-check cleanly and the web bundle builds after these changes.
+
+---
+
+## Visual system pass (web)
+
+The stylesheet had grown into three stacked blocks — a base theme, then a
+second `:root` override block, then a third set of patches — so half the rules
+were fighting each other and the result read as flat and generic. It is now a
+single token-driven file (`web/src/styles.css`):
+
+1. **Tokens first.** Brand/ink/neutral ramps, semantic accent pairs
+   (info / warn / ok / bad), a radius scale, a five-step elevation scale and
+   two motion curves. Every component references tokens — no stray hex values.
+2. **Typography with intent.** Inter (loaded in `index.html`, with a system
+   fallback), tightened tracking on display sizes, a real size ramp, and
+   `font-variant-numeric: tabular-nums` on money, counts and metrics so
+   columns of figures line up.
+3. **Depth that means something.** Layered, tight shadows instead of one soft
+   grey blur: hairline cards at rest, a lift on hover for interactive cards,
+   heavy elevation only for dialogs.
+4. **Status that reads at a glance.** Status and notification pills now carry a
+   colour dot plus a tinted background *and* a border, so state survives both
+   greyscale printing and a quick glance.
+5. **Chrome details.** Brand-gradient sidebar with an active-item rail, quiet
+   custom scrollbars, focus rings on a single ring token, `prefers-reduced-motion`
+   support, and sticky table headers kept intact.
+
+Class names are unchanged, so no component markup had to move.
+`web/design-preview.html` (served at `/design-preview.html` by the dev server)
+renders the whole system without a login — dashboard, order cards, forms,
+tables, alerts and empty states.
