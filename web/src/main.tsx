@@ -205,6 +205,14 @@ function App() {
   const [ownerName, setOwnerName] = useState('');
   const [ownerEmail, setOwnerEmail] = useState('');
   const [ownerPassword, setOwnerPassword] = useState('');
+  // Business members ("who can sign in to this workspace") dialog state.
+  const [membersBusinessId, setMembersBusinessId] = useState('');
+  const [businessMembers, setBusinessMembers] = useState<import('./api').PlatformBusinessMembers | null>(null);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState<string | null>(null);
+  const [membersNotice, setMembersNotice] = useState<string | null>(null);
+  const [removingMemberId, setRemovingMemberId] = useState('');
+  const [removalReason, setRemovalReason] = useState('');
   const [platformStaffName, setPlatformStaffName] = useState('');
   const [platformStaffEmail, setPlatformStaffEmail] = useState('');
   const [platformStaffPassword, setPlatformStaffPassword] = useState('');
@@ -1104,6 +1112,84 @@ function App() {
     }
   }
 
+  async function loadBusinessMembers(businessId: string) {
+    setMembersLoading(true);
+    setMembersError(null);
+    try {
+      const result = await withSession((token) => api.platformBusinessMembers(token, businessId));
+      setBusinessMembers(result);
+    } catch (cause) {
+      setMembersError(messageFor(cause));
+    } finally {
+      setMembersLoading(false);
+    }
+  }
+
+  function openBusinessMembers(business: import('./api').PlatformBusiness) {
+    setMembersBusinessId(business.id);
+    setBusinessMembers(null);
+    setMembersError(null);
+    setMembersNotice(null);
+    setRemovingMemberId('');
+    setRemovalReason('');
+    void loadBusinessMembers(business.id);
+  }
+
+  function closeBusinessMembers() {
+    setMembersBusinessId('');
+    setBusinessMembers(null);
+    setMembersError(null);
+    setMembersNotice(null);
+    setRemovingMemberId('');
+    setRemovalReason('');
+  }
+
+  async function refreshBusinessDirectory() {
+    const result = await withSession(api.platformBusinesses);
+    setPlatformBusinesses(result.items);
+  }
+
+  async function removeBusinessMember(member: import('./api').PlatformBusinessMember) {
+    const businessId = membersBusinessId;
+    if (!businessId) return;
+    setWorking(true);
+    setMembersError(null);
+    setMembersNotice(null);
+    try {
+      const reason = removalReason.trim();
+      const updated = await withSession((token) => api.removeBusinessMember(token, businessId, member.id, reason.length >= 5 ? reason : undefined));
+      setRemovingMemberId('');
+      setRemovalReason('');
+      setMembersNotice(updated.otherActiveBusinesses > 0
+        ? `${member.user.name} no longer has access to this business. They can still sign in to ${updated.otherActiveBusinesses} other business${updated.otherActiveBusinesses === 1 ? '' : 'es'}.`
+        : `${member.user.name} no longer has access to this business and has no other business to sign in to.`);
+      await loadBusinessMembers(businessId);
+      await refreshBusinessDirectory();
+    } catch (cause) {
+      setMembersError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function restoreBusinessMember(member: import('./api').PlatformBusinessMember) {
+    const businessId = membersBusinessId;
+    if (!businessId) return;
+    setWorking(true);
+    setMembersError(null);
+    setMembersNotice(null);
+    try {
+      await withSession((token) => api.restoreBusinessMember(token, businessId, member.id));
+      setMembersNotice(`${member.user.name}'s access to this business was restored.`);
+      await loadBusinessMembers(businessId);
+      await refreshBusinessDirectory();
+    } catch (cause) {
+      setMembersError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function createPlatformStaff(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setWorking(true);
@@ -1561,11 +1647,23 @@ function App() {
               <div className="table-wrap"><table><thead><tr><th>Business</th><th>Slug</th><th>Members</th><th>Status</th><th>Actions</th></tr></thead>
                 <tbody>{platformBusinesses.map((business) => (
                   <tr key={business.id}>
-                    <td><strong>{business.name}</strong><small className="table-note">{business.template?.name ?? 'Tailor template'}</small></td><td>{business.slug}</td><td>{business._count?.memberships ?? 0}</td>
+                    <td>
+                      <strong>{business.name}</strong>
+                      <small className="table-note">{business.template?.name ?? 'Tailor template'}</small>
+                      <small className={business.owner ? 'table-note' : 'table-note table-note-warn'}>
+                        {business.owner ? `Owner: ${business.owner.name}` : 'No owner assigned'}
+                      </small>
+                    </td>
+                    <td>{business.slug}</td>
+                    <td>
+                      <strong>{business.activeMemberships ?? business._count?.memberships ?? 0}</strong>
+                      <small className="table-note">{business._count?.memberships ?? 0} total</small>
+                    </td>
                     <td><StatusPill status={business.status} /></td>
                     <td><div className="row-actions">
-                      {grants.has('platform:businesses:manage') && <button className="button button-secondary" onClick={() => setOwnerBusinessId(business.id)}>Assign owner</button>}
-                      {grants.has('platform:businesses:manage') && business.status !== 'ACTIVE' && <button className="button button-primary" disabled={working || !online} onClick={() => void updateBusinessStatus(business, 'ACTIVE')}>Activate</button>}
+                      {grants.has('platform:businesses:read') && <button className="button button-secondary" disabled={!online} onClick={() => openBusinessMembers(business)}>Members</button>}
+                      {grants.has('platform:businesses:manage') && !business.owner && <button className="button button-secondary" disabled={!online} onClick={() => setOwnerBusinessId(business.id)}>Assign owner</button>}
+                      {grants.has('platform:businesses:manage') && business.status !== 'ACTIVE' && <button className="button button-primary" disabled={working || !online || !business.owner} title={business.owner ? undefined : 'Assign an owner before activating'} onClick={() => void updateBusinessStatus(business, 'ACTIVE')}>Activate</button>}
                       {grants.has('platform:businesses:manage') && business.status === 'ACTIVE' && <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void updateBusinessStatus(business, 'SUSPENDED')}>Suspend</button>}
                     </div></td>
                   </tr>
@@ -1849,6 +1947,87 @@ function App() {
           <section className="content-stack"><div><h2>System health</h2><p className="muted">Readiness check for the API's PostgreSQL connection.</p></div>
             {loading ? <LoadingState /> : platformHealth ? <section className="panel health-card"><span className="connection-dot is-online" /><div><h3>{platformHealth.status}</h3><p className="muted">Database: {platformHealth.database} · Checked {karachiDate(platformHealth.checkedAt)}</p></div></section> : <EmptyState title="Health status unavailable" />}
           </section>
+        )}
+        {membersBusinessId && (
+          <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeBusinessMembers(); }}>
+            <section className="dialog-card dialog-card-wide" role="dialog" aria-modal="true" aria-labelledby="members-title">
+              <button type="button" className="dialog-close" aria-label="Close" onClick={closeBusinessMembers}>×</button>
+              <p className="eyebrow">Business access</p>
+              <h2 id="members-title">{businessMembers?.business.name ?? platformBusinesses.find((item) => item.id === membersBusinessId)?.name ?? 'Business'} members</h2>
+              <p className="muted">Everyone who can sign in to this business. Removing a member stops their access immediately and signs them out of this business; business records, orders and payments stay untouched.</p>
+              {membersError && <p className="form-error" role="alert">{membersError}</p>}
+              {membersNotice && <p className="form-notice" role="status">{membersNotice}</p>}
+              {membersLoading && !businessMembers ? <p className="muted" role="status">Loading members…</p> : businessMembers ? (
+                <>
+                  <div className="member-summary">
+                    <span className="member-summary-item"><strong>{businessMembers.activeCount}</strong> with access</span>
+                    <span className="member-summary-item"><strong>{businessMembers.totalCount - businessMembers.activeCount}</strong> removed</span>
+                    <StatusPill status={businessMembers.business.status} />
+                  </div>
+                  {businessMembers.activeOwnerCount === 0 && (
+                    <p className="alert alert-error" role="alert">
+                      This business has no active owner, so it cannot be activated.
+                      {grants.has('platform:businesses:manage') && <button className="button button-primary" type="button" onClick={() => { const id = membersBusinessId; closeBusinessMembers(); setOwnerBusinessId(id); }}>Assign an owner</button>}
+                    </p>
+                  )}
+                  <div className="member-list">
+                    {businessMembers.items.map((member) => (
+                      <article className={member.active ? 'member-row' : 'member-row is-removed'} key={member.id}>
+                        <div className="member-identity">
+                          <span className="member-avatar" aria-hidden="true">{member.user.name.trim().charAt(0).toUpperCase() || '?'}</span>
+                          <div>
+                            <strong>{member.user.name}</strong>
+                            <small className="table-note">{member.user.email}</small>
+                            <small className="table-note">
+                              {member.role.name}
+                              {member.active ? '' : ' · access removed'}
+                              {member.otherActiveBusinesses > 0
+                                ? ` · ${member.otherActiveBusinesses} other business${member.otherActiveBusinesses === 1 ? '' : 'es'}`
+                                : ' · only this business'}
+                              {member.user.active ? '' : ' · account deactivated'}
+                            </small>
+                          </div>
+                        </div>
+                        <div className="row-actions">
+                          {member.active ? (
+                            grants.has('platform:businesses:manage') && (
+                              <button
+                                className="button button-danger-quiet"
+                                type="button"
+                                disabled={working || !online}
+                                onClick={() => { setRemovingMemberId(member.id); setRemovalReason(''); setMembersNotice(null); }}
+                              >
+                                Remove from business
+                              </button>
+                            )
+                          ) : (
+                            grants.has('platform:businesses:manage') && (
+                              <button className="button button-secondary" type="button" disabled={working || !online} onClick={() => void restoreBusinessMember(member)}>Restore access</button>
+                            )
+                          )}
+                        </div>
+                        {removingMemberId === member.id && (
+                          <div className="member-removal">
+                            <p><strong>Remove {member.user.name} from this business?</strong> Their sign-in for this business stops now{member.otherActiveBusinesses > 0 ? `; they keep access to ${member.otherActiveBusinesses} other business${member.otherActiveBusinesses === 1 ? '' : 'es'}.` : ' and they have no other business to sign in to.'}</p>
+                            <label>Reason (optional, kept in the audit trail)<input value={removalReason} onChange={(event) => setRemovalReason(event.target.value)} maxLength={1000} minLength={5} placeholder="For example: left the shop" /></label>
+                            <div className="row-actions">
+                              <button className="button button-danger-quiet" type="button" disabled={working || !online || (removalReason.trim().length > 0 && removalReason.trim().length < 5)} onClick={() => void removeBusinessMember(member)}>{working ? 'Removing…' : 'Yes, remove access'}</button>
+                              <button className="button button-quiet" type="button" disabled={working} onClick={() => { setRemovingMemberId(''); setRemovalReason(''); }}>Cancel</button>
+                            </div>
+                          </div>
+                        )}
+                      </article>
+                    ))}
+                    {businessMembers.items.length === 0 && <EmptyState title="No members yet" detail="Assign an owner to give this business its first sign-in." />}
+                  </div>
+                  <div className="dialog-actions">
+                    <button className="button button-secondary" type="button" disabled={membersLoading || !online} onClick={() => void loadBusinessMembers(membersBusinessId)}>{membersLoading ? 'Refreshing…' : 'Refresh'}</button>
+                    <button className="button button-quiet" type="button" onClick={closeBusinessMembers}>Close</button>
+                  </div>
+                </>
+              ) : <EmptyState title="Members unavailable" action="Retry" onAction={() => void loadBusinessMembers(membersBusinessId)} />}
+            </section>
+          </div>
         )}
         {ownerBusinessId && (
           <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOwnerBusinessId(''); }}>

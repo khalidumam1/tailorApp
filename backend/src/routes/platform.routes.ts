@@ -30,6 +30,13 @@ const staffPermissionsSchema = z.object({
   active: z.boolean().optional(),
 });
 const statusSchema = z.object({ status: z.enum(['ACTIVE', 'SUSPENDED', 'PENDING']) });
+const memberAccessSchema = z.object({
+  active: z.boolean(),
+  reason: z.string().trim().min(5).max(1000).optional(),
+}).strict();
+const memberRemovalSchema = z.object({
+  reason: z.string().trim().min(5).max(1000).optional(),
+}).strict();
 const listSchema = z.object({
   q: z.string().trim().min(1).max(120).optional(),
   cursor: z.string().uuid().optional(),
@@ -67,6 +74,123 @@ async function writePlatformAudit(
   });
 }
 
+type MemberRecord = {
+  id: string;
+  userId: string;
+  active: boolean;
+  createdAt: Date;
+  user: { id: string; name: string; email: string; active: boolean };
+  role: { id: string; name: string };
+};
+
+const memberInclude = {
+  user: { select: { id: true, name: true, email: true, active: true } },
+  role: { select: { id: true, name: true } },
+} as const;
+
+function serializeMember(membership: MemberRecord, otherActiveBusinesses: number) {
+  return {
+    id: membership.id,
+    active: membership.active,
+    createdAt: membership.createdAt,
+    user: membership.user,
+    role: membership.role,
+    otherActiveBusinesses,
+  };
+}
+
+async function countOtherActiveBusinesses(userId: string, businessId: string): Promise<number> {
+  return prisma.membership.count({
+    where: { userId, active: true, businessId: { not: businessId } },
+  });
+}
+
+/**
+ * Revoke every live session that was issued for this business membership, so a
+ * removed user is signed out of the business immediately instead of keeping
+ * access until their access token expires.
+ */
+async function revokeMembershipSessions(tx: Prisma.TransactionClient, membershipId: string): Promise<void> {
+  await tx.refreshToken.updateMany({
+    where: { membershipId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+}
+
+/**
+ * Grant or remove one user's access to one business.
+ *
+ * Access is removed rather than hard-deleted: the membership row is kept so
+ * order/payment/sync history stays referentially intact, sessions are revoked
+ * and the change is audited. The last active owner of a business can never be
+ * removed without assigning a replacement first.
+ */
+async function changeMembershipAccess(
+  req: express.Request,
+  actorId: string,
+  businessId: string,
+  membershipId: string,
+  active: boolean,
+  reason?: string,
+): Promise<{ member: ReturnType<typeof serializeMember> }> {
+  const membership = await prisma.$transaction(async (tx) => {
+    const current = await tx.membership.findFirst({
+      where: { id: membershipId, businessId },
+      include: memberInclude,
+    });
+    if (!current) throw new HttpError(404, 'Business membership not found', 'BUSINESS_MEMBERSHIP_NOT_FOUND');
+    if (current.active === active) {
+      if (!active) await revokeMembershipSessions(tx, membershipId);
+      return current;
+    }
+    if (active) {
+      if (!current.user.active) {
+        throw new HttpError(409, 'Reactivate the user account before restoring business access', 'ACCOUNT_UNAVAILABLE');
+      }
+      if (current.role.name === 'Owner') {
+        const activeOwner = await tx.membership.findFirst({
+          where: { businessId, active: true, role: { name: 'Owner' } },
+          select: { id: true },
+        });
+        if (activeOwner && activeOwner.id !== membershipId) {
+          throw new HttpError(409, 'Another owner is already active for this business', 'BUSINESS_OWNER_ALREADY_ACTIVE');
+        }
+      }
+    }
+    if (!active && current.role.name === 'Owner') {
+      const otherOwners = await tx.membership.count({
+        where: { businessId, active: true, id: { not: membershipId }, role: { name: 'Owner' } },
+      });
+      if (otherOwners === 0) {
+        throw new HttpError(409, 'Assign another active owner before removing this owner', 'BUSINESS_OWNER_REQUIRED');
+      }
+    }
+    const updated = await tx.membership.update({
+      where: { id: membershipId },
+      data: { active },
+      include: memberInclude,
+    });
+    if (!active) await revokeMembershipSessions(tx, membershipId);
+    await writePlatformAudit(
+      tx,
+      actorId,
+      active ? 'platform.business_member_restored' : 'platform.business_member_removed',
+      'membership',
+      membershipId,
+      req.requestId,
+      {
+        businessId,
+        userId: current.userId,
+        email: current.user.email,
+        role: current.role.name,
+        ...(reason ? { reason } : {}),
+      },
+    );
+    return updated;
+  });
+  return { member: serializeMember(membership, await countOtherActiveBusinesses(membership.userId, businessId)) };
+}
+
 router.use(authenticate);
 
 router.get('/businesses', requirePlatformPermission('platform:businesses:read'), asyncHandler(async (req, res) => {
@@ -83,6 +207,12 @@ router.get('/businesses', requirePlatformPermission('platform:businesses:read'),
     include: {
       _count: { select: { memberships: true } },
       template: { select: { id: true, key: true, name: true } },
+      // Active owner, surfaced so the directory shows who is accountable for a workspace.
+      memberships: {
+        where: { active: true, role: { name: 'Owner' } },
+        take: 1,
+        select: { user: { select: { id: true, name: true, email: true } } },
+      },
     },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
@@ -90,7 +220,25 @@ router.get('/businesses', requirePlatformPermission('platform:businesses:read'),
   });
   const hasMore = businesses.length > query.limit;
   const page = hasMore ? businesses.slice(0, query.limit) : businesses;
-  res.json({ data: { items: page, nextCursor: hasMore ? page.at(-1)?.id ?? null : null } });
+  const pageIds = page.map((business) => business.id);
+  // Active member counts per business (removed memberships stay in the row count, so the
+  // directory distinguishes "has access" from "has ever been a member").
+  const activeCounts = pageIds.length
+    ? await prisma.membership.groupBy({
+      by: ['businessId'],
+      where: { businessId: { in: pageIds }, active: true },
+      _count: { _all: true },
+    })
+    : [];
+  const activeCountByBusiness = new Map<string, number>(
+    activeCounts.map((row) => [row.businessId, row._count._all] as const),
+  );
+  const items = page.map(({ memberships, ...business }) => ({
+    ...business,
+    owner: memberships[0]?.user ?? null,
+    activeMemberships: activeCountByBusiness.get(business.id) ?? 0,
+  }));
+  res.json({ data: { items, nextCursor: hasMore ? page.at(-1)?.id ?? null : null } });
 }));
 
 router.post('/businesses', requirePlatformPermission('platform:businesses:manage'), asyncHandler(async (req, res) => {
@@ -231,6 +379,65 @@ router.post('/businesses/:businessId/owners', requirePlatformPermission('platfor
     }
     throw error;
   }
+}));
+
+router.get('/businesses/:businessId/members', requirePlatformPermission('platform:businesses:read'), asyncHandler(async (req, res) => {
+  const businessId = idSchema.parse(req.params.businessId);
+  const business = await prisma.business.findUnique({
+    where: { id: businessId },
+    select: { id: true, name: true, slug: true, status: true },
+  });
+  if (!business) throw new HttpError(404, 'Business not found', 'BUSINESS_NOT_FOUND');
+  const memberships = await prisma.membership.findMany({
+    where: { businessId },
+    include: memberInclude,
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+  });
+  const otherCounts = memberships.length
+    ? await prisma.membership.groupBy({
+      by: ['userId'],
+      where: {
+        userId: { in: memberships.map((membership) => membership.userId) },
+        active: true,
+        businessId: { not: businessId },
+      },
+      _count: { _all: true },
+    })
+    : [];
+  const otherCountByUser = new Map<string, number>(
+    otherCounts.map((row) => [row.userId, row._count._all] as const),
+  );
+  const items = memberships.map((membership) => (
+    serializeMember(membership, otherCountByUser.get(membership.userId) ?? 0)
+  ));
+  res.json({
+    data: {
+      business,
+      items,
+      totalCount: items.length,
+      activeCount: items.filter((item) => item.active).length,
+      // Drives the "this business has no owner" warning in the platform UI.
+      activeOwnerCount: items.filter((item) => item.active && item.role.name === 'Owner').length,
+    },
+  });
+}));
+
+router.delete('/businesses/:businessId/members/:membershipId', requirePlatformPermission('platform:businesses:manage'), asyncHandler(async (req, res) => {
+  const actorId = getActorId(req);
+  const businessId = idSchema.parse(req.params.businessId);
+  const membershipId = idSchema.parse(req.params.membershipId);
+  const input = memberRemovalSchema.parse(req.body ?? {});
+  const result = await changeMembershipAccess(req, actorId, businessId, membershipId, false, input.reason);
+  res.json({ data: result.member });
+}));
+
+router.patch('/businesses/:businessId/members/:membershipId', requirePlatformPermission('platform:businesses:manage'), asyncHandler(async (req, res) => {
+  const actorId = getActorId(req);
+  const businessId = idSchema.parse(req.params.businessId);
+  const membershipId = idSchema.parse(req.params.membershipId);
+  const input = memberAccessSchema.parse(req.body ?? {});
+  const result = await changeMembershipAccess(req, actorId, businessId, membershipId, input.active, input.reason);
+  res.json({ data: result.member });
 }));
 
 router.patch('/businesses/:businessId/status', requirePlatformPermission('platform:businesses:manage'), asyncHandler(async (req, res) => {
