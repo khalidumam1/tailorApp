@@ -5,7 +5,7 @@ import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import { pino } from 'pino';
 import { pinoHttp } from 'pino-http';
-import { corsOrigins, env } from './config.js';
+import { allowAnyCorsOrigin, corsOrigins, env } from './config.js';
 import { prisma } from './db.js';
 import { HttpError } from './errors.js';
 import { errorHandler } from './middleware/error-handler.js';
@@ -59,16 +59,27 @@ app.use(pinoHttp({
     }),
   },
 }));
-app.use(helmet());
+app.use(helmet({
+  // With a wildcard origin the API is explicitly meant to be read from other
+  // origins, so the default same-origin resource policy would be misleading.
+  crossOriginResourcePolicy: { policy: allowAnyCorsOrigin ? 'cross-origin' : 'same-origin' },
+}));
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || corsOrigins.has(origin)) {
+    if (allowAnyCorsOrigin || !origin || corsOrigins.has(origin)) {
       callback(null, true);
       return;
     }
     callback(new HttpError(403, 'Origin is not allowed by CORS', 'CORS_ORIGIN_DENIED'));
   },
+  // Bearer auth only — no cookies — so the permissive origin stays safe.
+  credentials: false,
+  methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
+  exposedHeaders: ['x-request-id'],
+  maxAge: 600,
 }));
+app.options(/.*/, cors());
 app.use(express.json({
   limit: '256kb',
   strict: true,
