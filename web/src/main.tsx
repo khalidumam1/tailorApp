@@ -465,6 +465,10 @@ function App() {
         setBillingPaymentCursor(result.nextCursor);
       } else if (platformView === 'billingSettings' && currentUser.context.platformPermissions.includes('platform:billing:settings')) {
         setBillingSettings(await withSession(api.billingSettings));
+      } else if (platformView === 'reports' && currentUser.context.platformPermissions.includes('platform:reports:read')) {
+        // Reports are downloaded on demand. Do not load billing settings (or any
+        // other platform endpoint) when opening this screen: staff who only have
+        // report access must not receive a misleading permission error here.
       } else {
         throw new Error('This platform permission is not granted.');
       }
