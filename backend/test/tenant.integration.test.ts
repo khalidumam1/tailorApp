@@ -27,6 +27,7 @@ let userAId = '';
 let userBId = '';
 let platformStaffId = '';
 let platformSuperAdminId = '';
+let createdPlatformStaffId = '';
 let assignedOwnerId = '';
 let roleAId = '';
 let roleBId = '';
@@ -318,6 +319,12 @@ after(async () => {
   await prisma.role.deleteMany({ where: { id: { in: [roleAId, roleBId] } } });
   await prisma.user.deleteMany({ where: { id: { in: [userAId, userBId] } } });
   if (assignedOwnerId) await prisma.user.delete({ where: { id: assignedOwnerId } });
+  if (createdPlatformStaffId) {
+    await prisma.auditEvent.deleteMany({
+      where: { action: 'platform.staff_created', entityId: createdPlatformStaffId },
+    });
+    await prisma.user.delete({ where: { id: createdPlatformStaffId } });
+  }
   await prisma.user.delete({ where: { id: platformStaffId } });
   await prisma.user.delete({ where: { id: platformSuperAdminId } });
   await prisma.businessItem.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
@@ -594,6 +601,69 @@ test('platform role alone is insufficient; an explicit platform permission is re
   assert.equal(withGrant.status, 200);
   const result = await withGrant.json() as { data: { items: Array<{ id: string }> } };
   assert.ok(result.data.items.some((business) => business.id === businessAId));
+});
+
+test('platform staff creation commits the account, explicit grants and audit event together', { skip: !enabled }, async () => {
+  const token = process.env.TENANT_TEST_PLATFORM_TOKEN;
+  if (!token) throw new Error('Platform staff test token was not initialized');
+  const staffManagePermission = await prisma.permission.upsert({
+    where: { key: 'platform:staff:manage' },
+    update: {},
+    create: { key: 'platform:staff:manage', description: 'Manage platform staff in integration test' },
+  });
+  await prisma.platformPermissionGrant.createMany({
+    data: [
+      { userId: platformStaffId, permissionId: staffManagePermission.id },
+      { userId: platformStaffId, permissionId: platformReadPermissionId },
+    ],
+    skipDuplicates: true,
+  });
+
+  const suffix = randomUUID();
+  const email = `Created-Platform-Staff-${suffix}@example.test`;
+  const permissions = ['platform:staff:manage', 'platform:businesses:read'];
+  const create = (body: unknown) => fetch(`${baseUrl}/api/v1/platform/staff`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const response = await create({
+    name: 'Integration Platform Staff',
+    email,
+    password: 'integration-platform-staff-password',
+    permissions,
+  });
+  assert.equal(response.status, 201, await response.clone().text());
+  const result = await response.json() as { data: { id: string; email: string; permissions: string[] } };
+  createdPlatformStaffId = result.data.id;
+  assert.equal(result.data.email, email.toLowerCase());
+  assert.deepEqual([...result.data.permissions].sort(), [...permissions].sort());
+
+  const persistedGrants = await prisma.platformPermissionGrant.findMany({
+    where: { userId: createdPlatformStaffId },
+    include: { permission: { select: { key: true } } },
+  });
+  assert.deepEqual(persistedGrants.map(({ permission }) => permission.key).sort(), [...permissions].sort());
+  const auditEvent = await prisma.auditEvent.findFirst({
+    where: { action: 'platform.staff_created', entityId: createdPlatformStaffId },
+  });
+  assert.ok(auditEvent);
+
+  const duplicateEmail = await create({
+    name: 'Duplicate Platform Staff',
+    email,
+    password: 'integration-platform-staff-password',
+    permissions,
+  });
+  assert.equal(duplicateEmail.status, 409, await duplicateEmail.text());
+
+  const escalation = await create({
+    name: 'Escalated Platform Staff',
+    email: `escalated-platform-staff-${suffix}@example.test`,
+    password: 'integration-platform-staff-password',
+    permissions: ['platform:system:health'],
+  });
+  assert.equal(escalation.status, 403, await escalation.text());
 });
 
 test('platform owner assignment creates its role permissions within a transaction', { skip: !enabled }, async () => {

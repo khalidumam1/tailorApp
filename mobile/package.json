@@ -36,6 +36,8 @@
   },
   "overrides": {
     "deepmerge-ts": "8.0.2",
+    "@babel/runtime": "7.29.7",
+    "@expo/metro-file-map": "57.0.4",
     "xcode": {
       "uuid": "11.1.1"
     }

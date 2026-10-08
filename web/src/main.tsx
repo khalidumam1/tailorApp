@@ -2,14 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { StrictMode } from 'react';
 import ReactDOM from 'react-dom/client';
 import {
+  accessibleTextColor,
   createCustomerSchema,
   createMeasurementRevisionSchema,
   createOrderSchema,
   createPaymentSchema,
+  DEFAULT_APPLICATION_BRANDING,
+  type ApplicationBranding,
 } from '@tailor/shared';
 import {
   api,
   ApiError,
+  clearRefreshCache,
   type BusinessFieldInput,
   type BusinessStageInput,
   type BusinessTransitionInput,
@@ -36,8 +40,25 @@ import { Icon, type IconName } from './Icons';
 import './styles.css';
 
 type View = 'dashboard' | 'orders' | 'catalog' | 'customers' | 'measurements' | 'payments' | 'notifications' | 'subscription' | 'configuration';
-type PlatformView = 'businesses' | 'templates' | 'staff' | 'audit' | 'health' | 'billing' | 'plans' | 'paymentQueue' | 'billingSettings' | 'reports';
+type PlatformView = 'businesses' | 'templates' | 'staff' | 'audit' | 'health' | 'billing' | 'plans' | 'paymentQueue' | 'billingSettings' | 'branding' | 'reports';
 type Selection = Exclude<LoginResult, { accessToken: string }>;
+type ThemeMode = 'light' | 'dark';
+
+const THEME_STORAGE_KEY = 'tailorapp.theme.v1';
+
+function storedThemePreference(): ThemeMode | null {
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    return stored === 'light' || stored === 'dark' ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+const initialThemePreference = storedThemePreference();
+if (typeof document !== 'undefined') {
+  document.documentElement.dataset.theme = initialThemePreference ?? 'light';
+}
 
 const navigation: Array<{ view: View; label: string; permission?: string; module?: string }> = [
   { view: 'dashboard', label: 'Overview', permission: 'orders:read' },
@@ -118,12 +139,21 @@ function structureDraft(configuration: BusinessConfiguration): {
 }
 
 function messageFor(error: unknown): string {
+  if (error instanceof ApiError) {
+    return error.requestId ? `${error.message} (Reference ${error.requestId})` : error.message;
+  }
   return error instanceof Error ? error.message : 'Something went wrong. Please try again.';
 }
 
 function App() {
   const [session, setSession] = useState<Session | null>(null);
+  const authGeneration = useRef(0);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [applicationBranding, setApplicationBranding] = useState<ApplicationBranding>(DEFAULT_APPLICATION_BRANDING);
+  const [applicationBrandingDraft, setApplicationBrandingDraft] = useState<ApplicationBranding>(DEFAULT_APPLICATION_BRANDING);
+  const [themeOverride, setThemeOverride] = useState<ThemeMode | null>(initialThemePreference);
+  const [businessLogoFailed, setBusinessLogoFailed] = useState(false);
+  const themeMode = themeOverride ?? applicationBranding.defaultTheme;
   const [selection, setSelection] = useState<Selection | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -254,18 +284,137 @@ function App() {
   const [reportFrom, setReportFrom] = useState(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
   const [reportTo, setReportTo] = useState(new Date().toISOString().slice(0, 10));
 
+  function toggleTheme() {
+    const nextTheme: ThemeMode = themeMode === 'dark' ? 'light' : 'dark';
+    setThemeOverride(nextTheme);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    } catch {
+      // Theme still applies for this visit when browser storage is unavailable.
+    }
+  }
+
+  const themeToggleButton = (
+    <button
+      className="button button-secondary theme-toggle"
+      type="button"
+      aria-label={`Use ${themeMode === 'dark' ? 'light' : 'dark'} theme`}
+      aria-pressed={themeMode === 'dark'}
+      onClick={toggleTheme}
+    >
+      <Icon name={themeMode === 'dark' ? 'sun' : 'moon'} />
+      <span>{themeMode === 'dark' ? 'Light theme' : 'Dark theme'}</span>
+    </button>
+  );
+
+  const clearSessionData = useCallback(() => {
+    setCurrentUser(null);
+    setSelection(null);
+    setDashboard(null);
+    setBusinessConfiguration(null);
+    setBusinessConfigurationDraft(null);
+    businessConfigurationHistoryRequest.current += 1;
+    setBusinessConfigurationHistory([]);
+    setBusinessConfigurationHistoryCursor(null);
+    setLoadingBusinessConfigurationHistory(false);
+    setStructureFields([]);
+    setStructureStages([]);
+    setStructureTransitions([]);
+    setNotificationTemplateJson('{}');
+    setCustomers([]);
+    setCatalogItems([]);
+    setOrders([]);
+    setPayments([]);
+    setNotifications([]);
+    setTemplates([]);
+    setProfiles([]);
+    setReceipt(null);
+    setShopSubscription(null);
+    setSelectedSubscriptionPlanId('');
+    setPlatformBusinesses([]);
+    setPlatformTemplates([]);
+    setPlatformTemplateRevisions([]);
+    setPlatformStaff([]);
+    setPlatformPermissions([]);
+    setPlatformAudit([]);
+    setPlatformHealth(null);
+    setBillingDashboard(null);
+    setBillingPlans([]);
+    setBillingPayments([]);
+    setBillingPaymentCursor(null);
+    setBillingSettings(null);
+    setBillingBusinesses([]);
+    setBillingBusinessId('');
+    setBillingBusinessDetail(null);
+    setBusinessMembers(null);
+    setMembersBusinessId('');
+    setMembersError(null);
+    setMembersNotice(null);
+    setRemovingMemberId('');
+    setRemovalReason('');
+    setBusinessName('');
+    setBusinessSlug('');
+    setOwnerName('');
+    setOwnerEmail('');
+    setOwnerPassword('');
+    setPlatformStaffName('');
+    setPlatformStaffEmail('');
+    setPlatformStaffPassword('');
+    setNewStaffPermissions([]);
+    setError(null);
+    setView('dashboard');
+    setPlatformView('businesses');
+  }, []);
+
   const withSession = useCallback(async <T,>(action: (token: string) => Promise<T>): Promise<T> => {
     if (!session) throw new Error('Please sign in again.');
+    const generation = authGeneration.current;
+    const ensureActive = () => {
+      if (generation !== authGeneration.current) {
+        throw new ApiError('This session has ended. Please sign in again.', 'SESSION_ENDED', 401);
+      }
+    };
+    const expireSession = (requestId?: string) => {
+      authGeneration.current += 1;
+      clearRefreshCache();
+      setSession(null);
+      clearSessionData();
+      return new ApiError('Your session has expired. Please sign in again.', 'SESSION_EXPIRED', 401, requestId);
+    };
     try {
-      return await action(session.accessToken);
+      ensureActive();
+      const result = await action(session.accessToken);
+      ensureActive();
+      return result;
     } catch (cause) {
+      ensureActive();
       if (!(cause instanceof ApiError) || cause.status !== 401) throw cause;
-      const renewed = await api.refresh(session.refreshToken);
+      let renewed: Awaited<ReturnType<typeof api.refresh>>;
+      try {
+        renewed = await api.refresh(session.refreshToken);
+        ensureActive();
+      } catch (refreshFailure) {
+        ensureActive();
+        if (refreshFailure instanceof ApiError && refreshFailure.status === 401) {
+          throw expireSession(refreshFailure.requestId);
+        }
+        throw refreshFailure;
+      }
       const nextSession = { ...session, ...renewed };
       setSession(nextSession);
-      return action(nextSession.accessToken);
+      try {
+        const result = await action(nextSession.accessToken);
+        ensureActive();
+        return result;
+      } catch (retryFailure) {
+        ensureActive();
+        if (retryFailure instanceof ApiError && retryFailure.status === 401) {
+          throw expireSession(retryFailure.requestId);
+        }
+        throw retryFailure;
+      }
     }
-  }, [session]);
+  }, [clearSessionData, session]);
 
   const reloadCurrent = useCallback(async () => {
     if (!session || currentUser?.context.scope !== 'business') return;
@@ -331,9 +480,60 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const preferenceChanged = (event: StorageEvent) => {
+      if (event.key !== THEME_STORAGE_KEY) return;
+      const next = event.newValue;
+      if (next === 'light' || next === 'dark') {
+        setThemeOverride(next);
+      } else {
+        setThemeOverride(null);
+      }
+    };
+    window.addEventListener('storage', preferenceChanged);
+    return () => window.removeEventListener('storage', preferenceChanged);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    api.applicationBranding().then((settings) => {
+      if (!active) return;
+      setApplicationBranding(settings);
+      setApplicationBrandingDraft((current) => current === DEFAULT_APPLICATION_BRANDING ? settings : current);
+    }).catch(() => {
+      // Branding is non-critical: retain the local defaults if the API is offline.
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.theme = themeMode;
+    root.style.setProperty('--configured-primary', applicationBranding.primaryColor);
+    root.style.setProperty('--configured-accent', applicationBranding.accentColor);
+    root.style.setProperty('--brand-foreground', accessibleTextColor(applicationBranding.primaryColor));
+    document.title = `${applicationBranding.brandName} · ${currentUser?.context.scope === 'platform' ? 'Platform console' : currentUser ? 'Business workspace' : 'Sign in'}`;
+    const description = document.querySelector<HTMLMetaElement>('meta[name="description"]');
+    if (description) description.content = applicationBranding.description || 'Manage your business in one clear workspace.';
+    const themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (themeColor) themeColor.content = themeMode === 'dark' ? '#0d1511' : applicationBranding.primaryColor;
+    let favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (!favicon) {
+      favicon = document.createElement('link');
+      favicon.rel = 'icon';
+      document.head.append(favicon);
+    }
+    favicon.href = applicationBranding.faviconUrl || '/favicon.svg';
+    favicon.referrerPolicy = 'no-referrer';
+  }, [applicationBranding, currentUser?.context.scope, themeMode]);
+
+  useEffect(() => {
+    setBusinessLogoFailed(false);
+  }, [businessConfiguration?.business.logoUrl]);
+
+  useEffect(() => {
     let active = true;
     if (session) {
-      api.me(session.accessToken).then((user) => {
+      withSession(api.me).then((user) => {
         if (active) {
           setCurrentUser(user);
           setError(null);
@@ -343,7 +543,7 @@ function App() {
       });
     }
     return () => { active = false; };
-  }, [session?.accessToken]);
+  }, [session?.accessToken, withSession]);
 
   useEffect(() => {
     let active = true;
@@ -407,6 +607,7 @@ function App() {
       plans: 'platform:plans:manage',
       paymentQueue: 'platform:payments:review',
       billingSettings: 'platform:billing:settings',
+      branding: 'platform:application:manage',
       reports: 'platform:reports:read',
     };
     if (!currentUser.context.platformPermissions.includes(viewPermissions[platformView])) {
@@ -473,6 +674,12 @@ function App() {
         setBillingPaymentCursor(result.nextCursor);
       } else if (platformView === 'billingSettings' && currentUser.context.platformPermissions.includes('platform:billing:settings')) {
         setBillingSettings(await withSession(api.billingSettings));
+      } else if (platformView === 'branding' && currentUser.context.platformPermissions.includes('platform:application:manage')) {
+        const settings = await withSession(api.platformApplicationBranding);
+        if (active) {
+          setApplicationBranding(settings);
+          setApplicationBrandingDraft(settings);
+        }
       } else if (platformView === 'reports' && currentUser.context.platformPermissions.includes('platform:reports:read')) {
         // Reports are downloaded on demand. Do not load billing settings (or any
         // other platform endpoint) when opening this screen: staff who only have
@@ -579,6 +786,7 @@ function App() {
         if (result.businesses[0]) setBusinessChoice(result.businesses[0].id);
         return;
       }
+      authGeneration.current += 1;
       setSession(result);
       setSelection(null);
       setCurrentUser(null);
@@ -592,23 +800,25 @@ function App() {
   }
 
   async function signOut() {
-    if (session) {
-      try {
-        await api.logout(session.accessToken, session.refreshToken);
-      } catch (cause) {
+    const endingSession = session;
+    authGeneration.current += 1;
+    const signOutGeneration = authGeneration.current;
+    setSession(null);
+    clearSessionData();
+    if (!endingSession) {
+      clearRefreshCache();
+      return;
+    }
+    try {
+      await api.logout(endingSession.accessToken, endingSession.refreshToken);
+    } catch (cause) {
+      if (authGeneration.current === signOutGeneration) {
         setNotice(`Session could not be revoked remotely: ${messageFor(cause)}`);
       }
+    } finally {
+      // Clearing one session must not cancel a newer login made while sign-out was in flight.
+      clearRefreshCache(endingSession.refreshToken);
     }
-    setSession(null);
-    setCurrentUser(null);
-    setSelection(null);
-    setDashboard(null);
-    setOrders([]);
-    setCatalogItems([]);
-    setCustomers([]);
-    setPayments([]);
-    setNotifications([]);
-    setReceipt(null);
   }
 
   async function addCustomer(event: FormEvent<HTMLFormElement>) {
@@ -1375,6 +1585,22 @@ function App() {
     }
   }
 
+  async function saveApplicationBranding(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWorking(true);
+    setError(null);
+    try {
+      const saved = await withSession((token) => api.updatePlatformApplicationBranding(token, applicationBrandingDraft));
+      setApplicationBranding(saved);
+      setApplicationBrandingDraft(saved);
+      setNotice('Application branding and appearance settings saved.');
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function assignSubscription(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!billingBusinessId || !assignDraft.planId) {
@@ -1510,14 +1736,15 @@ function App() {
     const availableBusinesses = selection?.businesses ?? [];
     return (
       <main className="auth-layout">
+        {themeToggleButton}
         <section className="auth-brand">
-          <p className="eyebrow">Made for the workroom</p>
-          <h1>Good work starts with a good fit.</h1>
-          <p>Keep customers, measurements, stitching progress and payments in one clear place.</p>
+          <p className="eyebrow">{applicationBranding.tagline || 'Made for the workroom'}</p>
+          <h1>{applicationBranding.loginTitle || 'Welcome back'}</h1>
+          <p>{applicationBranding.description || 'Keep your business moving with one clear workspace.'}</p>
         </section>
         <form className="auth-card" onSubmit={submitLogin}>
           <div>
-            <p className="eyebrow">TailorApp</p>
+            <p className="eyebrow">{applicationBranding.brandName}</p>
             <h2>{selection ? 'Choose your workspace' : 'Welcome back'}</h2>
             <p className="muted">{selection ? 'Sign in again to confirm your access scope.' : 'Sign in with your business account.'}</p>
           </div>
@@ -1553,7 +1780,15 @@ function App() {
           <button className="button button-primary button-wide" type="submit" disabled={working || (selection !== null && scopeChoice === 'business' && !businessChoice)}>
             {working ? 'Signing in…' : 'Sign in'}
           </button>
-          <p className="fine-print">Your session stays in memory on this device. Never share your password.</p>
+          <p className="fine-print">{applicationBranding.footerText || 'Your session stays in memory on this device. Never share your password.'}</p>
+          {(applicationBranding.supportEmail || applicationBranding.supportUrl) && (
+            <p className="auth-support">
+              Need help?{' '}
+              {applicationBranding.supportUrl && <a href={applicationBranding.supportUrl} target="_blank" rel="noreferrer">Visit support</a>}
+              {applicationBranding.supportUrl && applicationBranding.supportEmail && ' · '}
+              {applicationBranding.supportEmail && <a href={`mailto:${applicationBranding.supportEmail}`}>{applicationBranding.supportEmail}</a>}
+            </p>
+          )}
         </form>
       </main>
     );
@@ -1569,6 +1804,7 @@ function App() {
       { view: 'plans', label: 'Plans', permission: 'platform:plans:manage' },
       { view: 'paymentQueue', label: 'Payment review', permission: 'platform:payments:review' },
       { view: 'billingSettings', label: 'Billing settings', permission: 'platform:billing:settings' },
+      { view: 'branding', label: 'Branding & appearance', permission: 'platform:application:manage' },
       { view: 'reports', label: 'Billing reports', permission: 'platform:reports:read' },
       { view: 'staff', label: 'Platform staff', permission: 'platform:staff:manage' },
       { view: 'audit', label: 'Audit history', permission: 'platform:audit:read' },
@@ -1581,11 +1817,15 @@ function App() {
     return (
       <main className="page platform-state">
         <header className="platform-header">
-          <div className="platform-brand" aria-label="TailorApp platform">
-            <span className="platform-brand-mark" aria-hidden="true">T</span>
-            <span><strong>TailorApp</strong><small>Platform console</small></span>
+          <div className="platform-brand" aria-label={`${applicationBranding.brandName} platform`}>
+            <span className="platform-brand-mark" aria-hidden="true">
+              <span className="brand-mark-fallback">{applicationBranding.brandName.trim().charAt(0).toUpperCase() || 'A'}</span>
+              {applicationBranding.logoUrl && <img key={applicationBranding.logoUrl} src={applicationBranding.logoUrl} alt="" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.style.display = 'none'; }} />}
+            </span>
+            <span><strong>{applicationBranding.brandName}</strong><small>Platform console</small></span>
           </div>
           <div className="platform-header-actions">
+            {themeToggleButton}
             <span className="platform-access-badge"><span aria-hidden="true">●</span> Platform administrator</span>
             <div className="platform-identity">
               <span className="user-avatar" aria-hidden="true">{currentUser.user.name.trim().charAt(0).toUpperCase()}</span>
@@ -1924,6 +2164,37 @@ function App() {
             </form> : <EmptyState title="Billing settings unavailable" />}
           </section>
         )}
+        {platformView === 'branding' && grants.has('platform:application:manage') && (
+          <section className="content-stack">
+            <div className="section-heading"><div><p className="eyebrow">Product configuration</p><h2>Branding & appearance</h2><p className="muted">Set the name, login presentation, colors, theme defaults, and support details shown across the product.</p></div></div>
+            {loading ? <LoadingState /> : <form className="panel form-panel" onSubmit={saveApplicationBranding}>
+              <div className="form-grid">
+                <label>Product name<input value={applicationBrandingDraft.brandName} maxLength={80} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, brandName: event.target.value })} required /></label>
+                <label>Tagline<input value={applicationBrandingDraft.tagline} maxLength={140} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, tagline: event.target.value })} /></label>
+                <label className="span-all">Login headline<input value={applicationBrandingDraft.loginTitle} maxLength={120} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, loginTitle: event.target.value })} /></label>
+                <label className="span-all">Description<textarea rows={3} maxLength={320} value={applicationBrandingDraft.description} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, description: event.target.value })} /></label>
+                <label>Logo URL<input value={applicationBrandingDraft.logoUrl} maxLength={2048} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, logoUrl: event.target.value })} placeholder="https://… or /assets/logo.svg" /></label>
+                <label>Favicon URL<input value={applicationBrandingDraft.faviconUrl} maxLength={2048} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, faviconUrl: event.target.value })} placeholder="https://… or /favicon.ico" /></label>
+                <label>Primary color<input type="color" value={applicationBrandingDraft.primaryColor} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, primaryColor: event.target.value })} /></label>
+                <label>Accent color<input type="color" value={applicationBrandingDraft.accentColor} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, accentColor: event.target.value })} /></label>
+                <label>Default theme<select value={applicationBrandingDraft.defaultTheme} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, defaultTheme: event.target.value as ThemeMode })}><option value="light">Light</option><option value="dark">Dark</option></select></label>
+                <label>Support email<input type="email" value={applicationBrandingDraft.supportEmail} maxLength={254} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, supportEmail: event.target.value })} /></label>
+                <label className="span-all">Support website<input value={applicationBrandingDraft.supportUrl} maxLength={2048} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, supportUrl: event.target.value })} placeholder="https://support.example.com" /></label>
+                <label className="span-all">Login footer text<textarea rows={2} maxLength={200} value={applicationBrandingDraft.footerText} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, footerText: event.target.value })} placeholder="Optional note shown beneath the sign-in form" /></label>
+              </div>
+              <div className="brand-preview" aria-label="Brand preview">
+                <span className="brand-preview-mark" style={{ backgroundColor: applicationBrandingDraft.primaryColor, color: accessibleTextColor(applicationBrandingDraft.primaryColor) }}>
+                  <span className="brand-mark-fallback">{applicationBrandingDraft.brandName.trim().charAt(0).toUpperCase() || 'A'}</span>
+                  {applicationBrandingDraft.logoUrl && <img key={applicationBrandingDraft.logoUrl} src={applicationBrandingDraft.logoUrl} alt="" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.style.display = 'none'; }} />}
+                </span>
+                <span><strong>{applicationBrandingDraft.brandName || 'Your product name'}</strong><small style={{ color: applicationBrandingDraft.accentColor }}>{applicationBrandingDraft.tagline || 'Your tagline'}</small></span>
+                <span className="brand-preview-chip" style={{ backgroundColor: applicationBrandingDraft.primaryColor, color: accessibleTextColor(applicationBrandingDraft.primaryColor) }}>Primary action</span>
+              </div>
+              <p className="fine-print">Images must use HTTPS or a same-origin absolute path. Support websites must use HTTPS. Your own theme choice is saved on this device and takes precedence over the default.</p>
+              <button className="button button-primary" disabled={working || !online}>{working ? 'Saving…' : 'Save branding settings'}</button>
+            </form>}
+          </section>
+        )}
         {platformView === 'reports' && grants.has('platform:reports:read') && (
           <section className="content-stack">
             <div className="section-heading"><div><p className="eyebrow">Finance & reconciliation</p><h2>Subscription reports</h2><p className="muted">Export submitted, approved and rejected manual-payment records for the selected payment-date range.</p></div></div>
@@ -2071,11 +2342,18 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <a className="brand-lockup" href="#" onClick={(event) => { event.preventDefault(); setView('dashboard'); }}>
-          <span className="brand-mark" aria-hidden="true">T</span>
-          <span><strong>TailorApp</strong><small>Workroom desk</small></span>
+          <span className="brand-mark" aria-hidden="true">
+            <span className="brand-mark-fallback">{applicationBranding.brandName.trim().charAt(0).toUpperCase() || 'A'}</span>
+            {applicationBranding.logoUrl && <img key={applicationBranding.logoUrl} src={applicationBranding.logoUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.style.display = 'none'; }} />}
+          </span>
+          <span><strong>{applicationBranding.brandName}</strong><small>{applicationBranding.tagline || 'Business workspace'}</small></span>
         </a>
         <div className="shop-switcher">
-          <span className="shop-avatar" aria-hidden="true">{(businessConfiguration?.business.name ?? currentUser?.context.business?.name ?? 'S').slice(0, 1)}</span>
+          <span className="shop-avatar" aria-hidden="true">
+            {businessConfiguration?.business.logoUrl && !businessLogoFailed
+              ? <img key={businessConfiguration.business.logoUrl} src={businessConfiguration.business.logoUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setBusinessLogoFailed(true)} />
+              : (businessConfiguration?.business.name ?? currentUser?.context.business?.name ?? 'S').slice(0, 1).toUpperCase()}
+          </span>
           <span><strong>{businessConfiguration?.business.name ?? currentUser?.context.business?.name ?? 'Business'}</strong><small>{businessConfiguration?.template.name ?? 'Business workspace'}</small></span>
         </div>
         <nav aria-label="Main navigation" className="main-nav">
@@ -2095,9 +2373,10 @@ function App() {
         <header className="workspace-header">
           <div>
             <p className="eyebrow">{currentUser?.context.business?.name}</p>
-            <h1>{navigation.find((item) => item.view === view)?.label ?? 'Overview'}</h1>
+            <h1>{visibleNavigation.find((item) => item.view === view)?.label ?? 'Overview'}</h1>
           </div>
           <div className="user-menu">
+            {themeToggleButton}
             <span className="user-avatar" aria-hidden="true">{currentUser?.user.name.slice(0, 1).toUpperCase()}</span>
             <span className="user-name">{currentUser?.user.name}</span>
             <button className="button button-quiet" onClick={() => void signOut()}><Icon name="signOut" /> Sign out</button>
@@ -2479,7 +2758,7 @@ function App() {
                 <form className="panel form-panel" onSubmit={saveBusinessConfiguration}>
                   <div className="form-grid">
                     <label>Business name<input value={businessConfigurationDraft.business.name} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, name: event.target.value } })} maxLength={160} required /></label>
-                    <label>Logo URL<input type="url" value={businessConfigurationDraft.business.logoUrl ?? ''} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, logoUrl: event.target.value || null } })} placeholder="https://…" /></label>
+                    <label>Logo URL<input type="text" maxLength={2048} value={businessConfigurationDraft.business.logoUrl ?? ''} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, logoUrl: event.target.value || null } })} placeholder="https://… or /assets/logo.svg" /></label>
                     <label>Currency<input value={businessConfigurationDraft.business.currency} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, currency: event.target.value.toUpperCase() } })} pattern="[A-Z]{3}" maxLength={3} required /></label>
                     <label>Timezone<input value={businessConfigurationDraft.business.timezone} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, timezone: event.target.value } })} maxLength={100} required /></label>
                     <label>Business contact / WhatsApp phone<input

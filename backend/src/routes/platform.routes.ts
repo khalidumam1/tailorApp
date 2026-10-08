@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { applicationBrandingSchema } from '@tailor/shared';
 import express from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -7,6 +8,7 @@ import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requirePlatformPermission } from '../middleware/auth.js';
 import { businessPermissions, platformPermissions } from '../permissions.js';
+import { APPLICATION_BRANDING_SETTING_KEY, loadApplicationBranding } from '../application-branding.js';
 
 const router = express.Router();
 const businessSchema = z.object({
@@ -192,6 +194,34 @@ async function changeMembershipAccess(
 }
 
 router.use(authenticate);
+
+router.get('/application-branding', requirePlatformPermission('platform:application:manage'), asyncHandler(async (_req, res) => {
+  res.json({ data: await loadApplicationBranding() });
+}));
+
+router.put('/application-branding', requirePlatformPermission('platform:application:manage'), asyncHandler(async (req, res) => {
+  const actorId = getActorId(req);
+  const input = applicationBrandingSchema.parse(req.body);
+  const value = JSON.parse(JSON.stringify(input)) as Prisma.InputJsonValue;
+  await prisma.$transaction(async (tx) => {
+    await tx.platformSetting.upsert({
+      where: { key: APPLICATION_BRANDING_SETTING_KEY },
+      create: { key: APPLICATION_BRANDING_SETTING_KEY, value },
+      update: { value },
+    });
+    await tx.auditEvent.create({
+      data: {
+        actorId,
+        action: 'platform.application_branding_updated',
+        entityType: 'platform_setting',
+        entityId: null,
+        requestId: req.requestId,
+        metadata: { settingKey: APPLICATION_BRANDING_SETTING_KEY, changedFields: Object.keys(input) },
+      },
+    });
+  });
+  res.json({ data: input });
+}));
 
 router.get('/businesses', requirePlatformPermission('platform:businesses:read'), asyncHandler(async (req, res) => {
   const query = listSchema.parse(req.query);
@@ -518,27 +548,41 @@ router.post('/staff', requirePlatformPermission('platform:staff:manage'), asyncH
   const actorId = getActorId(req);
   const input = staffSchema.parse(req.body);
   const grants = validatePlatformGrants(input.permissions, req.auth?.platformPermissions ?? []);
+  // Hash before opening the transaction so CPU work does not hold a database
+  // transaction open while the password hash is calculated.
+  const passwordHash = await bcrypt.hash(input.password, 12);
   try {
     const staff = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
           name: input.name,
           email: input.email,
-          passwordHash: await bcrypt.hash(input.password, 12),
+          passwordHash,
           platformRole: 'PLATFORM_STAFF',
         },
       });
-      for (const key of grants) {
-        const permission = await tx.permission.upsert({
-          where: { key },
-          update: {},
-          create: { key, description: platformPermissions.find(([permissionKey]) => permissionKey === key)?.[1] ?? key },
+      if (grants.length > 0) {
+        // Permission keys come from the static platform permission catalog. Insert
+        // any missing catalog rows in one query, then attach all grants in one
+        // query instead of issuing two sequential queries for every permission.
+        await tx.permission.createMany({
+          data: grants.map((key) => ({
+            key,
+            description: platformPermissions.find(([permissionKey]) => permissionKey === key)?.[1] ?? key,
+          })),
+          skipDuplicates: true,
         });
-        await tx.platformPermissionGrant.create({ data: { userId: user.id, permissionId: permission.id } });
+        const permissions = await tx.permission.findMany({
+          where: { key: { in: grants } },
+          select: { id: true },
+        });
+        await tx.platformPermissionGrant.createMany({
+          data: permissions.map((permission) => ({ userId: user.id, permissionId: permission.id })),
+        });
       }
       await writePlatformAudit(tx, actorId, 'platform.staff_created', 'user', user.id, req.requestId, { permissions: grants });
       return { id: user.id, name: user.name, email: user.email, active: user.active, permissions: grants };
-    });
+    }, { maxWait: 10_000, timeout: 30_000 });
     res.status(201).json({ data: staff });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {

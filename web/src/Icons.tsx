@@ -42,6 +42,9 @@ export type IconName =
   | 'plans'
   | 'paymentQueue'
   | 'billingSettings'
+  | 'branding'
+  | 'sun'
+  | 'moon'
   | 'reports'
   | 'signOut'
   | 'home'
@@ -200,6 +203,19 @@ const paths: Record<IconName, JSX.Element> = {
       <circle cx="10.5" cy="17.5" r="1.9" />
     </>
   ),
+  branding: (
+    <>
+      <path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4m9.2 9.2L18 18M18 6l-1.4 1.4m-9.2 9.2L6 18" />
+      <circle cx="12" cy="12" r="4.5" />
+    </>
+  ),
+  sun: (
+    <>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2.8v2M12 19.2v2M4.8 4.8l1.4 1.4m11.6 11.6 1.4 1.4M2.8 12h2m14.4 0h2M4.8 19.2l1.4-1.4M17.8 6.2l1.4-1.4" />
+    </>
+  ),
+  moon: <path d="M20.2 15.1A8.5 8.5 0 0 1 8.9 3.8 8.5 8.5 0 1 0 20.2 15.1Z" />,
   // Bar chart — reports.
   reports: (
     <>

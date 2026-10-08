@@ -9,16 +9,19 @@
    1. Tokens
    -------------------------------------------------------------------------- */
 :root {
-  /* Brand — deep workroom green, used sparingly so it still means something. */
-  --brand-900: #07281f;
-  --brand-800: #0b3a2d;
-  --brand-700: #0e4b3a;
-  --brand-600: #0f6048;
-  --brand-500: #117a5c;
-  --brand-400: #2f9a78;
-  --brand-300: #7cc4ab;
-  --brand-100: #d9ece4;
-  --brand-50: #eef7f2;
+  /* Brand tones derive from the platform-configured primary/accent colors. */
+  --configured-primary: #117a5c;
+  --configured-accent: #c08a33;
+  --brand-900: color-mix(in srgb, var(--configured-primary) 10%, #07281f);
+  --brand-800: color-mix(in srgb, var(--configured-primary) 16%, #0b3a2d);
+  --brand-700: color-mix(in srgb, var(--configured-primary) 24%, #0e4b3a);
+  --brand-600: color-mix(in srgb, var(--configured-primary) 30%, #0f6048);
+  --brand-500: color-mix(in srgb, var(--configured-primary) 74%, white);
+  --brand-400: color-mix(in srgb, var(--configured-primary) 78%, white);
+  --brand-300: color-mix(in srgb, var(--configured-primary) 52%, white);
+  --brand-100: color-mix(in srgb, var(--configured-primary) 16%, white);
+  --brand-50: color-mix(in srgb, var(--configured-primary) 7%, white);
+  --brand-foreground: #ffffff;
 
   /* Ink + neutrals — slightly warm greys so white surfaces look intentional. */
   --ink-900: #0e1a16;
@@ -54,12 +57,12 @@
   --violet-fg: #5f4b94;
   --violet-bg: #f1eefa;
 
-  /* Brass — the thread colour. Used sparingly, as a signature, never as chrome. */
-  --accent-600: #9c6a21;
-  --accent-500: #c08a33;
-  --accent-400: #d9a450;
-  --accent-100: #f6e7cb;
-  --accent-50: #fdf7ec;
+  /* Accent tones are configurable and still derived from one token. */
+  --accent-600: color-mix(in srgb, var(--configured-accent) 80%, #5c3b10);
+  --accent-500: var(--configured-accent);
+  --accent-400: color-mix(in srgb, var(--configured-accent) 65%, white);
+  --accent-100: color-mix(in srgb, var(--configured-accent) 18%, white);
+  --accent-50: color-mix(in srgb, var(--configured-accent) 7%, white);
 
   /* Fonts */
   --font-ui: Inter, "Inter var", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -80,13 +83,16 @@
   --shadow-md: 0 1px 2px rgb(14 36 28 / 5%), 0 6px 16px -4px rgb(14 36 28 / 8%);
   --shadow-lg: 0 2px 4px rgb(14 36 28 / 5%), 0 18px 40px -12px rgb(14 36 28 / 16%);
   --shadow-xl: 0 4px 10px rgb(10 28 22 / 8%), 0 32px 70px -20px rgb(10 28 22 / 28%);
-  --ring: 0 0 0 3px rgb(17 122 92 / 18%);
+  --ring: 0 0 0 3px color-mix(in srgb, var(--configured-primary) 18%, transparent);
+  --scrollbar-thumb: #c6d2cc;
+  --scrollbar-thumb-hover: #a9b9b1;
 
   /* Motion */
   --ease: cubic-bezier(.2, .7, .3, 1);
   --fast: .14s var(--ease);
   --med: .22s var(--ease);
 
+  color-scheme: light;
   font-family: var(--font-ui);
   font-feature-settings: "cv05" 1, "ss01" 1;
   font-synthesis: none;
@@ -98,6 +104,65 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink-900: #f2f6f3;
+  --ink-800: #e1ebe5;
+  --ink-700: #c5d4cb;
+  --ink-600: #a6b7ad;
+  --ink-500: #8b9d93;
+  --ink-400: #74867b;
+  --ink-300: #607269;
+
+  --canvas: #0d1511;
+  --surface: #141f19;
+  --surface-sunken: #101913;
+  --surface-raised: #1a2820;
+  --line: #2a3a30;
+  --line-strong: #3b4d42;
+  --line-soft: #213027;
+  --scrollbar-thumb: #3b4d42;
+  --scrollbar-thumb-hover: #52675a;
+
+  --brand-900: #06140e;
+  --brand-800: #081c14;
+  --brand-700: color-mix(in srgb, var(--configured-primary) 55%, white);
+  --brand-600: color-mix(in srgb, var(--configured-primary) 68%, white);
+  --brand-500: var(--configured-primary);
+  --brand-400: color-mix(in srgb, var(--configured-primary) 74%, white);
+  --brand-300: color-mix(in srgb, var(--configured-primary) 38%, white);
+  --brand-100: color-mix(in srgb, var(--configured-primary) 24%, #1e3b2c);
+  --brand-50: color-mix(in srgb, var(--configured-primary) 12%, #17251d);
+
+  --info-fg: #9bc7ed;
+  --info-bg: #16283a;
+  --info-line: #29445c;
+  --warn-fg: #f1ca79;
+  --warn-bg: #2c2517;
+  --warn-line: #514126;
+  --ok-fg: #8bd1a9;
+  --ok-bg: #16291f;
+  --ok-line: #294a36;
+  --bad-fg: #f2a398;
+  --bad-bg: #301d1a;
+  --bad-line: #57302b;
+  --violet-fg: #c0afea;
+  --violet-bg: #241f32;
+
+  --accent-600: color-mix(in srgb, var(--configured-accent) 55%, white);
+  --accent-500: color-mix(in srgb, var(--configured-accent) 70%, white);
+  --accent-400: color-mix(in srgb, var(--configured-accent) 45%, white);
+  --accent-100: color-mix(in srgb, var(--configured-accent) 18%, #282216);
+  --accent-50: color-mix(in srgb, var(--configured-accent) 9%, #1b1a14);
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 20%);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 22%), 0 2px 6px rgb(0 0 0 / 18%);
+  --shadow-md: 0 2px 10px rgb(0 0 0 / 24%);
+  --shadow-lg: 0 8px 28px rgb(0 0 0 / 34%);
+  --shadow-xl: 0 18px 48px rgb(0 0 0 / 42%);
+  --ring: 0 0 0 3px color-mix(in srgb, var(--configured-primary) 36%, transparent);
+}
+
 * { box-sizing: border-box; }
 
 body {
@@ -105,23 +170,23 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background:
-    radial-gradient(1100px 520px at 100% -10%, rgb(17 122 92 / 5%), transparent 60%),
+    radial-gradient(1100px 520px at 100% -10%, color-mix(in srgb, var(--configured-primary) 5%, transparent), transparent 60%),
     var(--canvas);
 }
 
 ::selection { background: var(--brand-100); color: var(--brand-900); }
 
 /* Quiet scrollbars so dense admin screens stay calm. */
-* { scrollbar-width: thin; scrollbar-color: #c6d2cc transparent; }
+* { scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: var(--r-pill);
-  background: #c6d2cc;
+  background: var(--scrollbar-thumb);
   background-clip: content-box;
 }
-*::-webkit-scrollbar-thumb:hover { background: #a9b9b1; background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); background-clip: content-box; }
 
 /* --------------------------------------------------------------------------
    2. Typography primitives
@@ -208,7 +273,7 @@ button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .5; }
 
 :where(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
-  outline: 2px solid var(--brand-500);
+  outline: 2px solid var(--brand-600);
   outline-offset: 2px;
   border-radius: var(--r-xs);
 }
@@ -233,13 +298,13 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .button:active:not(:disabled) { transform: translateY(.5px); }
 
 .button-primary {
-  color: #fff;
-  background: linear-gradient(180deg, var(--brand-500), var(--brand-600));
+  color: var(--brand-foreground);
+  background: var(--configured-primary);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 14%), var(--shadow-xs);
 }
 .button-primary:hover:not(:disabled) {
-  background: linear-gradient(180deg, var(--brand-600), var(--brand-700));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), 0 4px 12px -2px rgb(15 96 72 / 32%);
+  background: var(--configured-primary);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), 0 4px 12px -2px color-mix(in srgb, var(--configured-primary) 36%, transparent);
 }
 
 .button-secondary {
@@ -253,6 +318,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   color: var(--brand-700);
   background: var(--brand-50);
 }
+.theme-toggle { flex: 0 0 auto; }
 
 .button-quiet { min-height: 40px; color: var(--ink-500); background: transparent; }
 .button-quiet:hover:not(:disabled) { color: var(--ink-800); background: var(--line-soft); }
@@ -283,7 +349,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .dialog-card input::placeholder, .auth-card input::placeholder { color: var(--ink-300); }
 
 .auth-card input:hover, .form-grid input:hover, .form-grid textarea:hover,
-.search-form input:hover { border-color: #c2cfc8; }
+.search-form input:hover { border-color: var(--line-strong); }
 
 .auth-card input:focus, .auth-card select:focus,
 .dialog-card input:focus, .dialog-card select:focus,
@@ -332,6 +398,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
    4. Auth
    -------------------------------------------------------------------------- */
 .auth-layout {
+  position: relative;
   display: grid;
   min-height: 100vh;
   grid-template-columns: minmax(0, 1.05fr) minmax(360px, .95fr);
@@ -339,9 +406,15 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   gap: clamp(48px, 9vw, 130px);
   padding: clamp(28px, 7vw, 110px);
   background:
-    radial-gradient(900px 620px at 8% 4%, rgb(17 122 92 / 10%), transparent 58%),
-    radial-gradient(760px 520px at 96% 96%, rgb(44 110 90 / 7%), transparent 60%),
+    radial-gradient(900px 620px at 8% 4%, color-mix(in srgb, var(--configured-primary) 10%, transparent), transparent 58%),
+    radial-gradient(760px 520px at 96% 96%, color-mix(in srgb, var(--configured-primary) 7%, transparent), transparent 60%),
     var(--canvas);
+}
+.auth-layout > .theme-toggle {
+  position: absolute;
+  z-index: 2;
+  inset-block-start: max(16px, env(safe-area-inset-top));
+  inset-inline-end: max(16px, env(safe-area-inset-right));
 }
 .auth-brand { max-width: 620px; }
 .auth-brand h1 {
@@ -388,6 +461,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   font-weight: 600;
 }
 .auth-card .fine-print { margin-top: 6px; text-align: center; }
+.auth-support { margin: 0; color: var(--ink-500); font-size: .82rem; text-align: center; }
+.auth-support a { color: var(--brand-700); font-weight: 600; text-underline-offset: 3px; }
+.auth-support a:hover { color: var(--configured-primary); }
 
 /* --------------------------------------------------------------------------
    5. App shell
@@ -408,7 +484,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   flex-direction: column;
   padding: 22px 14px 16px;
   color: #dcebe4;
-  background: linear-gradient(185deg, #10322a 0%, var(--brand-900) 100%);
+  background: linear-gradient(185deg, var(--brand-800) 0%, var(--brand-900) 100%);
   box-shadow: inset -1px 0 0 rgb(255 255 255 / 7%);
 }
 
@@ -427,6 +503,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .brand-mark {
   display: grid;
   width: 38px; height: 38px;
+  overflow: hidden;
   place-items: center;
   border-radius: var(--r-md);
   color: var(--brand-900);
@@ -436,6 +513,15 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   font-weight: 700;
   box-shadow: 0 2px 8px rgb(0 0 0 / 22%);
 }
+.brand-mark, .platform-brand-mark, .brand-preview-mark { position: relative; }
+.brand-mark > img, .shop-avatar > img, .platform-brand-mark > img, .brand-preview-mark > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.brand-mark-fallback { display: grid; width: 100%; height: 100%; place-items: center; }
 
 .shop-switcher {
   display: flex;
@@ -448,12 +534,14 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   background: rgb(255 255 255 / 5%);
 }
 .shop-avatar {
+  position: relative;
   display: grid;
   width: 32px; height: 32px;
+  overflow: hidden;
   flex: 0 0 auto;
   place-items: center;
   border-radius: var(--r-sm);
-  color: var(--brand-800);
+  color: var(--brand-300);
   background: var(--brand-100);
   font-size: .85rem;
   font-weight: 700;
@@ -552,7 +640,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   border: 1px solid var(--brand-100);
   border-radius: 50%;
   color: var(--brand-700);
-  background: linear-gradient(160deg, #eff8f3, var(--brand-100));
+  background: linear-gradient(160deg, var(--brand-50), var(--brand-100));
   font-size: .85rem;
   font-weight: 600;
 }
@@ -587,10 +675,11 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .platform-brand-mark {
   display: grid;
   width: 40px; height: 40px;
+  overflow: hidden;
   place-items: center;
   border-radius: var(--r-md);
-  color: #fff;
-  background: linear-gradient(160deg, var(--brand-500), var(--brand-700));
+  color: var(--brand-foreground);
+  background: var(--configured-primary);
   font-size: 1.1rem;
   font-weight: 700;
   box-shadow: var(--shadow-sm);
@@ -620,8 +709,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   width: 16px; height: 16px;
   place-items: center;
   border-radius: 50%;
-  color: #fff;
-  background: var(--brand-400);
+  color: var(--brand-foreground);
+  background: var(--configured-primary);
   font-size: .62rem;
 }
 .platform-identity { display: flex; align-items: center; gap: 9px; }
@@ -845,6 +934,40 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 
 /* Forms inside panels */
 .form-panel { padding: 22px; }
+.brand-preview {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  margin: 2px 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 12px;
+  background: var(--surface-sunken);
+}
+.brand-preview-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  overflow: hidden;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--r-sm);
+  font-weight: 700;
+}
+.brand-preview > span:nth-child(2) { display: grid; min-width: 0; gap: 1px; }
+.brand-preview > span:nth-child(2) strong,
+.brand-preview > span:nth-child(2) small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brand-preview > span:nth-child(2) strong { color: var(--ink-900); font-weight: 600; }
+.brand-preview > span:nth-child(2) small { font-size: .78rem; }
+.brand-preview-chip {
+  flex: 0 0 auto;
+  margin-left: auto;
+  border-radius: var(--r-sm);
+  padding: 7px 10px;
+  font-size: .76rem;
+  font-weight: 600;
+}
 .panel-heading { margin-bottom: 16px; }
 .panel-heading .muted { margin-top: 2px; }
 .panel-kicker {
@@ -1013,7 +1136,7 @@ td strong { color: var(--ink-900); font-weight: 600; }
 .status-cancelled, .status-expired, .status-rejected, .status-suspended, .notification-failed {
   color: var(--bad-fg); background: var(--bad-bg); border-color: var(--bad-line);
 }
-.status-adjusted, .notification-sent { color: var(--violet-fg); background: var(--violet-bg); border-color: #e2daf4; }
+.status-adjusted, .notification-sent { color: var(--violet-fg); background: var(--violet-bg); border-color: color-mix(in srgb, var(--violet-fg) 25%, var(--line)); }
 
 /* --------------------------------------------------------------------------
    10. Order cards
@@ -1193,7 +1316,7 @@ td strong { color: var(--ink-900); font-weight: 600; }
   border: 1px solid var(--accent-100);
   border-radius: var(--r-xl);
   color: var(--accent-600);
-  background: linear-gradient(160deg, #fff, var(--accent-50));
+  background: linear-gradient(160deg, var(--surface), var(--accent-50));
   box-shadow: var(--shadow-sm);
 }
 .empty-icon svg { width: 27px; height: 27px; }
@@ -1666,6 +1789,9 @@ td strong { color: var(--ink-900); font-weight: 600; }
 }
 
 @media (max-width: 430px) {
+  .theme-toggle span { display: none; }
+  .brand-preview { gap: 8px; padding: 9px; }
+  .brand-preview-chip { display: none; }
   .platform-state { width: min(100% - 20px, 1320px); }
   .platform-brand-mark { width: 34px; height: 34px; }
   .platform-identity-name { display: none; }

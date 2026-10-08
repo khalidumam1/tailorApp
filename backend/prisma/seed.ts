@@ -93,6 +93,7 @@ async function seed() {
     throw new Error('Demo owner, staff and platform admin accounts must use different email addresses');
   }
 
+  // Keep the multi-tenant seed atomic while allowing for remote Supabase round trips.
   const result = await prisma.$transaction(async (tx) => {
     const tailorTemplate = await tx.businessTemplate.findUniqueOrThrow({
       where: { key: 'tailor' },
@@ -894,7 +895,7 @@ async function seed() {
       customers: [customer.name, secondCustomer.name],
       orders: [order.orderNumber, secondOrder.orderNumber],
     };
-  }, { maxWait: 20_000, timeout: 120_000 });
+  }, { maxWait: 20_000, timeout: 600_000 });
 
   console.info('Demo records ready:', result);
 }

@@ -24,6 +24,9 @@
     "body-parser": "1.20.8",
     "path-to-regexp": "0.1.13",
     "qs": "6.16.0",
+    "@babel/runtime": "7.29.7",
+    "@expo/metro-file-map": "57.0.4",
+    "source-map-js": "1.2.2",
     "@prisma/config": {
       "deepmerge-ts": "8.0.2"
     },
