@@ -24,7 +24,15 @@ const configurationSchema = z.object({
   version: z.number().int().min(0),
   business: z.object({
     name: z.string().trim().min(1).max(160).optional(),
-    logoUrl: z.string().url().max(2048).refine((value) => value.startsWith('https://')).nullable().optional(),
+    logoUrl: z.string().trim().max(2048).refine((value) => {
+      if (value.startsWith('/') && !value.startsWith('//') && !value.includes('\\')) return true;
+      try {
+        const parsed = new URL(value);
+        return parsed.protocol === 'https:' && !parsed.username && !parsed.password;
+      } catch {
+        return false;
+      }
+    }, 'Logo URL must use HTTPS or a same-origin absolute path').nullable().optional(),
     currency: z.string().regex(/^[A-Z]{3}$/).optional(),
     timezone: z.string().min(1).max(100).optional(),
   }).strict().optional(),

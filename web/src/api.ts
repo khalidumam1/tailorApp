@@ -1,9 +1,11 @@
 import { z } from 'zod';
 import {
+  applicationBrandingSchema,
   createCustomerSchema,
   createMeasurementRevisionSchema,
   createOrderSchema,
   createPaymentSchema,
+  type ApplicationBranding,
 } from '@tailor/shared';
 
 const customerSchema = z.object({
@@ -572,7 +574,7 @@ const platformBillingDashboardSchema = z.object({
 
 const errorSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
-});
+}).passthrough();
 
 export type Customer = z.infer<typeof customerSchema>;
 export type CatalogItem = z.infer<typeof catalogItemSchema>;
@@ -607,13 +609,104 @@ export type CustomerInput = z.infer<typeof createCustomerSchema>;
 export type OrderInput = z.infer<typeof createOrderSchema>;
 
 export class ApiError extends Error {
-  constructor(message: string, public readonly code: string, public readonly status: number) {
+  constructor(
+    message: string,
+    public readonly code: string,
+    public readonly status: number,
+    public readonly requestId?: string,
+  ) {
     super(message);
     this.name = 'ApiError';
   }
 }
 
-const apiBaseUrl = import.meta.env.API_BASE_URL;
+const apiBaseUrl = (import.meta.env.API_BASE_URL ?? '').replace(/\/+$/, '');
+const refreshInFlight = new Map<string, Promise<z.infer<typeof refreshedSessionSchema>>>();
+const refreshedAliases = new Map<string, z.infer<typeof refreshedSessionSchema>>();
+let refreshGeneration = 0;
+
+export function clearRefreshCache(refreshToken?: string): void {
+  if (!refreshToken) {
+    refreshGeneration += 1;
+    refreshInFlight.clear();
+    refreshedAliases.clear();
+    return;
+  }
+  const sessionTokens = new Set<string>([refreshToken]);
+  let current = refreshedAliases.get(refreshToken);
+  while (current && !sessionTokens.has(current.refreshToken)) {
+    sessionTokens.add(current.refreshToken);
+    current = refreshedAliases.get(current.refreshToken);
+  }
+  for (const [oldToken, rotation] of refreshedAliases) {
+    if (sessionTokens.has(oldToken) || sessionTokens.has(rotation.refreshToken)) refreshedAliases.delete(oldToken);
+  }
+  for (const token of sessionTokens) refreshInFlight.delete(token);
+}
+
+function rememberRefresh(previousToken: string, next: z.infer<typeof refreshedSessionSchema>): void {
+  // Update older aliases too: callers holding an old React closure must receive
+  // the latest rotated pair, not an already-revoked intermediate token.
+  for (const [oldToken, current] of refreshedAliases) {
+    if (current.refreshToken === previousToken) refreshedAliases.set(oldToken, next);
+  }
+  refreshedAliases.delete(previousToken);
+  refreshedAliases.set(previousToken, next);
+  while (refreshedAliases.size > 32) {
+    const oldest = refreshedAliases.keys().next().value;
+    if (oldest === undefined) break;
+    refreshedAliases.delete(oldest);
+  }
+}
+
+async function readResponsePayload(response: Response): Promise<unknown> {
+  let body: string;
+  try {
+    body = await response.text();
+  } catch {
+    throw new ApiError('The server response could not be read. Please try again.', 'INVALID_RESPONSE', response.status,
+      response.headers.get('x-request-id') ?? undefined);
+  }
+  if (!body.trim()) return undefined;
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+function responseRequestId(response: Response, payload: unknown): string | undefined {
+  if (payload && typeof payload === 'object' && 'requestId' in payload
+    && typeof payload.requestId === 'string') return payload.requestId;
+  return response.headers.get('x-request-id') ?? undefined;
+}
+
+function errorFromResponse(response: Response, payload: unknown): ApiError {
+  const error = errorSchema.safeParse(payload);
+  return new ApiError(
+    error.success ? error.data.error.message : `The server could not complete the request (HTTP ${response.status}).`,
+    error.success ? error.data.error.code : 'REQUEST_FAILED',
+    response.status,
+    responseRequestId(response, payload),
+  );
+}
+
+async function fetchApi(input: RequestInfo | URL, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (cause) {
+    const timedOut = cause && typeof cause === 'object' && 'name' in cause && cause.name === 'AbortError';
+    throw new ApiError(
+      timedOut ? 'The request timed out. Check your connection and try again.' : 'Could not reach the service. Check your connection and try again.',
+      timedOut ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR',
+      timedOut ? 408 : 0,
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 async function request<T>(
   route: string,
@@ -624,56 +717,95 @@ async function request<T>(
   if (options.body !== undefined) headers.set('content-type', 'application/json');
   if (options.token) headers.set('authorization', `Bearer ${options.token}`);
   if (options.idempotencyKey) headers.set('Idempotency-Key', options.idempotencyKey);
-  const response = await fetch(`${apiBaseUrl}/api/v1${route}`, {
+  const response = await fetchApi(`${apiBaseUrl}/api/v1${route}`, {
     method: options.method ?? 'GET',
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
     credentials: 'omit',
   });
-  const payload: unknown = await response.json();
-  if (!response.ok) {
-    const error = errorSchema.safeParse(payload);
-    throw new ApiError(
-      error.success ? error.data.error.message : `Request failed (${response.status})`,
-      error.success ? error.data.error.code : 'REQUEST_FAILED',
-      response.status,
-    );
+  const payload = await readResponsePayload(response);
+  if (!response.ok) throw errorFromResponse(response, payload);
+  const requestId = responseRequestId(response, payload);
+  const envelope = z.object({ data: z.unknown() }).safeParse(payload);
+  if (!envelope.success) {
+    throw new ApiError('The server returned an unexpected response. Please retry; contact support if it continues.',
+      'INVALID_RESPONSE', 502, requestId);
   }
-  return schema.parse(z.object({ data: z.unknown() }).parse(payload).data);
+  const parsed = schema.safeParse(envelope.data.data);
+  if (!parsed.success) {
+    throw new ApiError('The server returned an unexpected response. Please retry; contact support if it continues.',
+      'INVALID_RESPONSE', 502, requestId);
+  }
+  return parsed.data;
+}
+
+async function requestBlob(route: string, token: string, accept: string): Promise<Blob> {
+  const response = await fetchApi(`${apiBaseUrl}/api/v1${route}`, {
+    headers: { accept, authorization: `Bearer ${token}` },
+    credentials: 'omit',
+  });
+  if (!response.ok) throw errorFromResponse(response, await readResponsePayload(response));
+  return response.blob();
 }
 
 async function requestPdf(route: string, token: string): Promise<Blob> {
-  const response = await fetch(`${apiBaseUrl}/api/v1${route}`, {
-    headers: { accept: 'application/pdf', authorization: `Bearer ${token}` },
-    credentials: 'omit',
-  });
-  if (!response.ok) {
-    const payload: unknown = await response.json();
-    const error = errorSchema.safeParse(payload);
-    throw new ApiError(
-      error.success ? error.data.error.message : `Request failed (${response.status})`,
-      error.success ? error.data.error.code : 'REQUEST_FAILED',
-      response.status,
-    );
-  }
-  return response.blob();
+  return requestBlob(route, token, 'application/pdf');
 }
 
 async function requestCsv(route: string, token: string): Promise<Blob> {
-  const response = await fetch(`${apiBaseUrl}/api/v1${route}`, {
-    headers: { accept: 'text/csv', authorization: `Bearer ${token}` },
-    credentials: 'omit',
-  });
-  if (!response.ok) {
-    const payload: unknown = await response.json();
-    const error = errorSchema.safeParse(payload);
-    throw new ApiError(
-      error.success ? error.data.error.message : `Request failed (${response.status})`,
-      error.success ? error.data.error.code : 'REQUEST_FAILED',
-      response.status,
-    );
+  return requestBlob(route, token, 'text/csv');
+}
+
+async function refreshTokens(refreshToken: string): Promise<z.infer<typeof refreshedSessionSchema>> {
+  const knownRotation = refreshedAliases.get(refreshToken);
+  if (knownRotation) return knownRotation;
+  const inFlight = refreshInFlight.get(refreshToken);
+  if (inFlight) return inFlight;
+
+  const generation = refreshGeneration;
+  const rotation = request('/auth/refresh', refreshedSessionSchema, {
+    method: 'POST',
+    body: { refreshToken },
+  }).then((next) => {
+    if (generation !== refreshGeneration) {
+      throw new ApiError('The session has ended. Please sign in again.', 'SESSION_ENDED', 401);
+    }
+    rememberRefresh(refreshToken, next);
+    return next;
+  }).finally(() => refreshInFlight.delete(refreshToken));
+  refreshInFlight.set(refreshToken, rotation);
+  return rotation;
+}
+
+async function latestRefreshToken(refreshToken: string): Promise<string> {
+  let latest = refreshedAliases.get(refreshToken);
+  const initialRotation = refreshInFlight.get(refreshToken);
+  if (initialRotation) {
+    try {
+      latest = await initialRotation;
+    } catch {
+      latest = refreshedAliases.get(refreshToken) ?? latest;
+    }
   }
-  return response.blob();
+  const visited = new Set<string>([refreshToken]);
+  for (let hop = 0; latest && hop < 32; hop += 1) {
+    const currentToken = latest.refreshToken;
+    if (visited.has(currentToken)) break;
+    visited.add(currentToken);
+    const alias = refreshedAliases.get(currentToken);
+    if (alias) {
+      latest = alias;
+      continue;
+    }
+    const pending = refreshInFlight.get(currentToken);
+    if (!pending) break;
+    try {
+      latest = await pending;
+    } catch {
+      break;
+    }
+  }
+  return latest?.refreshToken ?? refreshToken;
 }
 
 export const api = {
@@ -683,18 +815,22 @@ export const api = {
       body: { email, password, ...(scope ? { scope } : {}), ...(businessId ? { businessId } : {}) },
     });
   },
-  logout(token: string, refreshToken: string) {
+  async logout(token: string, refreshToken: string) {
+    const currentRefreshToken = await latestRefreshToken(refreshToken);
     return request('/auth/logout', z.object({ revoked: z.boolean() }), {
       token,
       method: 'POST',
-      body: { refreshToken },
+      body: { refreshToken: currentRefreshToken },
     });
   },
   me(token: string) {
     return request('/auth/me', meSchema, { token });
   },
   refresh(refreshToken: string) {
-    return request('/auth/refresh', refreshedSessionSchema, { method: 'POST', body: { refreshToken } });
+    return refreshTokens(refreshToken);
+  },
+  applicationBranding(): Promise<ApplicationBranding> {
+    return request('/public/application-branding', applicationBrandingSchema);
   },
   dashboard(token: string) {
     return request('/reports/dashboard', dashboardSchema, { token });
@@ -954,6 +1090,12 @@ export const api = {
   },
   updatePlatformStaff(token: string, staffId: string, input: { permissions: string[]; active?: boolean }) {
     return request(`/platform/staff/${staffId}/permissions`, platformStaffSchema, { token, method: 'PATCH', body: input });
+  },
+  platformApplicationBranding(token: string): Promise<ApplicationBranding> {
+    return request('/platform/application-branding', applicationBrandingSchema, { token });
+  },
+  updatePlatformApplicationBranding(token: string, input: ApplicationBranding): Promise<ApplicationBranding> {
+    return request('/platform/application-branding', applicationBrandingSchema, { token, method: 'PUT', body: input });
   },
   platformHealth(token: string) {
     return request('/platform/health', z.object({

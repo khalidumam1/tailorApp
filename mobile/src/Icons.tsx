@@ -16,6 +16,8 @@ export type IconName =
   | 'notifications'
   | 'subscription'
   | 'settings'
+  | 'sun'
+  | 'moon'
   | 'signOut'
   | 'inbox';
 
@@ -90,6 +92,19 @@ export function Icon({ name, size = 24, color = '#182A25' }: { name: IconName; s
             d="M12 3.5v2.3M12 18.2v2.3M4.9 6.4l1.6 1.6M17.5 16l1.6 1.6M3.5 12h2.3M18.2 12h2.3M4.9 17.6l1.6-1.6M17.5 8l1.6-1.6"
             {...props}
           />
+        </Svg>
+      );
+    case 'sun':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24">
+          <Circle cx={12} cy={12} r={4} {...props} />
+          <Path d="M12 2.8v2M12 19.2v2M4.8 4.8l1.4 1.4m11.6 11.6 1.4 1.4M2.8 12h2m14.4 0h2M4.8 19.2l1.4-1.4M17.8 6.2l1.4-1.4" {...props} />
+        </Svg>
+      );
+    case 'moon':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24">
+          <Path d="M20 15.4A8.6 8.6 0 0 1 8.6 4a8.7 8.7 0 1 0 11.4 11.4Z" {...props} />
         </Svg>
       );
     case 'signOut':

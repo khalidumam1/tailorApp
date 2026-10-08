@@ -128,3 +128,16 @@ test('login validates request shape before database access', async () => {
   const body = await response.json() as { error: { code: string } };
   assert.equal(body.error.code, 'VALIDATION_ERROR');
 });
+
+test('malformed JSON is returned as a traceable client error without leaking the request body', async () => {
+  const response = await fetch(`${baseUrl}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{"email":',
+  });
+  assert.equal(response.status, 400);
+  const body = await response.json() as { error: { code: string; message: string }; requestId: string };
+  assert.equal(body.error.code, 'INVALID_JSON');
+  assert.match(body.error.message, /valid JSON/i);
+  assert.equal(body.requestId, response.headers.get('x-request-id'));
+});

@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
+  Linking,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -13,17 +15,23 @@ import {
 } from 'react-native';
 import * as Network from 'expo-network';
 import * as SecureStore from 'expo-secure-store';
+import { SvgUri } from 'react-native-svg';
+import { accessibleTextColor, applicationBrandingSchema, DEFAULT_APPLICATION_BRANDING, type ApplicationBranding } from '@tailor/shared';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import {
   ApiError,
+  API_BASE_URL,
   apiRequest,
   clearSession,
+  fetchApplicationBranding,
   createSession,
   parseBusinessConfiguration,
   readSession,
+  revokeSession,
   signIn,
   storeSession,
+  subscribeToSessionExpired,
   type BusinessConfiguration,
   type Session,
 } from './src/api';
@@ -107,6 +115,232 @@ type SubscriptionBilling = {
 };
 
 const LANGUAGE_KEY = 'tailorapp.language.v1';
+const THEME_KEY = 'tailorapp.theme.v1';
+const BRANDING_CACHE_KEY = 'tailorapp.application-branding.v1';
+type ThemeMode = 'light' | 'dark';
+
+type AppPalette = {
+  mode: ThemeMode;
+  background: string;
+  surface: string;
+  surfaceMuted: string;
+  border: string;
+  borderStrong: string;
+  text: string;
+  secondaryText: string;
+  mutedText: string;
+  primary: string;
+  primaryText: string;
+  onPrimary: string;
+  primarySoft: string;
+  accent: string;
+  success: string;
+  successSurface: string;
+  successBorder: string;
+  warning: string;
+  warningSurface: string;
+  warningBorder: string;
+  danger: string;
+  dangerSurface: string;
+  dangerBorder: string;
+  info: string;
+  infoSurface: string;
+  shadow: string;
+  moneySurface: string;
+  moneyLabel: string;
+};
+
+type AppThemeValue = {
+  branding: ApplicationBranding;
+  themeMode: ThemeMode;
+  palette: AppPalette;
+  toggleTheme: () => void;
+};
+
+function mixHex(foreground: string, background: string, foregroundWeight: number): string {
+  const toChannels = (color: string) => [1, 3, 5].map((index) => Number.parseInt(color.slice(index, index + 2), 16));
+  const first = toChannels(foreground);
+  const second = toChannels(background);
+  const weight = Math.max(0, Math.min(1, foregroundWeight));
+  return `#${first.map((channel, index) => Math.round(channel * weight + second[index] * (1 - weight))
+    .toString(16).padStart(2, '0')).join('')}`;
+}
+
+function createPalette(branding: ApplicationBranding, mode: ThemeMode): AppPalette {
+  const dark = mode === 'dark';
+  return {
+    mode,
+    background: dark ? '#0d1511' : '#f4f6f4',
+    surface: dark ? '#141f19' : '#ffffff',
+    surfaceMuted: dark ? '#101913' : '#f8faf9',
+    border: dark ? '#2a3a30' : '#e3e9e5',
+    borderStrong: dark ? '#3b4d42' : '#d8e2dc',
+    text: dark ? '#f2f6f3' : '#182a25',
+    secondaryText: dark ? '#b5c5bb' : '#56675d',
+    mutedText: dark ? '#8b9d93' : '#6e7d76',
+    primary: branding.primaryColor,
+    primaryText: dark
+      ? mixHex(branding.primaryColor, '#ffffff', 0.68)
+      : mixHex('#0e1a16', branding.primaryColor, 0.32),
+    onPrimary: accessibleTextColor(branding.primaryColor),
+    primarySoft: dark
+      ? mixHex(branding.primaryColor, '#17251d', 0.2)
+      : mixHex(branding.primaryColor, '#ffffff', 0.1),
+    accent: branding.accentColor,
+    success: dark ? '#8bd1a9' : '#1b6c4c',
+    successSurface: dark ? '#16291f' : '#e8f5ee',
+    successBorder: dark ? '#294a36' : '#cae5d6',
+    warning: dark ? '#f1ca79' : '#8a6413',
+    warningSurface: dark ? '#2c2517' : '#fdf4e3',
+    warningBorder: dark ? '#514126' : '#f0e0bb',
+    danger: dark ? '#f2a398' : '#9b4034',
+    dangerSurface: dark ? '#301d1a' : '#fdeeeb',
+    dangerBorder: dark ? '#57302b' : '#f3d6cf',
+    info: dark ? '#9bc7ed' : '#2d5f8a',
+    infoSurface: dark ? '#16283a' : '#ecf3fa',
+    shadow: dark ? '#000000' : '#18372b',
+    moneySurface: dark ? '#172e25' : '#17362e',
+    moneyLabel: dark ? '#bad0c3' : '#c4d9ce',
+  };
+}
+
+const AppThemeContext = createContext<AppThemeValue>({
+  branding: DEFAULT_APPLICATION_BRANDING,
+  themeMode: DEFAULT_APPLICATION_BRANDING.defaultTheme,
+  palette: createPalette(DEFAULT_APPLICATION_BRANDING, DEFAULT_APPLICATION_BRANDING.defaultTheme),
+  toggleTheme: () => undefined,
+});
+
+function useAppTheme(): AppThemeValue {
+  return useContext(AppThemeContext);
+}
+
+function useAppStyles() {
+  const { palette } = useAppTheme();
+  return useMemo(() => createStyles(palette), [palette]);
+}
+
+function MobileBrandingProvider({ children }: { children: ReactNode }) {
+  const [branding, setBranding] = useState<ApplicationBranding>(DEFAULT_APPLICATION_BRANDING);
+  const [themeOverride, setThemeOverride] = useState<ThemeMode | null>(null);
+  const themeChosen = useRef(false);
+
+  const chooseTheme = useCallback((nextTheme: ThemeMode) => {
+    themeChosen.current = true;
+    setThemeOverride(nextTheme);
+    void SecureStore.setItemAsync(THEME_KEY, nextTheme).catch(() => undefined);
+  }, []);
+
+  const themeMode = themeOverride ?? branding.defaultTheme;
+  const palette = useMemo(() => createPalette(branding, themeMode), [branding, themeMode]);
+  const toggleTheme = useCallback(() => chooseTheme(themeMode === 'dark' ? 'light' : 'dark'), [chooseTheme, themeMode]);
+
+  useEffect(() => {
+    let active = true;
+    let preferencesReady = false;
+    let brandingRequest: Promise<void> | null = null;
+
+    const refreshBranding = () => {
+      if (!active || brandingRequest) return brandingRequest;
+      brandingRequest = (async () => {
+        try {
+          const latest = await fetchApplicationBranding();
+          if (!active) return;
+          setBranding(latest);
+          await SecureStore.setItemAsync(BRANDING_CACHE_KEY, JSON.stringify(latest)).catch(() => undefined);
+        } catch {
+          // Branding is public and non-critical; use the cached or built-in identity offline.
+        }
+      })().finally(() => { brandingRequest = null; });
+      return brandingRequest;
+    };
+
+    void (async () => {
+      const [savedTheme, savedBranding] = await Promise.all([
+        SecureStore.getItemAsync(THEME_KEY).catch(() => null),
+        SecureStore.getItemAsync(BRANDING_CACHE_KEY).catch(() => null),
+      ]);
+      if (!active) return;
+      if (!themeChosen.current && (savedTheme === 'light' || savedTheme === 'dark')) {
+        setThemeOverride(savedTheme);
+      }
+      if (savedBranding) {
+        try {
+          const parsed = applicationBrandingSchema.safeParse(JSON.parse(savedBranding) as unknown);
+          if (parsed.success) setBranding(parsed.data);
+        } catch {
+          // Ignore corrupt local branding; the server/default remains authoritative.
+        }
+      }
+      preferencesReady = true;
+      void refreshBranding();
+    })();
+
+    const networkSubscription = Network.addNetworkStateListener((state) => {
+      if (preferencesReady && state.isConnected === true && state.isInternetReachable !== false) {
+        void refreshBranding();
+      }
+    });
+    return () => {
+      active = false;
+      networkSubscription.remove();
+    };
+  }, []);
+
+  const value = useMemo(() => ({ branding, themeMode, palette, toggleTheme }), [branding, themeMode, palette, toggleTheme]);
+  return <AppThemeContext.Provider value={value}>{children}</AppThemeContext.Provider>;
+}
+
+function resolveBrandAssetUrl(value: string): string {
+  if (!value.startsWith('/')) return value;
+  try {
+    return new URL(value, `${new URL(API_BASE_URL).origin}/`).toString();
+  } catch {
+    return value;
+  }
+}
+
+function ApplicationMark() {
+  const { branding, palette } = useAppTheme();
+  const styles = useAppStyles();
+  const [failedUrl, setFailedUrl] = useState('');
+  const uri = branding.logoUrl ? resolveBrandAssetUrl(branding.logoUrl) : '';
+  useEffect(() => setFailedUrl(''), [uri]);
+  const isSvg = /\.svg(?:$|[?#])/i.test(uri);
+
+  return (
+    <View style={[styles.brandMark, { backgroundColor: palette.primary }]}>
+      <Text style={[styles.brandLetter, { color: palette.onPrimary }]}>{branding.brandName.trim().charAt(0).toUpperCase() || 'A'}</Text>
+      {uri && failedUrl !== uri ? (
+        isSvg ? (
+          <View style={[StyleSheet.absoluteFill, styles.logoImage]}>
+            <SvgUri uri={uri} width="54" height="54" onError={() => setFailedUrl(uri)} />
+          </View>
+        ) : (
+          <Image source={{ uri }} style={[StyleSheet.absoluteFill, styles.logoImage]} resizeMode="contain" onError={() => setFailedUrl(uri)} />
+        )
+      ) : null}
+    </View>
+  );
+}
+
+function ThemeToggle({ copy, compact = false }: { copy: ReturnType<typeof getCopy>; compact?: boolean }) {
+  const { themeMode, toggleTheme, palette } = useAppTheme();
+  const styles = useAppStyles();
+  const nextThemeLabel = themeMode === 'dark' ? copy.lightTheme : copy.darkTheme;
+  return (
+    <Pressable
+      accessibilityRole="switch"
+      accessibilityLabel={`${copy.appearance}: ${themeMode === 'dark' ? copy.darkTheme : copy.lightTheme}`}
+      accessibilityState={{ checked: themeMode === 'dark' }}
+      onPress={toggleTheme}
+      style={({ pressed }) => [styles.themeToggle, compact && styles.themeToggleCompact, pressed && styles.pressed]}
+    >
+      <Icon name={themeMode === 'dark' ? 'sun' : 'moon'} size={20} color={palette.primaryText} />
+      {!compact && <Text style={styles.themeToggleText}>{nextThemeLabel}</Text>}
+    </Pressable>
+  );
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -225,6 +459,7 @@ function karachiDateInput(): string {
 }
 
 function DisplayStatus({ online, copy }: { online: boolean | null; copy: ReturnType<typeof getCopy> }) {
+  const styles = useAppStyles();
   return (
     <View style={[styles.connectionDot, online ? styles.onlineDot : styles.offlineDot]} accessibilityLabel={online ? copy.online : copy.offline} />
   );
@@ -233,6 +468,7 @@ function DisplayStatus({ online, copy }: { online: boolean | null; copy: ReturnT
 function ActionButton({
   title, onPress, secondary = false, disabled = false,
 }: { title: string; onPress: () => void; secondary?: boolean; disabled?: boolean }) {
+  const styles = useAppStyles();
   return (
     <Pressable
       accessibilityRole="button"
@@ -264,6 +500,8 @@ function Field({
   secureTextEntry?: boolean;
   editable?: boolean;
 }) {
+  const styles = useAppStyles();
+  const { palette } = useAppTheme();
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
@@ -276,7 +514,7 @@ function Field({
         multiline={multiline}
         onChangeText={onChangeText}
         placeholder={placeholder ?? label}
-        placeholderTextColor="#91A19A"
+        placeholderTextColor={palette.mutedText}
         secureTextEntry={secureTextEntry}
         style={[styles.input, multiline && styles.multiline]}
         value={value}
@@ -294,6 +532,7 @@ function StoredCustomFields({
   definitions: BusinessConfiguration['fields'];
   errorLabel: string;
 }) {
+  const styles = useAppStyles();
   if (!serialized) return null;
   let entries: Array<[string, unknown]>;
   try {
@@ -315,16 +554,24 @@ function StoredCustomFields({
 export default function App() {
   return (
     <SafeAreaProvider>
-      <AppContent />
+      <MobileBrandingProvider>
+        <AppContent />
+      </MobileBrandingProvider>
     </SafeAreaProvider>
   );
 }
 
 function AppContent() {
+  const { branding, themeMode, palette } = useAppTheme();
+  const styles = useAppStyles();
   const [language, setLanguage] = useState<Language>('en');
   const copy = useMemo(() => getCopy(language), [language]);
   const rtl = language === 'ur';
   const [session, setSession] = useState<Session | null>(null);
+  const sessionRef = useRef<Session | null>(null);
+  const workspaceGeneration = useRef(0);
+  const isCurrentWorkspace = useCallback((generation: number, businessId: string) =>
+    workspaceGeneration.current === generation && sessionRef.current?.business.id === businessId, []);
   const [businessConfiguration, setBusinessConfiguration] = useState<BusinessConfiguration | null>(null);
   const [booting, setBooting] = useState(true);
   const [localReady, setLocalReady] = useState(false);
@@ -405,11 +652,81 @@ function AppContent() {
   const [saving, setSaving] = useState(false);
 
   const updateSession = useCallback((nextSession: Session) => {
+    const activeSession = sessionRef.current;
+    if (!activeSession || activeSession.business.id !== nextSession.business.id
+      || nextSession.accessExpiresAt < activeSession.accessExpiresAt) return;
+    sessionRef.current = nextSession;
     setSession(nextSession);
     void storeSession(nextSession).catch((storageError: unknown) => {
       setSyncError(storageError instanceof Error ? storageError.message : copy.error);
     });
   }, [copy.error]);
+
+  const resetWorkspaceData = useCallback(() => {
+    workspaceGeneration.current += 1;
+    setBusinessConfiguration(null);
+    setCustomers([]);
+    setOrders([]);
+    setCatalogItems([]);
+    setTemplates([]);
+    setMeasurements([]);
+    setSyncState({ pending: 0, attention: 0, next_retry_at: null, attention_details: [], last_successful_sync: null, last_error: null });
+    setSyncError('');
+    setSyncing(false);
+    syncLock.current = false;
+    setDashboard({});
+    setNotificationHistory([]);
+    setSubscriptionBilling(null);
+    setSubscriptionPlanId('');
+    setSubscriptionCycle('MONTHLY');
+    setSubscriptionPayment({ transactionReference: '', senderName: '', amount: '', method: '', paymentDate: new Date().toISOString().slice(0, 10) });
+    setCustomerForm(false);
+    setCustomerName('');
+    setCustomerPhone('');
+    setCustomerNotes('');
+    setCustomerCustomFields({});
+    setCatalogForm(false);
+    setCatalogName('');
+    setCatalogDescription('');
+    setCatalogTypeKey('');
+    setCatalogSku('');
+    setCatalogUnit('unit');
+    setCatalogUnitPrice('');
+    setCatalogCustomFields({});
+    setSearch('');
+    setOrderForm(false);
+    setSelectedCustomer('');
+    setItemName('');
+    setOrderItemTypeKey('');
+    setOrderCustomFields({});
+    setOrderItemCustomFields({});
+    setQuantity('1');
+    setUnitPrice('');
+    setDueDate(karachiDateInput());
+    setOrderNotes('');
+    setMeasurementForm(false);
+    setMeasurementCustomer('');
+    setMeasurementTemplate('');
+    setMeasurementValues({});
+    setMeasurementNotes('');
+    setPaymentOrder(null);
+    setPaymentAmount('');
+    setPaymentMethod('');
+    setPaymentAttempt(null);
+    setSaving(false);
+    setPage('home');
+    setError('');
+  }, []);
+
+  useEffect(() => { return subscribeToSessionExpired(() => {
+    sessionRef.current = null;
+    setSession(null);
+    resetWorkspaceData();
+    setPassword('');
+    setShopChoices([]);
+    setPendingCredentials(null);
+    setError(copy.sessionExpired);
+  }); }, [copy.sessionExpired, resetWorkspaceData]);
 
   useEffect(() => {
     let active = true;
@@ -449,7 +766,10 @@ function AppContent() {
   }, [copy.error, online, session?.accessToken, session?.business.id, updateSession]);
 
   const refreshNotificationHistory = useCallback(async () => {
-    if (!session || online !== true || !session.permissions.includes('notifications:read')) return;
+    if (!session || online !== true || !session.permissions.includes('notifications:read')
+      || sessionRef.current?.business.id !== session.business.id) return;
+    const generation = workspaceGeneration.current;
+    const businessId = session.business.id;
     try {
       const response = await apiRequest<{ data?: { items?: WhatsAppNotification[] } }>(
         session,
@@ -457,11 +777,13 @@ function AppContent() {
         {},
         updateSession,
       );
-      setNotificationHistory(response.data?.items ?? []);
+      if (isCurrentWorkspace(generation, businessId)) setNotificationHistory(response.data?.items ?? []);
     } catch (historyError) {
-      setError(historyError instanceof Error ? historyError.message : copy.error);
+      if (isCurrentWorkspace(generation, businessId)) {
+        setError(historyError instanceof Error ? historyError.message : copy.error);
+      }
     }
-  }, [copy.error, online, session, updateSession]);
+  }, [copy.error, online, session, updateSession, isCurrentWorkspace]);
 
   useEffect(() => {
     if (page === 'notifications') void refreshNotificationHistory();
@@ -547,7 +869,10 @@ function AppContent() {
   };
 
   const refreshSubscriptionBilling = useCallback(async () => {
-    if (!session || online !== true || !session.permissions.includes('subscriptions:read')) return;
+    if (!session || online !== true || !session.permissions.includes('subscriptions:read')
+      || sessionRef.current?.business.id !== session.business.id) return;
+    const generation = workspaceGeneration.current;
+    const businessId = session.business.id;
     try {
       const response = await apiRequest<{ data?: SubscriptionBilling }>(
         session,
@@ -555,6 +880,7 @@ function AppContent() {
         {},
         updateSession,
       );
+      if (!isCurrentWorkspace(generation, businessId)) return;
       if (!response.data) throw new Error('Subscription details are unavailable.');
       setSubscriptionBilling(response.data);
       if (!subscriptionPlanId && response.data.plans[0]) {
@@ -568,15 +894,19 @@ function AppContent() {
         setSubscriptionPayment((current) => ({ ...current, method: response.data?.paymentMethods[0] ?? '' }));
       }
     } catch (billingError) {
-      setError(billingError instanceof Error ? billingError.message : copy.error);
+      if (isCurrentWorkspace(generation, businessId)) {
+        setError(billingError instanceof Error ? billingError.message : copy.error);
+      }
     }
-  }, [copy.error, online, session, subscriptionPayment.method, subscriptionPlanId, updateSession]);
+  }, [copy.error, online, session, subscriptionPayment.method, subscriptionPlanId, updateSession, isCurrentWorkspace]);
 
   useEffect(() => {
     if (page === 'subscription') void refreshSubscriptionBilling();
   }, [page, refreshSubscriptionBilling]);
 
   const refreshLocal = useCallback(async (businessId: string) => {
+    const generation = workspaceGeneration.current;
+    if (sessionRef.current?.business.id !== businessId) return;
     const [nextCustomers, nextOrders, nextCatalogItems, nextTemplates, nextMeasurements, nextSyncState] = await Promise.all([
       loadCustomers(businessId),
       loadOrders(businessId),
@@ -585,13 +915,14 @@ function AppContent() {
       loadMeasurements(businessId),
       loadSyncState(businessId),
     ]);
+    if (!isCurrentWorkspace(generation, businessId)) return;
     setCustomers(nextCustomers);
     setOrders(nextOrders);
     setCatalogItems(nextCatalogItems);
     setTemplates(nextTemplates);
     setMeasurements(nextMeasurements);
     setSyncState(nextSyncState);
-  }, []);
+  }, [isCurrentWorkspace]);
 
   useEffect(() => {
     let mounted = true;
@@ -610,6 +941,7 @@ function AppContent() {
     ]).then(([, savedSession, savedLanguage]) => {
       if (!mounted) return;
       setLocalReady(true);
+      sessionRef.current = savedSession;
       setSession(savedSession);
       if (savedLanguage === 'en' || savedLanguage === 'ur' || savedLanguage === 'ur-roman') {
         setLanguage(savedLanguage);
@@ -643,13 +975,21 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
-    if (session) void refreshLocal(session.business.id).catch((loadError: unknown) => {
-      setSyncError(loadError instanceof Error ? loadError.message : copy.error);
+    if (!session) return;
+    const generation = workspaceGeneration.current;
+    const businessId = session.business.id;
+    void refreshLocal(businessId).catch((loadError: unknown) => {
+      if (isCurrentWorkspace(generation, businessId)) {
+        setSyncError(loadError instanceof Error ? loadError.message : copy.error);
+      }
     });
-  }, [session?.business.id, refreshLocal, copy.error]);
+  }, [session?.business.id, refreshLocal, copy.error, isCurrentWorkspace]);
 
   const runSync = useCallback(async () => {
-    if (!session || online !== true || syncLock.current) return;
+    if (!session || online !== true || syncLock.current
+      || sessionRef.current?.business.id !== session.business.id) return;
+    const generation = workspaceGeneration.current;
+    const businessId = session.business.id;
     syncLock.current = true;
     setSyncing(true);
     setSyncError('');
@@ -659,7 +999,9 @@ function AppContent() {
         updateSession,
         businessConfiguration?.enabledModules.includes('catalog') === true,
       );
-      await refreshLocal(session.business.id);
+      if (!isCurrentWorkspace(generation, businessId)) return;
+      await refreshLocal(businessId);
+      if (!isCurrentWorkspace(generation, businessId)) return;
       if (session.permissions.includes('orders:read')) {
         const result = await apiRequest<{ data: Record<string, unknown> }>(
           session,
@@ -667,18 +1009,22 @@ function AppContent() {
           {},
           updateSession,
         );
-        setDashboard(result.data);
-      } else {
+        if (isCurrentWorkspace(generation, businessId)) setDashboard(result.data);
+      } else if (isCurrentWorkspace(generation, businessId)) {
         setDashboard({});
       }
     } catch (syncFailure) {
-      setSyncError(syncFailure instanceof Error ? syncFailure.message : copy.syncError);
+      if (isCurrentWorkspace(generation, businessId)) {
+        setSyncError(syncFailure instanceof Error ? syncFailure.message : copy.syncError);
+      }
     } finally {
-      syncLock.current = false;
-      setSyncing(false);
-      await refreshLocal(session.business.id).catch(() => undefined);
+      if (isCurrentWorkspace(generation, businessId)) {
+        syncLock.current = false;
+        setSyncing(false);
+        await refreshLocal(businessId).catch(() => undefined);
+      }
     }
-  }, [businessConfiguration?.enabledModules, session, online, updateSession, refreshLocal, copy.syncError]);
+  }, [businessConfiguration?.enabledModules, session, online, updateSession, refreshLocal, copy.syncError, isCurrentWorkspace]);
 
   useEffect(() => {
     if (!session || online !== true) return;
@@ -743,17 +1089,17 @@ function AppContent() {
     setError('');
     try {
       const result = await signIn(email.trim(), password, businessId);
-      const shops = Array.isArray(result.businesses) ? result.businesses as ShopOption[] : [];
-      if (result.requiresBusinessSelection === true) {
+      if (result.requiresBusinessSelection) {
         setPendingCredentials({ email: email.trim(), password });
-        setShopChoices(shops);
+        setShopChoices(result.businesses);
         return;
       }
-      if (result.requiresScopeSelection === true) {
+      if (result.requiresScopeSelection) {
         throw new Error('This account needs a business membership before it can use the business app.');
       }
       const nextSession = await createSession(result);
-      setNotificationHistory([]);
+      resetWorkspaceData();
+      sessionRef.current = nextSession;
       setSession(nextSession);
       setPassword('');
       setShopChoices([]);
@@ -771,8 +1117,17 @@ function AppContent() {
     setError('');
     try {
       const result = await signIn(pendingCredentials.email, pendingCredentials.password, shop.id);
+      if (result.requiresBusinessSelection) {
+        setShopChoices(result.businesses);
+        setError('Choose one of the available workspaces.');
+        return;
+      }
+      if (result.requiresScopeSelection) {
+        throw new Error('This account needs a business membership before it can use the business app.');
+      }
       const nextSession = await createSession(result);
-      setNotificationHistory([]);
+      resetWorkspaceData();
+      sessionRef.current = nextSession;
       setSession(nextSession);
       setPassword('');
       setShopChoices([]);
@@ -785,20 +1140,26 @@ function AppContent() {
   };
 
   const handleSignOut = async () => {
-    if (session && online === true) {
+    const endingSession = session;
+    // Snapshot/await any in-flight rotation before clearing the rotation cache. The
+    // sign-out request can then revoke the newest token even when a request raced it.
+    const revocation = endingSession && online === true
+      ? revokeSession(endingSession.refreshToken)
+      : null;
+    sessionRef.current = null;
+    resetWorkspaceData();
+    setSession(null);
+    setPassword('');
+    setShopChoices([]);
+    setPendingCredentials(null);
+    await clearSession().catch(() => undefined);
+    if (revocation) {
       try {
-        await apiRequest(session, '/api/v1/auth/logout', {
-          method: 'POST',
-          body: { refreshToken: session.refreshToken },
-        });
+        await revocation;
       } catch {
         Alert.alert(copy.signOut, copy.syncError);
       }
     }
-    await clearSession();
-    setNotificationHistory([]);
-    setSession(null);
-    setPage('home');
   };
 
   const changeLanguage = async (next: Language) => {
@@ -1114,8 +1475,8 @@ function AppContent() {
   if (booting) {
     return (
       <SafeAreaView style={styles.centered}>
-        <StatusBar style="dark" />
-        <ActivityIndicator color="#0D7057" size="large" />
+        <StatusBar style={themeMode === 'dark' ? 'light' : 'dark'} />
+        <ActivityIndicator color={palette.primary} size="large" />
         <Text style={styles.subtitle}>{copy.loading}</Text>
       </SafeAreaView>
     );
@@ -1124,7 +1485,7 @@ function AppContent() {
   if (!localReady) {
     return (
       <SafeAreaView style={styles.centered}>
-        <StatusBar style="dark" />
+        <StatusBar style={themeMode === 'dark' ? 'light' : 'dark'} />
         <Text style={styles.heading}>{copy.startupFailed}</Text>
         <Text accessibilityRole="alert" style={styles.errorText}>
           {bootError || copy.error}
@@ -1140,10 +1501,10 @@ function AppContent() {
   if (!session) {
     return (
       <SafeAreaView style={[styles.safe, rtl && styles.rtlLayout]}>
-        <StatusBar style="dark" />
+        <StatusBar style={themeMode === 'dark' ? 'light' : 'dark'} />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.grow}>
           <ScrollView contentContainerStyle={styles.authContent} keyboardShouldPersistTaps="handled">
-            <View style={styles.languageRow}>
+            <View style={styles.authLanguageRow}>
               {languageOptions.map((option) => (
                 <Pressable
                   accessibilityRole="button"
@@ -1155,25 +1516,41 @@ function AppContent() {
                   <Text style={styles.languageChipText}>{option.label}</Text>
                 </Pressable>
               ))}
+              <ThemeToggle copy={copy} compact />
             </View>
-            <View style={styles.brandMark}><Text style={styles.brandLetter}>D</Text></View>
-            <Text style={styles.brandName}>{copy.app}</Text>
-            <Text style={styles.tagline}>{copy.tagline}</Text>
+            <ApplicationMark />
+            <Text style={styles.brandName}>{branding.brandName}</Text>
+            <Text style={styles.tagline}>{branding.tagline || copy.tagline}</Text>
+            {branding.description ? <Text style={styles.description}>{branding.description}</Text> : null}
             <View style={styles.card}>
-              <Text style={styles.heading}>{shopChoices.length ? copy.chooseShop : copy.signInTitle}</Text>
+              <Text style={styles.heading}>{shopChoices.length ? copy.chooseShop : branding.loginTitle || copy.signInTitle}</Text>
               {shopChoices.length ? shopChoices.map((shop) => (
                 <ActionButton key={shop.id} title={shop.name} onPress={() => void selectShop(shop)} disabled={authBusy} secondary />
               )) : (
                 <>
                   <Field label={copy.email} value={email} onChangeText={setEmail} keyboardType="email-address" />
                   <Field label={copy.password} value={password} onChangeText={setPassword} secureTextEntry />
-                  <Text style={styles.serverNote}>tailorapp.on.shiper.app</Text>
                   {error ? <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text> : null}
                   <ActionButton title={authBusy ? copy.loading : copy.signIn} onPress={() => void handleSignIn()} disabled={authBusy || !email.trim() || !password} />
                 </>
               )}
               {shopChoices.length && error ? <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text> : null}
-              {authBusy ? <ActivityIndicator color="#0D7057" style={styles.spinner} /> : null}
+              {authBusy ? <ActivityIndicator color={palette.primary} style={styles.spinner} /> : null}
+              {branding.footerText ? <Text style={styles.authFooter}>{branding.footerText}</Text> : null}
+              {(branding.supportUrl || branding.supportEmail) ? (
+                <View style={styles.supportLinks}>
+                  {branding.supportUrl ? (
+                    <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(branding.supportUrl).catch(() => Alert.alert(copy.error))}>
+                      <Text style={styles.supportLink}>{copy.support}</Text>
+                    </Pressable>
+                  ) : null}
+                  {branding.supportEmail ? (
+                    <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(`mailto:${branding.supportEmail}`).catch(() => Alert.alert(copy.error))}>
+                      <Text style={styles.supportLink}>{copy.emailSupport}</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -1203,10 +1580,10 @@ function AppContent() {
 
   return (
     <SafeAreaView style={[styles.safe, rtl && styles.rtlLayout]}>
-      <StatusBar style="dark" />
+      <StatusBar style={themeMode === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         <View style={styles.headerCopy}>
-          <Text style={styles.brandName}>{copy.app}</Text>
+          <Text style={styles.brandName}>{branding.brandName}</Text>
           <Text style={styles.shopName}>{session.business.name}</Text>
         </View>
         <View style={styles.connection}>
@@ -1258,7 +1635,7 @@ function AppContent() {
             <Text style={styles.pageTitle}>{copy.welcome}</Text>
             <View style={styles.metricsGrid}>
               {dashboardMetrics.filter(([key]) =>
-                !businessConfiguration || businessConfiguration.dashboardWidgets.includes(key),
+                can('orders:read') && (!businessConfiguration || businessConfiguration.dashboardWidgets.includes(key))
               ).map(([key, label, value]) => (
                 <View key={key} style={styles.metricCard}>
                   <Text style={styles.metricValue}>{value}</Text>
@@ -1278,8 +1655,8 @@ function AppContent() {
                 </View>
               </View>
             ) : null}
-            {moduleEnabled('orders') ? <Text style={styles.sectionTitle}>{term('orders', copy.orders)}</Text> : null}
-            {orders.slice(0, 3).map((order) => (
+            {can('orders:read') && moduleEnabled('orders') ? <Text style={styles.sectionTitle}>{term('orders', copy.orders)}</Text> : null}
+            {can('orders:read') && moduleEnabled('orders') ? orders.slice(0, 3).map((order) => (
               <View key={order.id} style={styles.listCard}>
                 <View style={styles.listMain}>
                   <Text style={styles.listTitle}>{order.item_name ?? order.garment_name} · {order.customer_name}</Text>
@@ -1287,7 +1664,7 @@ function AppContent() {
                 </View>
                 <Text style={styles.listPrice}>{formatCurrency(order.total, businessConfiguration?.business.currency)}</Text>
               </View>
-            ))}
+            )) : null}
           </>
         ) : null}
 
@@ -1725,6 +2102,12 @@ function AppContent() {
           <>
             <Text style={styles.pageTitle}>{copy.settings}</Text>
             <View style={styles.card}>
+              <Text style={styles.sectionTitle}>{copy.appearance}</Text>
+              <ThemeToggle copy={copy} />
+              <Text style={styles.listMeta}>{copy.themeDefault}: {branding.defaultTheme === 'dark' ? copy.darkTheme : copy.lightTheme}</Text>
+              <Text style={styles.listMeta}>{copy.themePreferenceNote}</Text>
+            </View>
+            <View style={styles.card}>
               <Text style={styles.sectionTitle}>{copy.language}</Text>
               {languageOptions.map((option) => (
                 <Pressable
@@ -1780,7 +2163,7 @@ function AppContent() {
                 onPress={() => { setPage(item.id); setError(''); }}
                 style={[styles.tab, active && styles.tabActive]}
               >
-                <Icon name={item.icon} size={24} color={active ? '#0D7057' : '#6B7C74'} />
+                <Icon name={item.icon} size={24} color={active ? palette.primaryText : palette.mutedText} />
                 <Text numberOfLines={1} style={[styles.tabLabel, active && styles.tabLabelActive]}>{item.label}</Text>
               </Pressable>
             );
@@ -1791,98 +2174,108 @@ function AppContent() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(palette: AppPalette) {
+  return StyleSheet.create({
   grow: { flex: 1 },
-  safe: { flex: 1, backgroundColor: '#F4F6F4' },
-  workspace: { flex: 1, minHeight: 0, backgroundColor: '#F4F6F4' },
+  safe: { flex: 1, backgroundColor: palette.background },
+  workspace: { flex: 1, minHeight: 0, backgroundColor: palette.background },
   rtlLayout: { direction: 'rtl' },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F4F6F4' },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.background },
   authContent: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24, paddingTop: 24, paddingBottom: 34 },
-  header: { minHeight: 72, paddingHorizontal: 19, paddingVertical: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#E3E9E5' },
+  authLanguageRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 },
+  header: { minHeight: 72, paddingHorizontal: 19, paddingVertical: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, backgroundColor: palette.surface, borderBottomWidth: 1, borderBottomColor: palette.border },
   headerCopy: { flex: 1 },
-  brandMark: { width: 54, height: 54, alignItems: 'center', justifyContent: 'center', borderRadius: 17, backgroundColor: '#0D7057', marginBottom: 15, shadowColor: '#0D7057', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.18, shadowRadius: 9, elevation: 4 },
-  brandLetter: { color: '#FFFFFF', fontSize: 25, fontWeight: '900' },
-  brandName: { color: '#0D7057', fontSize: 18, fontWeight: '900', letterSpacing: 0.3 },
-  tagline: { color: '#55665D', fontSize: 15, marginTop: 6, marginBottom: 28, lineHeight: 21 },
-  shopName: { color: '#55665D', fontSize: 15, marginTop: 3 },
-  connection: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 11, paddingVertical: 8, backgroundColor: '#F2F6F3', borderWidth: 1, borderColor: '#E4EBE6', borderRadius: 18 },
+  brandMark: { width: 54, height: 54, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderRadius: 17, backgroundColor: palette.primary, marginBottom: 15, shadowColor: palette.primary, shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.18, shadowRadius: 9, elevation: 4 },
+  logoImage: { alignItems: 'center', justifyContent: 'center' },
+  brandLetter: { color: palette.onPrimary, fontSize: 25, fontWeight: '900' },
+  brandName: { color: palette.primaryText, fontSize: 18, fontWeight: '900', letterSpacing: 0.3 },
+  tagline: { color: palette.secondaryText, fontSize: 15, marginTop: 6, marginBottom: 9, lineHeight: 21 },
+  description: { color: palette.mutedText, fontSize: 14, lineHeight: 20, marginBottom: 20 },
+  shopName: { color: palette.secondaryText, fontSize: 15, marginTop: 3 },
+  connection: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 11, paddingVertical: 8, backgroundColor: palette.surfaceMuted, borderWidth: 1, borderColor: palette.border, borderRadius: 18 },
   connectionDot: { width: 8, height: 8, borderRadius: 4 },
-  onlineDot: { backgroundColor: '#17966B' },
-  offlineDot: { backgroundColor: '#C68A31' },
-  connectionText: { color: '#45574D', fontSize: 15, fontWeight: '700' },
+  onlineDot: { backgroundColor: palette.success },
+  offlineDot: { backgroundColor: palette.warning },
+  connectionText: { color: palette.secondaryText, fontSize: 15, fontWeight: '700' },
   content: { flexGrow: 1, paddingHorizontal: 17, paddingTop: 18, paddingBottom: 24 },
-  syncCard: { backgroundColor: '#EAF3EE', borderWidth: 1, borderColor: '#DCEAE1', borderRadius: 14, padding: 14, flexDirection: 'row', alignItems: 'center', marginBottom: 21 },
-  attentionCard: { backgroundColor: '#FCEDEA', borderWidth: 1, borderColor: '#F1D8D2', borderRadius: 12, padding: 13, marginTop: -12, marginBottom: 16 },
-  attentionTitle: { color: '#8D342B', fontSize: 15, fontWeight: '800', marginBottom: 3 },
+  syncCard: { backgroundColor: palette.successSurface, borderWidth: 1, borderColor: palette.successBorder, borderRadius: 14, padding: 14, flexDirection: 'row', alignItems: 'center', marginBottom: 21 },
+  attentionCard: { backgroundColor: palette.dangerSurface, borderWidth: 1, borderColor: palette.dangerBorder, borderRadius: 12, padding: 13, marginTop: -12, marginBottom: 16 },
+  attentionTitle: { color: palette.danger, fontSize: 15, fontWeight: '800', marginBottom: 3 },
   syncCopy: { flex: 1, paddingRight: 8 },
-  syncTitle: { color: '#245A45', fontSize: 15, fontWeight: '800' },
-  syncMeta: { color: '#5E7069', fontSize: 14, marginTop: 4 },
-  syncError: { color: '#A54334', fontSize: 14, marginTop: 4 },
-  syncButton: { backgroundColor: '#FFFFFF', borderRadius: 10, paddingHorizontal: 11, paddingVertical: 8 },
-  syncButtonText: { color: '#0D7057', fontSize: 15, fontWeight: '800' },
-  pageTitle: { color: '#182A25', fontSize: 27, fontWeight: '900', letterSpacing: -0.4, marginBottom: 14 },
-  subtitle: { color: '#55665D', fontSize: 15, marginTop: -6, marginBottom: 14, lineHeight: 20 },
+  syncTitle: { color: palette.success, fontSize: 15, fontWeight: '800' },
+  syncMeta: { color: palette.secondaryText, fontSize: 14, marginTop: 4 },
+  syncError: { color: palette.danger, fontSize: 14, marginTop: 4 },
+  syncButton: { backgroundColor: palette.surface, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 8 },
+  syncButtonText: { color: palette.primaryText, fontSize: 15, fontWeight: '800' },
+  pageTitle: { color: palette.text, fontSize: 27, fontWeight: '900', letterSpacing: -0.4, marginBottom: 14 },
+  subtitle: { color: palette.secondaryText, fontSize: 15, marginTop: -6, marginBottom: 14, lineHeight: 20 },
   metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
-  metricCard: { width: '48%', flexGrow: 1, minHeight: 92, borderRadius: 14, padding: 16, backgroundColor: '#FFFFFF', borderColor: '#E3E9E5', borderWidth: 1, shadowColor: '#18372B', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.045, shadowRadius: 9, elevation: 2 },
-  metricValue: { color: '#0D7057', fontSize: 28, fontWeight: '900', letterSpacing: -0.5 },
-  metricLabel: { color: '#4E5F56', fontSize: 15, fontWeight: '600', marginTop: 5 },
-  moneyCard: { backgroundColor: '#17362E', borderRadius: 15, padding: 17, marginBottom: 23, shadowColor: '#18372B', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 3 },
+  metricCard: { width: '48%', flexGrow: 1, minHeight: 92, borderRadius: 14, padding: 16, backgroundColor: palette.surface, borderColor: palette.border, borderWidth: 1, shadowColor: palette.shadow, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.045, shadowRadius: 9, elevation: 2 },
+  metricValue: { color: palette.primaryText, fontSize: 28, fontWeight: '900', letterSpacing: -0.5 },
+  metricLabel: { color: palette.secondaryText, fontSize: 15, fontWeight: '600', marginTop: 5 },
+  moneyCard: { backgroundColor: palette.moneySurface, borderRadius: 15, padding: 17, marginBottom: 23, shadowColor: palette.shadow, shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 3 },
   moneyRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 5 },
-  moneyLabel: { color: '#C4D9CE', fontSize: 15 },
+  moneyLabel: { color: palette.moneyLabel, fontSize: 15 },
   moneyValue: { color: '#FFFFFF', fontSize: 17, fontWeight: '800' },
-  sectionTitle: { color: '#263B32', fontSize: 18, fontWeight: '800', marginTop: 6, marginBottom: 11 },
+  sectionTitle: { color: palette.text, fontSize: 18, fontWeight: '800', marginTop: 6, marginBottom: 11 },
   pageHeadingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 10 },
-  card: { backgroundColor: '#FFFFFF', borderRadius: 15, padding: 17, borderWidth: 1, borderColor: '#E3E9E5', marginBottom: 14, shadowColor: '#18372B', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.04, shadowRadius: 9, elevation: 1 },
-  paymentForm: { borderTopWidth: 1, borderTopColor: '#E7EEEA', marginTop: 9, paddingTop: 10 },
-  heading: { color: '#182A25', fontSize: 21, fontWeight: '800', marginBottom: 14 },
+  card: { backgroundColor: palette.surface, borderRadius: 15, padding: 17, borderWidth: 1, borderColor: palette.border, marginBottom: 14, shadowColor: palette.shadow, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.04, shadowRadius: 9, elevation: 1 },
+  paymentForm: { borderTopWidth: 1, borderTopColor: palette.border, marginTop: 9, paddingTop: 10 },
+  heading: { color: palette.text, fontSize: 21, fontWeight: '800', marginBottom: 14 },
   field: { marginBottom: 12 },
-  fieldLabel: { color: '#3C544A', fontSize: 15, fontWeight: '800', marginBottom: 7 },
-  input: { minHeight: 50, borderRadius: 10, borderWidth: 1, borderColor: '#D8E2DC', paddingHorizontal: 12, color: '#203B33', fontSize: 16, backgroundColor: '#FFFFFF' },
+  fieldLabel: { color: palette.secondaryText, fontSize: 15, fontWeight: '800', marginBottom: 7 },
+  input: { minHeight: 50, borderRadius: 10, borderWidth: 1, borderColor: palette.borderStrong, paddingHorizontal: 12, color: palette.text, fontSize: 16, backgroundColor: palette.surface },
   multiline: { minHeight: 76, textAlignVertical: 'top', paddingTop: 11 },
-  actionButton: { minHeight: 52, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: '#0D7057', paddingHorizontal: 15, paddingVertical: 11, marginTop: 5 },
-  actionText: { color: '#FFFFFF', fontSize: 15.5, fontWeight: '800', textAlign: 'center' },
-  secondaryButton: { backgroundColor: '#F1F6F2', borderWidth: 1, borderColor: '#DCE8E0' },
-  secondaryText: { color: '#0D7057' },
+  actionButton: { minHeight: 52, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: palette.primary, paddingHorizontal: 15, paddingVertical: 11, marginTop: 5 },
+  actionText: { color: palette.onPrimary, fontSize: 15.5, fontWeight: '800', textAlign: 'center' },
+  secondaryButton: { backgroundColor: palette.surfaceMuted, borderWidth: 1, borderColor: palette.border },
+  secondaryText: { color: palette.primaryText },
   disabled: { opacity: 0.5 },
   pressed: { opacity: 0.75 },
   spinner: { marginTop: 10 },
-  errorText: { color: '#A33E32', fontSize: 15, lineHeight: 20, marginTop: 8 },
-  errorBanner: { color: '#9F3A30', backgroundColor: '#FCEDEA', borderRadius: 10, padding: 12, fontSize: 15, lineHeight: 19, marginBottom: 13 },
-  serverNote: { color: '#6E7D76', fontSize: 14, marginTop: 2 },
-  offlineHint: { color: '#56675D', fontSize: 15, lineHeight: 19, marginBottom: 7 },
-  listCard: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E3E9E5', borderRadius: 13, padding: 14, flexDirection: 'row', alignItems: 'center', marginBottom: 9, gap: 11 },
-  orderCard: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E3E9E5', borderRadius: 15, padding: 15, marginBottom: 10 },
+  errorText: { color: palette.danger, fontSize: 15, lineHeight: 20, marginTop: 8 },
+  errorBanner: { color: palette.danger, backgroundColor: palette.dangerSurface, borderRadius: 10, padding: 12, fontSize: 15, lineHeight: 19, marginBottom: 13 },
+  offlineHint: { color: palette.secondaryText, fontSize: 15, lineHeight: 19, marginBottom: 7 },
+  listCard: { backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border, borderRadius: 13, padding: 14, flexDirection: 'row', alignItems: 'center', marginBottom: 9, gap: 11 },
+  orderCard: { backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border, borderRadius: 15, padding: 15, marginBottom: 10 },
   orderTop: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 7 },
   listMain: { flex: 1 },
-  listTitle: { color: '#263B32', fontSize: 15.5, fontWeight: '800' },
-  listMeta: { color: '#56675D', fontSize: 15, marginTop: 4 },
-  listPrice: { color: '#0D7057', fontSize: 15, fontWeight: '900' },
-  avatar: { height: 40, width: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: '#E7F2EB' },
-  avatarText: { color: '#0D7057', fontSize: 16, fontWeight: '900' },
-  syncBadge: { color: '#7C9A89', fontWeight: '900' },
-  pendingLabel: { color: '#8F5C1E', fontSize: 14, fontWeight: '700', marginBottom: 4 },
-  emptyCard: { backgroundColor: '#FFFFFF', borderRadius: 15, padding: 22, borderWidth: 1, borderColor: '#E8EEEA' },
-  emptyText: { color: '#58685F', fontSize: 15, textAlign: 'center', lineHeight: 21 },
+  listTitle: { color: palette.text, fontSize: 15.5, fontWeight: '800' },
+  listMeta: { color: palette.secondaryText, fontSize: 15, marginTop: 4 },
+  listPrice: { color: palette.primaryText, fontSize: 15, fontWeight: '900' },
+  avatar: { height: 40, width: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: palette.primarySoft },
+  avatarText: { color: palette.primaryText, fontSize: 16, fontWeight: '900' },
+  syncBadge: { color: palette.mutedText, fontWeight: '900' },
+  pendingLabel: { color: palette.warning, fontSize: 14, fontWeight: '700', marginBottom: 4 },
+  emptyCard: { backgroundColor: palette.surface, borderRadius: 15, padding: 22, borderWidth: 1, borderColor: palette.border },
+  emptyText: { color: palette.secondaryText, fontSize: 15, textAlign: 'center', lineHeight: 21 },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginBottom: 12 },
-  chip: { borderWidth: 1, borderColor: '#DCE6DF', borderRadius: 18, paddingHorizontal: 11, paddingVertical: 7, backgroundColor: '#FFFFFF' },
-  chipSelected: { backgroundColor: '#E7F2EB', borderColor: '#91BFA7' },
-  chipText: { color: '#45564C', fontSize: 15, fontWeight: '700' },
-  chipTextSelected: { color: '#0D7057' },
+  chip: { borderWidth: 1, borderColor: palette.border, borderRadius: 18, paddingHorizontal: 11, paddingVertical: 7, backgroundColor: palette.surface },
+  chipSelected: { backgroundColor: palette.primarySoft, borderColor: palette.primary },
+  chipText: { color: palette.secondaryText, fontSize: 15, fontWeight: '700' },
+  chipTextSelected: { color: palette.primaryText },
   twoFields: { flexDirection: 'row', gap: 10 },
   halfField: { flex: 1 },
   languageRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 },
-  languageChip: { backgroundColor: '#FFFFFF', borderRadius: 18, paddingHorizontal: 11, paddingVertical: 8, borderWidth: 1, borderColor: '#E3EBE5' },
-  languageChipSelected: { backgroundColor: '#E7F2EB', borderColor: '#91BFA7' },
-  languageChipText: { color: '#3C544A', fontSize: 15, fontWeight: '700' },
-  radio: { color: '#0D7057', fontSize: 17 },
+  themeToggle: { minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, borderWidth: 1, borderColor: palette.border, borderRadius: 12, paddingHorizontal: 13, paddingVertical: 9, backgroundColor: palette.surfaceMuted },
+  themeToggleCompact: { width: 44, minHeight: 44, paddingHorizontal: 0, paddingVertical: 0 },
+  themeToggleText: { color: palette.primaryText, fontSize: 15, fontWeight: '700' },
+  authFooter: { color: palette.mutedText, fontSize: 13, lineHeight: 18, textAlign: 'center', marginTop: 12 },
+  supportLinks: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 16, marginTop: 10 },
+  supportLink: { color: palette.primaryText, fontSize: 14, fontWeight: '700', textDecorationLine: 'underline' },
+  languageChip: { backgroundColor: palette.surface, borderRadius: 18, paddingHorizontal: 11, paddingVertical: 8, borderWidth: 1, borderColor: palette.border },
+  languageChipSelected: { backgroundColor: palette.primarySoft, borderColor: palette.primary },
+  languageChipText: { color: palette.secondaryText, fontSize: 15, fontWeight: '700' },
+  radio: { color: palette.primaryText, fontSize: 17 },
   // The bar itself must not grow: `flexGrow: 0` keeps the horizontal ScrollView
   // pinned to the bottom instead of expanding to fill the screen.
-  tabBar: { flexGrow: 0, flexShrink: 0, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#E3E9E5' },
+  tabBar: { flexGrow: 0, flexShrink: 0, backgroundColor: palette.surface, borderTopWidth: 1, borderTopColor: palette.border },
   tabBarContent: { minHeight: 76, paddingTop: 6, paddingBottom: 8, paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center', gap: 2 },
   // Sized to the label rather than an equal share of the row, so longer labels
   // stay fully readable; minWidth keeps a comfortable tap target.
   tab: { minWidth: 76, minHeight: 60, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 10 },
-  tabActive: { backgroundColor: '#E7F4EE' },
-  tabLabel: { color: '#5E6F67', fontSize: 14, fontWeight: '700' },
-  tabLabelActive: { color: '#0D7057', fontWeight: '800' },
-});
+  tabActive: { backgroundColor: palette.primarySoft },
+  tabLabel: { color: palette.secondaryText, fontSize: 14, fontWeight: '700' },
+  tabLabelActive: { color: palette.primaryText, fontWeight: '800' },
+  });
+}

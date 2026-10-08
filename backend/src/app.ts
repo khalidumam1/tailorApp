@@ -8,6 +8,8 @@ import { pinoHttp } from 'pino-http';
 import { allowAnyCorsOrigin, corsOrigins, env } from './config.js';
 import { prisma } from './db.js';
 import { HttpError } from './errors.js';
+import { loadApplicationBranding } from './application-branding.js';
+import { asyncHandler } from './middleware/async-handler.js';
 import { errorHandler } from './middleware/error-handler.js';
 import authRoutes from './routes/auth.routes.js';
 import customerRoutes from './routes/customer.routes.js';
@@ -109,6 +111,11 @@ app.get('/api/v1/health', (_req, res) => {
   res.json({ data: { status: 'ok', service: 'tailor-api', timestamp: new Date().toISOString() } });
 });
 
+app.get('/api/v1/public/application-branding', asyncHandler(async (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+  res.json({ data: await loadApplicationBranding() });
+}));
+
 app.get('/api/v1/ready', async (req, res, next) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
@@ -138,8 +145,11 @@ app.use('/api/v1/sync', syncRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/webhooks/whatsapp', whatsappWebhookRoutes);
 
-app.use((_req, res) => {
-  res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Route not found' } });
+app.use((req, res) => {
+  res.status(404).json({
+    error: { code: 'NOT_FOUND', message: 'Route not found' },
+    requestId: req.requestId,
+  });
 });
 app.use(errorHandler);
 

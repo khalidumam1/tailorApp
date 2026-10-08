@@ -140,3 +140,70 @@ export type CreateGarmentTemplateInput = z.infer<typeof createGarmentTemplateSch
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 export type CreatePaymentInput = z.infer<typeof createPaymentSchema>;
 export type SyncOperationInput = z.infer<typeof syncOperationSchema>;
+
+const brandingAssetUrlSchema = z.string().trim().max(2048).refine((value) => {
+  if (!value) return true;
+  if (value.startsWith('/') && !value.startsWith('//') && !value.includes('\\')) return true;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' && !parsed.username && !parsed.password;
+  } catch {
+    return false;
+  }
+}, 'Use an HTTPS URL or a same-origin absolute path');
+
+const supportUrlSchema = z.string().trim().max(2048).refine((value) => {
+  if (!value) return true;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' && !parsed.username && !parsed.password;
+  } catch {
+    return false;
+  }
+}, 'Support links must use HTTPS');
+
+export const applicationBrandingSchema = z.object({
+  brandName: z.string().trim().min(1).max(80),
+  tagline: z.string().trim().max(140),
+  description: z.string().trim().max(320),
+  loginTitle: z.string().trim().max(120),
+  logoUrl: brandingAssetUrlSchema,
+  faviconUrl: brandingAssetUrlSchema,
+  primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  defaultTheme: z.enum(['light', 'dark']),
+  supportEmail: z.string().trim().max(254).refine((value) => !value || z.string().email().safeParse(value).success,
+    'Support email must be a valid email address'),
+  supportUrl: supportUrlSchema,
+  footerText: z.string().trim().max(200),
+}).strict();
+
+export type ApplicationBranding = z.infer<typeof applicationBrandingSchema>;
+
+export const DEFAULT_APPLICATION_BRANDING: ApplicationBranding = {
+  brandName: 'TailorApp',
+  tagline: 'Made for the workroom',
+  description: 'Keep customers, measurements, stitching progress and payments in one clear place.',
+  loginTitle: 'Good work starts with a good fit.',
+  logoUrl: '',
+  faviconUrl: '',
+  primaryColor: '#117a5c',
+  accentColor: '#c08a33',
+  defaultTheme: 'light',
+  supportEmail: '',
+  supportUrl: '',
+  footerText: '',
+};
+
+/** Return the higher-contrast of white and deep ink for text on a configured brand fill. */
+export function accessibleTextColor(hexColor: string): '#ffffff' | '#0e1a16' {
+  const normalized = /^#[0-9a-fA-F]{6}$/.test(hexColor) ? hexColor.slice(1) : '117a5c';
+  const channels = [0, 2, 4].map((index) => {
+    const value = Number.parseInt(normalized.slice(index, index + 2), 16) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  const contrastWithWhite = 1.05 / (luminance + 0.05);
+  const contrastWithInk = (luminance + 0.05) / (0.008 + 0.05);
+  return contrastWithWhite >= contrastWithInk ? '#ffffff' : '#0e1a16';
+}

@@ -29,5 +29,6 @@ export const platformPermissions = [
   ['platform:payments:review', 'Review subscription payment submissions'],
   ['platform:subscriptions:manage', 'Manage business subscription lifecycle'],
   ['platform:billing:settings', 'Manage billing instructions and settings'],
+  ['platform:application:manage', 'Manage global product branding and appearance'],
   ['platform:reports:read', 'View subscription and payment reports'],
 ] as const;
