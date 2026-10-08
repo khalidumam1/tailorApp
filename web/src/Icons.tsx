@@ -42,6 +42,7 @@ export type IconName =
   | 'plans'
   | 'paymentQueue'
   | 'billingSettings'
+  | 'settings'
   | 'branding'
   | 'sun'
   | 'moon'
@@ -128,6 +129,14 @@ const paths: Record<IconName, JSX.Element> = {
     <>
       <circle cx="12" cy="12" r="3" />
       <path d="M12 3.5v2.3M12 18.2v2.3M4.9 6.4l1.6 1.6M17.5 16l1.6 1.6M3.5 12h2.3M18.2 12h2.3M4.9 17.6l1.6-1.6M17.5 8l1.6-1.6" />
+    </>
+  ),
+  // Sliders — platform settings.
+  settings: (
+    <>
+      <path d="M4 7h10M18 7h2M4 17h2M10 17h10" />
+      <circle cx="16" cy="7" r="2.2" />
+      <circle cx="8" cy="17" r="2.2" />
     </>
   ),
   // Building — platform businesses.

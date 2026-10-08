@@ -19,6 +19,7 @@
     "db:migrate:dev": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
     "bootstrap:platform-admin": "tsx scripts/bootstrap-platform-admin.ts",
+    "platform:grants:backfill": "tsx scripts/backfill-platform-grants.ts",
     "build:shared": "npm run build --prefix shared"
   },
   "dependencies": {

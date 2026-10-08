@@ -36,11 +36,33 @@ import {
 } from './api';
 import { BusinessStructureEditors } from './BusinessStructureEditors';
 import { BusinessTeamAdmin } from './BusinessTeamAdmin';
+import { AreaChart, BarList, ColumnChart, DonutChart, paletteColor, Sparkline } from './Charts';
 import { Icon, type IconName } from './Icons';
 import './styles.css';
 
 type View = 'dashboard' | 'orders' | 'catalog' | 'customers' | 'measurements' | 'payments' | 'notifications' | 'subscription' | 'configuration';
-type PlatformView = 'businesses' | 'templates' | 'staff' | 'audit' | 'health' | 'billing' | 'plans' | 'paymentQueue' | 'billingSettings' | 'branding' | 'reports';
+type PlatformView =
+  | 'overview'
+  | 'businesses'
+  | 'templates'
+  | 'staff'
+  | 'audit'
+  | 'health'
+  | 'billing'
+  | 'plans'
+  | 'paymentQueue'
+  | 'settings'
+  | 'billingSettings'
+  | 'branding'
+  | 'reports';
+
+/** Sidebar sections for the platform console. Settings sits in its own group so it is never buried. */
+const platformNavigationGroups: Array<{ label: string; views: PlatformView[] }> = [
+  { label: 'Overview', views: ['overview'] },
+  { label: 'Workspace', views: ['businesses', 'templates'] },
+  { label: 'Billing', views: ['billing', 'plans', 'paymentQueue', 'reports'] },
+  { label: 'Administration', views: ['settings', 'staff', 'audit', 'health'] },
+];
 type Selection = Exclude<LoginResult, { accessToken: string }>;
 type ThemeMode = 'light' | 'dark';
 
@@ -70,6 +92,12 @@ const navigation: Array<{ view: View; label: string; permission?: string; module
   { view: 'notifications', label: 'WhatsApp notifications', permission: 'notifications:read', module: 'notifications' },
   { view: 'subscription', label: 'Subscription & billing', permission: 'subscriptions:read' },
   { view: 'configuration', label: 'Business settings', permission: 'settings:manage' },
+];
+
+/** Sidebar sections — keeps the primary workspace separate from administration. */
+const navigationGroups: Array<{ label: string; views: View[] }> = [
+  { label: 'Workspace', views: ['dashboard', 'orders', 'catalog', 'customers', 'measurements', 'payments', 'notifications'] },
+  { label: 'Administration', views: ['subscription', 'configuration'] },
 ];
 
 function money(value: string | undefined, currency = 'PKR'): string {
@@ -214,7 +242,9 @@ function App() {
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'BANK' | 'DIGITAL'>('CASH');
   const [receipt, setReceipt] = useState<Receipt | null>(null);
-  const [platformView, setPlatformView] = useState<PlatformView>('businesses');
+  const [platformView, setPlatformView] = useState<PlatformView>('overview');
+  const [settingsTab, setSettingsTab] = useState<'branding' | 'billing'>('branding');
+  const [platformReloadToken, setPlatformReloadToken] = useState(0);
   const [platformBusinesses, setPlatformBusinesses] = useState<import('./api').PlatformBusiness[]>([]);
   const [platformTemplates, setPlatformTemplates] = useState<BusinessTemplate[]>([]);
   const [platformTemplateKey, setPlatformTemplateKey] = useState('tailor');
@@ -363,7 +393,7 @@ function App() {
     setNewStaffPermissions([]);
     setError(null);
     setView('dashboard');
-    setPlatformView('businesses');
+    setPlatformView('overview');
   }, []);
 
   const withSession = useCallback(async <T,>(action: (token: string) => Promise<T>): Promise<T> => {
@@ -422,7 +452,14 @@ function App() {
     setError(null);
     try {
       if (view === 'dashboard') {
-        setDashboard(await withSession(api.dashboard));
+        // Recent orders feed the overview charts, so they are fetched together
+        // with the summary counters.
+        const [summary, orderResult] = await Promise.all([
+          withSession(api.dashboard),
+          withSession((token) => api.orders(token)),
+        ]);
+        setDashboard(summary);
+        setOrders(orderResult.items);
       } else if (view === 'orders') {
         const [orderResult, customerResult, catalogResult] = await Promise.all([
           withSession((token) => api.orders(token, search)),
@@ -597,7 +634,10 @@ function App() {
   useEffect(() => {
     let active = true;
     if (!session || currentUser?.context.scope !== 'platform') return;
-    const viewPermissions: Record<PlatformView, string> = {
+    // `overview` and `settings` are composite screens: they are available when
+    // the signed-in account holds *any* platform grant (overview) or any of the
+    // settings grants, and each card inside them is gated individually.
+    const viewPermissions: Record<Exclude<PlatformView, 'overview' | 'settings'>, string> = {
       businesses: 'platform:businesses:read',
       templates: 'platform:templates:manage',
       staff: 'platform:staff:manage',
@@ -610,17 +650,69 @@ function App() {
       branding: 'platform:application:manage',
       reports: 'platform:reports:read',
     };
-    if (!currentUser.context.platformPermissions.includes(viewPermissions[platformView])) {
+    const settingsPermissions = ['platform:application:manage', 'platform:billing:settings'];
+    const isPermitted = platformView === 'overview'
+      ? currentUser.context.platformPermissions.length > 0
+      : platformView === 'settings'
+        ? settingsPermissions.some((permission) => currentUser.context.platformPermissions.includes(permission))
+        : currentUser.context.platformPermissions.includes(viewPermissions[platformView]);
+    if (!isPermitted) {
       setLoading(false);
       setError(null);
       const firstAvailable = (Object.entries(viewPermissions) as Array<[PlatformView, string]>)
         .find(([, permission]) => currentUser.context.platformPermissions.includes(permission))?.[0];
-      if (firstAvailable) setPlatformView(firstAvailable);
+      setPlatformView(firstAvailable ?? 'overview');
       return;
     }
     setLoading(true);
     setError(null);
     const loadPlatform = async () => {
+      if (platformView === 'overview') {
+        // The overview composes several platform endpoints; each one is guarded
+        // by its own permission so a partially-granted staff account still gets
+        // a useful screen instead of an error.
+        const grants = currentUser.context.platformPermissions;
+        const [businesses, billing, plans, audit, health] = await Promise.all([
+          grants.includes('platform:businesses:read')
+            ? withSession(api.platformBusinesses).catch(() => ({ items: platformBusinesses, nextCursor: null }))
+            : Promise.resolve({ items: platformBusinesses, nextCursor: null }),
+          grants.includes('platform:subscriptions:read')
+            ? withSession(api.platformBillingDashboard).catch(() => billingDashboard)
+            : Promise.resolve(billingDashboard),
+          grants.includes('platform:plans:manage') || grants.includes('platform:subscriptions:read')
+            ? withSession(api.platformSubscriptionPlans).catch(() => ({ items: billingPlans }))
+            : Promise.resolve({ items: billingPlans }),
+          grants.includes('platform:audit:read')
+            ? withSession(api.auditEvents).catch(() => ({ items: platformAudit }))
+            : Promise.resolve({ items: platformAudit }),
+          grants.includes('platform:system:health')
+            ? withSession(api.platformHealth).catch(() => platformHealth)
+            : Promise.resolve(platformHealth),
+        ]);
+        if (!active) return;
+        setPlatformBusinesses(businesses.items);
+        setBillingDashboard(billing);
+        setBillingPlans(plans.items);
+        setPlatformAudit(audit.items);
+        setPlatformHealth(health);
+        return;
+      }
+      if (platformView === 'settings') {
+        const grants = currentUser.context.platformPermissions;
+        const [settings, brandingResult] = await Promise.all([
+          grants.includes('platform:billing:settings')
+            ? withSession(api.billingSettings).catch(() => billingSettings)
+            : Promise.resolve(billingSettings),
+          grants.includes('platform:application:manage')
+            ? withSession(api.platformApplicationBranding).catch(() => applicationBranding)
+            : Promise.resolve(applicationBranding),
+        ]);
+        if (!active) return;
+        setBillingSettings(settings);
+        setApplicationBranding(brandingResult);
+        setApplicationBrandingDraft(brandingResult);
+        return;
+      }
       if (platformView === 'businesses' && currentUser.context.platformPermissions.includes('platform:businesses:read')) {
         const [result, templates] = await Promise.all([
           withSession(api.platformBusinesses),
@@ -694,7 +786,7 @@ function App() {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [currentUser, platformTemplateKey, platformView, session, withSession]);
+  }, [currentUser, platformReloadToken, platformTemplateKey, platformView, session, withSession]);
 
   useEffect(() => {
     let active = true;
@@ -769,6 +861,75 @@ function App() {
   const customerFields = (businessConfiguration?.fields ?? [])
     .filter((field) => field.module === 'customers'
       && ['customer', 'customer-create'].includes(field.screen));
+
+  /* --- Overview analytics: derived client-side from the recent order list --- */
+  const weeklyBuckets = useMemo(() => {
+    const buckets = Array.from({ length: 8 }, (_, index) => {
+      const end = new Date();
+      end.setUTCDate(end.getUTCDate() - (7 - index) * 7);
+      const start = new Date(end.getTime() - 7 * 86_400_000);
+      return { label: end.toLocaleString('en', { month: 'short', day: 'numeric' }), start: start.getTime(), end: end.getTime(), value: 0, count: 0 };
+    });
+    for (const order of orders) {
+      const created = new Date(order.createdAt).getTime();
+      const bucket = buckets.find((candidate) => created > candidate.start && created <= candidate.end);
+      if (!bucket) continue;
+      bucket.value += Number(order.total);
+      bucket.count += 1;
+    }
+    return buckets;
+  }, [orders]);
+
+  const weeklyOrderValue = useMemo(
+    () => weeklyBuckets.map((bucket) => ({ label: bucket.label, value: bucket.value })),
+    [weeklyBuckets],
+  );
+  const weeklyOrderCounts = useMemo(
+    () => weeklyBuckets.map((bucket) => bucket.count),
+    [weeklyBuckets],
+  );
+  const stageBreakdown = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const order of orders) {
+      const label = order.currentWorkflowStage?.label
+        ?? (order.status === 'CANCELLED' ? 'Cancelled' : order.status.replaceAll('_', ' '));
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([label, value], index) => ({ label, value, color: paletteColor(index) }))
+      .sort((left, right) => right.value - left.value);
+  }, [orders]);
+  const collectionSplit = useMemo(() => {
+    let paid = 0;
+    let outstanding = 0;
+    for (const order of orders) {
+      paid += Number(order.paid);
+      outstanding += Number(order.outstanding);
+    }
+    return [
+      { label: 'Collected', value: paid, color: '#059669' },
+      { label: 'Outstanding', value: outstanding, color: '#d97706' },
+    ];
+  }, [orders]);
+  const recentOrders = useMemo(
+    () => [...orders]
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .slice(0, 6),
+    [orders],
+  );
+  const topGarments = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const order of orders) {
+      for (const item of order.items) {
+        const label = item.itemName ?? item.garmentName ?? 'Item';
+        counts.set(label, (counts.get(label) ?? 0) + item.quantity);
+      }
+    }
+    return [...counts.entries()]
+      .map(([label, value]) => ({ label, value }))
+      .sort((left, right) => right.value - left.value)
+      .slice(0, 5);
+  }, [orders]);
 
   async function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1738,9 +1899,18 @@ function App() {
       <main className="auth-layout">
         {themeToggleButton}
         <section className="auth-brand">
-          <p className="eyebrow">{applicationBranding.tagline || 'Made for the workroom'}</p>
+          <span className="brand-mark" aria-hidden="true" style={{ width: 44, height: 44, borderRadius: 12 }}>
+            <span className="brand-mark-fallback">{applicationBranding.brandName.trim().charAt(0).toUpperCase() || 'A'}</span>
+            {applicationBranding.logoUrl && <img key={applicationBranding.logoUrl} src={applicationBranding.logoUrl} alt="" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.style.display = 'none'; }} />}
+          </span>
+          <p className="eyebrow" style={{ marginTop: 18 }}>{applicationBranding.tagline || 'Made for the workroom'}</p>
           <h1>{applicationBranding.loginTitle || 'Welcome back'}</h1>
           <p>{applicationBranding.description || 'Keep your business moving with one clear workspace.'}</p>
+          <ul className="auth-highlights">
+            <li><span aria-hidden="true"><Icon name="orders" /></span>Orders, measurements and workflow stages in one pipeline</li>
+            <li><span aria-hidden="true"><Icon name="payments" /></span>Payments, balances and printed receipts per order</li>
+            <li><span aria-hidden="true"><Icon name="notifications" /></span>WhatsApp updates your customers actually receive</li>
+          </ul>
         </section>
         <form className="auth-card" onSubmit={submitLogin}>
           <div>
@@ -1797,23 +1967,67 @@ function App() {
   if (currentUser?.context.scope === 'platform') {
     const grants = new Set(currentUser.context.platformPermissions);
     const canApprovePayments = currentUser.user.platformRole === 'SUPER_ADMIN' && grants.has('platform:payments:review');
-    const platformNavigation: Array<{ view: PlatformView; label: string; permission: string }> = [
+    const platformNavigation: Array<{ view: PlatformView; label: string; permission?: string; permissions?: string[] }> = [
+      { view: 'overview', label: 'Overview' },
       { view: 'businesses', label: 'Businesses', permission: 'platform:businesses:read' },
       { view: 'templates', label: 'Business templates', permission: 'platform:templates:manage' },
       { view: 'billing', label: 'Subscriptions', permission: 'platform:subscriptions:read' },
       { view: 'plans', label: 'Plans', permission: 'platform:plans:manage' },
       { view: 'paymentQueue', label: 'Payment review', permission: 'platform:payments:review' },
-      { view: 'billingSettings', label: 'Billing settings', permission: 'platform:billing:settings' },
-      { view: 'branding', label: 'Branding & appearance', permission: 'platform:application:manage' },
       { view: 'reports', label: 'Billing reports', permission: 'platform:reports:read' },
+      {
+        view: 'settings',
+        label: 'Platform settings',
+        permissions: ['platform:application:manage', 'platform:billing:settings'],
+      },
       { view: 'staff', label: 'Platform staff', permission: 'platform:staff:manage' },
       { view: 'audit', label: 'Audit history', permission: 'platform:audit:read' },
       { view: 'health', label: 'System health', permission: 'platform:system:health' },
     ];
-    const visiblePlatformNavigation = platformNavigation.filter((item) => grants.has(item.permission));
+    const platformNavItem = (view: PlatformView) => platformNavigation.find((item) => item.view === view);
+    const platformNavVisible = (view: PlatformView) => {
+      const item = platformNavItem(view);
+      if (!item) return false;
+      if (item.permission) return grants.has(item.permission);
+      if (item.permissions) return item.permissions.some((permission) => grants.has(permission));
+      return grants.size > 0;
+    };
+    const visiblePlatformNavigation = platformNavigation.filter((item) => platformNavVisible(item.view));
+    const activeSettingsTab = grants.has('platform:application:manage') ? settingsTab : 'billing';
+    const reloadCurrentPlatform = () => setPlatformReloadToken((token) => token + 1);
+    // Every permission the console can show a screen for. If a super admin is
+    // missing any of these (for example after permissions were added by a newer
+    // release without re-seeding grants) the matching screens silently vanish —
+    // so surface it instead.
+    const requiredPlatformPermissions = [...new Set(platformNavigation
+      .flatMap((item) => item.permissions ?? (item.permission ? [item.permission] : [])))];
+    const missingPlatformGrants = requiredPlatformPermissions.filter((permission) => !grants.has(permission));
+
     const activeBusinesses = platformBusinesses.filter((business) => business.status === 'ACTIVE').length;
     const pendingBusinesses = platformBusinesses.filter((business) => business.status === 'PENDING').length;
     const suspendedBusinesses = platformBusinesses.filter((business) => business.status === 'SUSPENDED').length;
+    /* --- Overview analytics, derived from data already loaded above --- */
+    const monthCursor = new Date();
+    const lastEightMonths = Array.from({ length: 8 }, (_, index) => {
+      const date = new Date(Date.UTC(monthCursor.getUTCFullYear(), monthCursor.getUTCMonth() - (7 - index), 1));
+      return { date, label: date.toLocaleString('en', { month: 'short', timeZone: 'UTC' }) };
+    });
+    const platformGrowth = lastEightMonths.map(({ date, label }) => ({
+      label,
+      value: platformBusinesses.filter((business) => {
+        const created = new Date(business.createdAt);
+        return created.getUTCFullYear() === date.getUTCFullYear() && created.getUTCMonth() === date.getUTCMonth();
+      }).length,
+    }));
+    const growthThisMonth = platformGrowth[platformGrowth.length - 1]?.value ?? 0;
+    const statusSegments = [
+      { label: 'Active', value: activeBusinesses, color: '#059669' },
+      { label: 'Pending', value: pendingBusinesses, color: '#d97706' },
+      { label: 'Suspended', value: suspendedBusinesses, color: '#dc2626' },
+    ].filter((segment) => segment.value > 0);
+    const recentBusinesses = [...platformBusinesses]
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .slice(0, 6);
     return (
       <main className="page platform-state">
         <header className="platform-header">
@@ -1840,20 +2054,31 @@ function App() {
         </section>
         <div className="platform-layout">
           <aside className="platform-sidebar" aria-label="Platform workspace">
-            <p className="platform-sidebar-label">WORKSPACE</p>
             <nav className="platform-nav" aria-label="Platform navigation">
-              {visiblePlatformNavigation.map((item) => (
-                <button
-                  key={item.view}
-                  type="button"
-                  className={platformView === item.view ? 'platform-nav-item is-active' : 'platform-nav-item'}
-                  aria-current={platformView === item.view ? 'page' : undefined}
-                  onClick={() => { setPlatformView(item.view); setError(null); }}
-                >
-                  <span className="platform-nav-icon"><Icon name={item.view} /></span>
-                  <span className="nav-label">{item.label}</span>
-                </button>
-              ))}
+              {platformNavigationGroups.map((group) => {
+                const items = visiblePlatformNavigation.filter((item) => group.views.includes(item.view));
+                if (items.length === 0) return null;
+                return (
+                  <div className="nav-group" key={group.label}>
+                    <p className="platform-sidebar-label">{group.label}</p>
+                    {items.map((item) => (
+                      <button
+                        key={item.view}
+                        type="button"
+                        className={platformView === item.view ? 'platform-nav-item is-active' : 'platform-nav-item'}
+                        aria-current={platformView === item.view ? 'page' : undefined}
+                        onClick={() => { setPlatformView(item.view); setError(null); }}
+                      >
+                        <span className="platform-nav-icon"><Icon name={item.view === 'overview' ? 'dashboard' : item.view} /></span>
+                        <span className="nav-label">{item.label}</span>
+                        {item.view === 'paymentQueue' && billingDashboard && billingDashboard.pendingPayments > 0 && (
+                          <span className="nav-badge">{billingDashboard.pendingPayments}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })}
             </nav>
             <div className="platform-sidebar-footer"><span className="connection-dot is-online" />Secure platform scope</div>
           </aside>
@@ -1861,6 +2086,171 @@ function App() {
             {error && <div className="alert alert-error" role="alert">{error}</div>}
             {notice && <div className="alert alert-success" role="status">{notice}<button aria-label="Dismiss" onClick={() => setNotice(null)}>×</button></div>}
             {visiblePlatformNavigation.length === 0 && <section className="panel"><h2>No platform tools assigned</h2><p className="muted">A platform administrator must explicitly grant access.</p></section>}
+            {grants.size > 0 && missingPlatformGrants.length > 0 && currentUser.user.platformRole === 'SUPER_ADMIN' && (
+              <div className="alert alert-error" role="alert">
+                <span>
+                  This super admin account is missing {missingPlatformGrants.length} platform grant{missingPlatformGrants.length === 1 ? '' : 's'}
+                  {' '}({missingPlatformGrants.join(', ')}). Their screens are hidden. Re-run <code>npm run db:seed</code> or{' '}
+                  <code>npm run platform:grants:backfill</code> to restore them.
+                </span>
+              </div>
+            )}
+        {platformView === 'overview' && (
+          <section className="content-stack" aria-label="Platform overview">
+            <div className="page-head">
+              <div>
+                <p className="eyebrow">Administration</p>
+                <h2>Platform overview</h2>
+                <p className="muted">Workspace growth, subscription health and privileged activity across every business on the platform.</p>
+              </div>
+              <div className="page-head-actions">
+                <span className="status-pill status-active">{platformHealth?.status ?? (loading ? 'checking…' : 'unknown')} · database</span>
+                <button className="button button-secondary" onClick={() => void reloadCurrentPlatform()}>Refresh</button>
+              </div>
+            </div>
+
+            <div className="platform-metrics" aria-label="Platform summary">
+              <article className="platform-metric">
+                <span className="platform-metric-icon"><Icon name="businesses" /></span>
+                <span className="platform-metric-label">Registered businesses</span>
+                <strong>{loading && platformBusinesses.length === 0 ? '—' : platformBusinesses.length}</strong>
+                <span className="chart-legend-value">{growthThisMonth} added this month</span>
+              </article>
+              <article className="platform-metric">
+                <span className="platform-metric-icon is-green"><Icon name="check" /></span>
+                <span className="platform-metric-label">Active workspaces</span>
+                <strong>{loading && platformBusinesses.length === 0 ? '—' : activeBusinesses}</strong>
+                <span className="chart-legend-value">{pendingBusinesses} awaiting review</span>
+              </article>
+              <article className="platform-metric">
+                <span className="platform-metric-icon is-amber"><Icon name="payments" /></span>
+                <span className="platform-metric-label">Recorded revenue</span>
+                <strong>{billingDashboard ? money(billingDashboard.recordedRevenue) : '—'}</strong>
+                <span className="chart-legend-value">{billingDashboard?.approvedPaymentCount ?? 0} approved payments</span>
+              </article>
+              <article className="platform-metric">
+                <span className="platform-metric-icon is-rose"><Icon name="clock" /></span>
+                <span className="platform-metric-label">Payments awaiting review</span>
+                <strong>{billingDashboard ? billingDashboard.pendingPayments : '—'}</strong>
+                <span className="chart-legend-value">{suspendedBusinesses} suspended workspaces</span>
+              </article>
+            </div>
+
+            <div className="split-2">
+              <section className="panel chart-card">
+                <div className="card-title-row">
+                  <div><h3>Business growth</h3><p className="muted">New workspaces registered per month</p></div>
+                  <span className="status-pill">Last 8 months</span>
+                </div>
+                {platformBusinesses.length ? <AreaChart data={platformGrowth} /> : <EmptyState title="No businesses yet" />}
+              </section>
+              <section className="panel chart-card">
+                <div className="card-title-row">
+                  <div><h3>Account status</h3><p className="muted">Live breakdown of every workspace</p></div>
+                </div>
+                {platformBusinesses.length ? (
+                  <DonutChart
+                    segments={statusSegments}
+                    centreValue={String(platformBusinesses.length)}
+                    centreLabel="businesses"
+                  />
+                ) : <EmptyState title="No businesses yet" />}
+              </section>
+            </div>
+
+            <div className="split-2">
+              <section className="panel chart-card">
+                <div className="card-title-row">
+                  <div><h3>Plan distribution</h3><p className="muted">Workspaces by subscribed plan</p></div>
+                </div>
+                {billingPlans.length ? (
+                  <BarList
+                    items={billingPlans.map((plan, index) => ({
+                      label: plan.name,
+                      value: plan._count?.subscriptions ?? 0,
+                      note: money(plan.monthlyPrice) + '/mo',
+                      color: paletteColor(index),
+                    }))}
+                  />
+                ) : <EmptyState title="Plan data unavailable" detail="Grant subscription access to see plan distribution." />}
+              </section>
+              <section className="panel chart-card">
+                <div className="card-title-row">
+                  <div><h3>Recent activity</h3><p className="muted">Privileged actions across the platform</p></div>
+                  {grants.has('platform:audit:read') && (
+                    <button className="button button-quiet" onClick={() => setPlatformView('audit')}>View all</button>
+                  )}
+                </div>
+                {platformAudit.length ? (
+                  <div className="activity-feed">
+                    {platformAudit.slice(0, 6).map((event) => (
+                      <div className="activity-row" key={event.id}>
+                        <span className="activity-avatar" aria-hidden="true">{(event.actor?.name ?? 'System').trim().charAt(0).toUpperCase()}</span>
+                        <span className="activity-text">
+                          <strong>{event.action.replace(/^platform\./, '').replaceAll('_', ' ')}</strong>
+                          <small>{event.actor?.name ?? 'System'} · {event.entityType.replaceAll('_', ' ')}</small>
+                        </span>
+                        <span className="activity-time">{karachiDate(event.createdAt)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : <EmptyState title="No audit activity" detail="Audit history requires the platform:audit:read grant." />}
+              </section>
+            </div>
+
+            <section className="panel">
+              <div className="card-title-row">
+                <div><h3>Latest workspaces</h3><p className="muted">Most recently registered businesses</p></div>
+                {grants.has('platform:businesses:read') && (
+                  <button className="button button-secondary" onClick={() => setPlatformView('businesses')}>Open directory</button>
+                )}
+              </div>
+              {platformBusinesses.length ? (
+                <div className="table-wrap" style={{ marginTop: 12, boxShadow: 'none' }}>
+                  <table>
+                    <thead><tr><th>Business</th><th>Template</th><th>Owner</th><th>Status</th><th>Registered</th></tr></thead>
+                    <tbody>
+                      {recentBusinesses.map((business) => (
+                        <tr key={business.id}>
+                          <td><strong>{business.name}</strong><small className="table-note">{business.slug}</small></td>
+                          <td>{business.template?.name ?? '—'}</td>
+                          <td>{business.owner?.name ?? <span className="table-note-warn">Unassigned</span>}</td>
+                          <td><StatusPill status={business.status} /></td>
+                          <td>{karachiDate(business.createdAt)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : <EmptyState title="No businesses yet" />}
+            </section>
+          </section>
+        )}
+        {platformView === 'settings' && (
+          <section className="content-stack" aria-label="Platform settings">
+            <div className="page-head">
+              <div>
+                <p className="eyebrow">Platform configuration</p>
+                <h2>Platform settings</h2>
+                <p className="muted">Everything that shapes how the product looks and how businesses pay for it. These screens were previously split across the sidebar; they now live in one place.</p>
+              </div>
+            </div>
+            <div className="segmented" role="tablist" aria-label="Settings sections">
+              {grants.has('platform:application:manage') && (
+                <button type="button" role="tab" aria-selected={activeSettingsTab === 'branding'} className={activeSettingsTab === 'branding' ? 'is-active' : ''} onClick={() => setSettingsTab('branding')}>Branding & appearance</button>
+              )}
+              {grants.has('platform:billing:settings') && (
+                <button type="button" role="tab" aria-selected={activeSettingsTab === 'billing'} className={activeSettingsTab === 'billing' ? 'is-active' : ''} onClick={() => setSettingsTab('billing')}>Billing settings</button>
+              )}
+            </div>
+            {!grants.has('platform:application:manage') && !grants.has('platform:billing:settings') && (
+              <section className="panel">
+                <h3>No settings access</h3>
+                <p className="muted">This account needs <code>platform:application:manage</code> or <code>platform:billing:settings</code> to change platform settings.</p>
+              </section>
+            )}
+          </section>
+        )}
         {platformView === 'businesses' && grants.has('platform:businesses:read') && (
           <section className="content-stack">
             <div className="section-heading"><div><p className="eyebrow">Workspace management</p><h2>Business directory</h2><p className="muted">Onboard businesses, assign owners, and manage account status.</p></div></div>
@@ -2147,7 +2537,9 @@ function App() {
             {billingPaymentCursor && <button className="button button-secondary" disabled={loading || working || !online} onClick={() => void searchSubscriptionPayments(undefined, true)}>Load more payments</button>}
           </section>
         )}
-        {platformView === 'billingSettings' && grants.has('platform:billing:settings') && (
+        {(platformView === 'billingSettings'
+          || (platformView === 'settings' && activeSettingsTab === 'billing' && grants.has('platform:billing:settings')))
+          && grants.has('platform:billing:settings') && (
           <section className="content-stack">
             <div className="section-heading"><div><p className="eyebrow">Platform configuration</p><h2>Billing settings</h2><p className="muted">Configure manual payment instructions, grace period, reminder schedule and support details.</p></div></div>
             {loading ? <LoadingState /> : billingSettings ? <form className="panel form-panel" onSubmit={saveBillingSettings}>
@@ -2164,7 +2556,9 @@ function App() {
             </form> : <EmptyState title="Billing settings unavailable" />}
           </section>
         )}
-        {platformView === 'branding' && grants.has('platform:application:manage') && (
+        {(platformView === 'branding'
+          || (platformView === 'settings' && activeSettingsTab === 'branding' && grants.has('platform:application:manage')))
+          && grants.has('platform:application:manage') && (
           <section className="content-stack">
             <div className="section-heading"><div><p className="eyebrow">Product configuration</p><h2>Branding & appearance</h2><p className="muted">Set the name, login presentation, colors, theme defaults, and support details shown across the product.</p></div></div>
             {loading ? <LoadingState /> : <form className="panel form-panel" onSubmit={saveApplicationBranding}>
@@ -2357,16 +2751,34 @@ function App() {
           <span><strong>{businessConfiguration?.business.name ?? currentUser?.context.business?.name ?? 'Business'}</strong><small>{businessConfiguration?.template.name ?? 'Business workspace'}</small></span>
         </div>
         <nav aria-label="Main navigation" className="main-nav">
-          {visibleNavigation.map((item) => (
-            <button key={item.view} className={view === item.view ? 'nav-item active' : 'nav-item'} onClick={() => { setView(item.view); setError(null); }}>
-              <span className="nav-icon"><Icon name={item.view} /></span>
-              <span className="nav-label">{item.label}</span>
-            </button>
-          ))}
+          {navigationGroups.map((group) => {
+            const items = visibleNavigation.filter((item) => group.views.includes(item.view));
+            if (items.length === 0) return null;
+            return (
+              <div key={group.label} className="nav-group">
+                <p className="nav-section-label">{group.label}</p>
+                {items.map((item) => (
+                  <button
+                    key={item.view}
+                    className={view === item.view ? 'nav-item active' : 'nav-item'}
+                    aria-current={view === item.view ? 'page' : undefined}
+                    onClick={() => { setView(item.view); setError(null); }}
+                  >
+                    <span className="nav-icon"><Icon name={item.view} /></span>
+                    <span className="nav-label">{item.label}</span>
+                    {item.view === 'orders' && dashboard && dashboard.overdue > 0 && <span className="nav-badge">{dashboard.overdue}</span>}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
         </nav>
-        <div className="sidebar-bottom">
-          <span className={online ? 'connection-dot is-online' : 'connection-dot'} aria-hidden="true" />
-          <span>{online ? 'Online' : 'Offline — changes need a connection'}</span>
+        <div className="sidebar-user">
+          <span className="user-avatar" aria-hidden="true">{currentUser?.user.name.slice(0, 1).toUpperCase()}</span>
+          <span>
+            <strong>{currentUser?.user.name}</strong>
+            <small>{online ? 'Online' : 'Offline'}</small>
+          </span>
         </div>
       </aside>
       <main className="workspace">
@@ -2375,7 +2787,8 @@ function App() {
             <p className="eyebrow">{currentUser?.context.business?.name}</p>
             <h1>{visibleNavigation.find((item) => item.view === view)?.label ?? 'Overview'}</h1>
           </div>
-          <div className="user-menu">
+          <div className="page-head-actions">
+            <span className="status-pill" title="Workspace currency and timezone">{businessConfiguration?.business.currency ?? 'PKR'} · Karachi</span>
             {themeToggleButton}
             <span className="user-avatar" aria-hidden="true">{currentUser?.user.name.slice(0, 1).toUpperCase()}</span>
             <span className="user-name">{currentUser?.user.name}</span>
@@ -2388,25 +2801,136 @@ function App() {
         {!online && <div className="offline-banner" role="status">You are offline. This web workspace is read-only until the connection returns.</div>}
 
         {view === 'dashboard' && (
-          <section aria-label="Business overview">
+          <section aria-label="Business overview" className="content-stack">
+            <div className="page-head">
+              <div>
+                <p className="eyebrow">{businessConfiguration?.business.name ?? 'Workspace'}</p>
+                <h2>Overview</h2>
+                <p className="muted">
+                  Orders, collections and workload at a glance. Figures use the shop's Asia/Karachi business day.
+                </p>
+              </div>
+              <div className="page-head-actions">
+                <button className="button button-secondary" onClick={() => void reloadCurrent()}>Refresh</button>
+                {permissions.has('orders:read') && (
+                  <button className="button button-primary" onClick={() => setView('orders')}><Icon name="plus" /> New {term('order', 'order').toLowerCase()}</button>
+                )}
+              </div>
+            </div>
+
             {loading && !dashboard ? <LoadingState /> : dashboard ? (
               <>
                 <div className="metric-grid">
-                  {widgetEnabled('newOrders') && <MetricCard label={`New ${term('orders', 'orders').toLowerCase()} today`} value={String(dashboard.newOrders)} icon="plus" />}
+                  {widgetEnabled('newOrders') && (
+                    <MetricCard
+                      label={`New ${term('orders', 'orders').toLowerCase()} today`}
+                      value={String(dashboard.newOrders)}
+                      icon="plus"
+                      trend={trendPercent(weeklyOrderCounts)}
+                      spark={weeklyOrderCounts}
+                    />
+                  )}
                   {widgetEnabled('dueToday') && <MetricCard label="Due today" value={String(dashboard.dueToday)} icon="clock" tone="amber" />}
                   {widgetEnabled('inProgress') && <MetricCard label="In progress" value={String(dashboard.inProgress)} icon="progress" tone="blue" />}
                   {widgetEnabled('overdue') && <MetricCard label="Overdue" value={String(dashboard.overdue)} icon="warning" tone="rose" />}
-                  {widgetEnabled('outstanding') && permissions.has('payments:read') && <MetricCard label="Outstanding" value={money(dashboard.outstanding, businessConfiguration?.business.currency)} icon="payments" tone="violet" />}
-                  {widgetEnabled('collectedToday') && permissions.has('payments:read') && <MetricCard label="Collected today" value={money(dashboard.collectedToday, businessConfiguration?.business.currency)} icon="trendUp" tone="green" />}
+                  {widgetEnabled('outstanding') && permissions.has('payments:read') && (
+                    <MetricCard
+                      label="Outstanding"
+                      value={money(dashboard.outstanding, businessConfiguration?.business.currency)}
+                      icon="payments"
+                      tone="violet"
+                    />
+                  )}
+                  {widgetEnabled('collectedToday') && permissions.has('payments:read') && (
+                    <MetricCard
+                      label="Collected today"
+                      value={money(dashboard.collectedToday, businessConfiguration?.business.currency)}
+                      icon="trendUp"
+                      tone="green"
+                    />
+                  )}
                 </div>
-                {businessConfiguration?.template.key === 'tailor' && <section className="panel dashboard-note">
-                  <div>
-                    <p className="eyebrow">Today at a glance</p>
-                    <h2>{dashboard.alterations} open alteration{dashboard.alterations === 1 ? '' : 's'}</h2>
-                    <p className="muted">Dashboard figures use the shop's Asia/Karachi business day.</p>
+
+                <div className="split-2">
+                  <section className="panel chart-card">
+                    <div className="card-title-row">
+                      <div>
+                        <h3>{term('order', 'Order')} value</h3>
+                        <p className="muted">Booked value across the last eight weeks</p>
+                      </div>
+                      <span className="status-pill">{money(String(weeklyOrderValue.reduce((sum, point) => sum + point.value, 0)), businessConfiguration?.business.currency)} total</span>
+                    </div>
+                    {orders.length ? (
+                      <AreaChart data={weeklyOrderValue} format={(value) => money(String(value), businessConfiguration?.business.currency)} />
+                    ) : <EmptyState title="No orders yet" detail="Charts appear once orders are recorded." />}
+                  </section>
+                  <section className="panel chart-card">
+                    <div className="card-title-row">
+                      <div>
+                        <h3>Pipeline</h3>
+                        <p className="muted">Where the current workload sits</p>
+                      </div>
+                    </div>
+                    {stageBreakdown.length ? (
+                      <DonutChart segments={stageBreakdown} centreValue={String(orders.length)} centreLabel={term('orders', 'orders').toLowerCase()} />
+                    ) : <EmptyState title="No orders yet" />}
+                  </section>
+                </div>
+
+                <div className="split-3">
+                  <section className="panel chart-card">
+                    <div className="card-title-row"><div><h3>Collections</h3><p className="muted">Paid versus outstanding</p></div></div>
+                    {collectionSplit.some((segment) => segment.value > 0) ? (
+                      <BarList
+                        items={collectionSplit.map((segment) => ({
+                          ...segment,
+                          note: undefined,
+                        }))}
+                        format={(value) => money(String(value), businessConfiguration?.business.currency)}
+                      />
+                    ) : <EmptyState title="No payments recorded" />}
+                  </section>
+                  <section className="panel chart-card">
+                    <div className="card-title-row"><div><h3>Top {term('items', 'items').toLowerCase()}</h3><p className="muted">By quantity on recent orders</p></div></div>
+                    {topGarments.length ? <BarList items={topGarments} /> : <EmptyState title="Nothing stitched yet" />}
+                  </section>
+                  <section className="panel chart-card">
+                    <div className="card-title-row"><div><h3>This week</h3><p className="muted">Orders booked per week</p></div></div>
+                    {orders.length ? <ColumnChart data={weeklyOrderValue.map((point) => ({ label: point.label, value: Math.round(point.value) }))} height={190} /> : <EmptyState title="No orders yet" />}
+                  </section>
+                </div>
+
+                <section className="panel">
+                  <div className="card-title-row">
+                    <div>
+                      <h3>Recent {term('orders', 'orders').toLowerCase()}</h3>
+                      <p className="muted">Latest bookings across every stage</p>
+                    </div>
+                    {permissions.has('orders:read') && (
+                      <button className="button button-secondary" onClick={() => setView('orders')}>View all</button>
+                    )}
                   </div>
-                  <button className="button button-primary" onClick={() => setView('orders')} disabled={!permissions.has('orders:read')}>View orders</button>
-                </section>}
+                  {recentOrders.length ? (
+                    <div className="table-wrap" style={{ marginTop: 12, boxShadow: 'none' }}>
+                      <table>
+                        <thead><tr><th>{term('order', 'Order')}</th><th>{term('customer', 'Customer')}</th><th>Stage</th><th>Total</th><th>Promised</th></tr></thead>
+                        <tbody>
+                          {recentOrders.map((order) => (
+                            <tr key={order.id}>
+                              <td><strong>{order.orderNumber}</strong><small className="table-note">{karachiDate(order.createdAt)}</small></td>
+                              <td>{order.customer.name}</td>
+                              <td><StatusPill status={order.currentWorkflowStage?.key ?? order.status} /></td>
+                              <td><strong>{money(order.total, businessConfiguration?.business.currency)}</strong>
+                                {Number(order.outstanding) > 0 && <small className="table-note">{money(order.outstanding, businessConfiguration?.business.currency)} due</small>}
+                              </td>
+                              <td>{new Date(order.promisedAt).toLocaleDateString('en-PK', { day: 'numeric', month: 'short' })}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : <EmptyState title="No orders yet" detail="Create your first order to populate the dashboard." />}
+                </section>
               </>
             ) : <EmptyState title="Dashboard unavailable" action="Refresh" onAction={() => void reloadCurrent()} />}
           </section>
@@ -3062,13 +3586,55 @@ function App() {
   );
 }
 
-function MetricCard({ label, value, icon, tone = 'green' }: { label: string; value: string; icon: IconName; tone?: string }) {
-  return <article className={`metric-card tone-${tone}`}><span className="metric-icon" aria-hidden="true"><Icon name={icon} /></span><span className="metric-label">{label}</span><strong>{value}</strong></article>;
+/** Percentage change between the last two non-empty buckets of a series. */
+function trendPercent(series: number[]): number | undefined {
+  const filled = series.filter((value) => Number.isFinite(value));
+  if (filled.length < 2) return undefined;
+  const previous = filled[filled.length - 2];
+  const latest = filled[filled.length - 1];
+  if (previous === 0) return latest === 0 ? 0 : undefined;
+  return Math.round(((latest - previous) / previous) * 100);
+}
+
+function MetricCard({
+  label,
+  value,
+  icon,
+  tone = 'green',
+  trend,
+  spark,
+}: {
+  label: string;
+  value: string;
+  icon: IconName;
+  tone?: string;
+  trend?: number;
+  spark?: number[];
+}) {
+  const toneColor = {
+    green: '#059669', amber: '#d97706', blue: '#2563eb', rose: '#dc2626', violet: '#7c3aed',
+  }[tone] ?? 'var(--configured-primary)';
+  return (
+    <article className={`metric-card tone-${tone}`}>
+      <div className="card-title-row">
+        <span className="metric-icon" aria-hidden="true"><Icon name={icon} /></span>
+        {trend !== undefined && (
+          <span className={`metric-trend ${trend > 0 ? 'is-up' : trend < 0 ? 'is-down' : 'is-flat'}`}>
+            {trend > 0 ? '↑' : trend < 0 ? '↓' : '→'} {Math.abs(trend)}%
+          </span>
+        )}
+      </div>
+      <span className="metric-label">{label}</span>
+      <strong>{value}</strong>
+      {spark && spark.length > 1 && <Sparkline points={spark} color={toneColor} />}
+    </article>
+  );
 }
 
 function StatusPill({ status }: { status: string }) {
   const label = status.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
-  return <span className={`status-pill status-${status.toLowerCase()}`}>{label}</span>;
+  const slug = status.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  return <span className={`status-pill status-${slug}`}>{label}</span>;
 }
 
 function isVisibleForItemType(
