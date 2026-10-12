@@ -2784,7 +2784,6 @@ function App() {
       <main className="workspace">
         <header className="workspace-header">
           <div>
-            <p className="eyebrow">{currentUser?.context.business?.name}</p>
             <h1>{visibleNavigation.find((item) => item.view === view)?.label ?? 'Overview'}</h1>
           </div>
           <div className="page-head-actions">
@@ -2804,8 +2803,6 @@ function App() {
           <section aria-label="Business overview" className="content-stack">
             <div className="page-head">
               <div>
-                <p className="eyebrow">{businessConfiguration?.business.name ?? 'Workspace'}</p>
-                <h2>Overview</h2>
                 <p className="muted">
                   Orders, collections and workload at a glance. Figures use the shop's Asia/Karachi business day.
                 </p>

@@ -110,14 +110,8 @@ async function seed() {
         status: 'ACTIVE',
       },
     });
-    await tx.business.updateMany({
-      where: { id: business.id, orderSequence: { lt: 2 } },
-      data: { orderSequence: 2 },
-    });
-    await tx.business.updateMany({
-      where: { id: business.id, receiptSequence: { lt: 2 } },
-      data: { receiptSequence: 2 },
-    });
+    // Operational customers/orders/payments are intentionally not seeded.
+    // Keep sequence counters at their defaults so the first real records start cleanly.
     await ensureTrialSubscription(tx, business.id);
     const existingOwner = await tx.user.findUnique({
       where: { email: ownerEmail },

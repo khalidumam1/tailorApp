@@ -1583,8 +1583,8 @@ function AppContent() {
       <StatusBar style={themeMode === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         <View style={styles.headerCopy}>
-          <Text style={styles.brandName}>{branding.brandName}</Text>
           <Text style={styles.shopName}>{session.business.name}</Text>
+          <Text style={styles.configDetail}>{businessConfiguration?.template.name ?? 'Loading...'}</Text>
         </View>
         <View style={styles.connection}>
           <DisplayStatus online={online} copy={copy} />
@@ -2192,6 +2192,7 @@ function createStyles(palette: AppPalette) {
   tagline: { color: palette.secondaryText, fontSize: 15, marginTop: 6, marginBottom: 9, lineHeight: 21 },
   description: { color: palette.mutedText, fontSize: 14, lineHeight: 20, marginBottom: 20 },
   shopName: { color: palette.secondaryText, fontSize: 15, marginTop: 3 },
+  configDetail: { color: palette.mutedText, fontSize: 14, marginTop: 2 },
   connection: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 11, paddingVertical: 8, backgroundColor: palette.surfaceMuted, borderWidth: 1, borderColor: palette.border, borderRadius: 18 },
   connectionDot: { width: 8, height: 8, borderRadius: 4 },
   onlineDot: { backgroundColor: palette.success },
