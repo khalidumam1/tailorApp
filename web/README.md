@@ -54,11 +54,20 @@ against the demo API and capturing each route — see `tools/demo-api/README.md`
 
 ## Vercel
 
-When this folder is the repository root, select the Vite preset, use
-`npm ci` as the install command, `npm run build` as the build command, and
-`dist` as the output directory. Add `API_BASE_URL` in the Vercel project
-environment settings. Set backend `CORS_ORIGINS` to the exact deployed site
-origin, without a trailing slash.
+Set the project's **Root Directory** to `web` and keep the Vite preset defaults:
+`npm ci` as the install command, `npm run build` as the build command and `dist`
+as the output directory. Add `API_BASE_URL` in the Vercel project environment
+settings. Set backend `CORS_ORIGINS` to the exact deployed site origin, without
+a trailing slash.
+
+Inside the monorepo, npm resolves this workspace against the repository root, so
+`npm ci` reads the root `package-lock.json` and installs every workspace. After
+changing any dependency, refresh that lockfile from the repository root
+(`npm install --package-lock-only`) — otherwise the Vercel install fails with
+`npm error Missing: <package> from lock file` before the build starts.
+`scripts/build-shared.mjs` compiles whichever `@tailor/shared` copy the workspace
+resolves to, so the build also works on a fresh clone, where the generated
+`dist` folders do not exist yet.
 
 ```sh
 npm run typecheck
