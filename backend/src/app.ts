@@ -77,7 +77,10 @@ app.use(cors({
   // Bearer auth only — no cookies — so the permissive origin stays safe.
   credentials: false,
   methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
+  // Idempotency-Key is required by financial POST routes (for example recording a payment).
+  // Browsers only send it after a successful preflight, so it must be listed here or every
+  // browser request carrying it fails before reaching the API ("Could not reach the service").
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'Idempotency-Key'],
   exposedHeaders: ['x-request-id'],
   maxAge: 600,
 }));
