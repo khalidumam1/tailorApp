@@ -50,6 +50,7 @@ import {
 import { getCopy, languageOptions, type Language } from './src/i18n';
 import { Icon, type IconName } from './src/Icons';
 import {
+  applyLocalOrderWorkflowTransition,
   loadCustomers,
   loadCatalogItems,
   loadMeasurements,
@@ -333,8 +334,9 @@ function ThemeToggle({ copy, compact = false }: { copy: ReturnType<typeof getCop
       accessibilityRole="switch"
       accessibilityLabel={`${copy.appearance}: ${themeMode === 'dark' ? copy.darkTheme : copy.lightTheme}`}
       accessibilityState={{ checked: themeMode === 'dark' }}
+      android_ripple={{ color: palette.primarySoft }}
       onPress={toggleTheme}
-      style={({ pressed }) => [styles.themeToggle, compact && styles.themeToggleCompact, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.themeToggle, compact && styles.themeToggleCompact, pressed && styles.secondaryButtonPressed]}
     >
       <Icon name={themeMode === 'dark' ? 'sun' : 'moon'} size={20} color={palette.primaryText} />
       {!compact && <Text style={styles.themeToggleText}>{nextThemeLabel}</Text>}
@@ -465,24 +467,80 @@ function DisplayStatus({ online, copy }: { online: boolean | null; copy: ReturnT
   );
 }
 
+const MOBILE_STAGE_ALIASES: Record<string, string[]> = {
+  FINISHING: ['FITTING'],
+  FITTING: ['FINISHING'],
+  READY_FOR_PICKUP: ['READY'],
+  READY: ['READY_FOR_PICKUP'],
+  COLLECTED: ['DELIVERED', 'COMPLETED'],
+  DELIVERED: ['COLLECTED', 'COMPLETED'],
+  COMPLETED: ['COLLECTED', 'DELIVERED'],
+};
+
+function resolveMobileWorkflowStage(
+  stages: BusinessConfiguration['workflow']['stages'] | undefined,
+  order: Pick<LocalOrder, 'workflow_stage_key' | 'status'>,
+) {
+  if (!stages?.length) return undefined;
+  const candidateKeys = [order.workflow_stage_key, order.status].filter((key): key is string => Boolean(key));
+  for (const key of candidateKeys) {
+    const direct = stages.find((stage) => stage.key === key);
+    if (direct) return direct;
+    for (const alias of MOBILE_STAGE_ALIASES[key] ?? []) {
+      const aliased = stages.find((stage) => stage.key === alias);
+      if (aliased) return aliased;
+    }
+  }
+  if (order.status === 'NEW') {
+    return stages.find((stage) => stage.isInitial);
+  }
+  return undefined;
+}
+
 function ActionButton({
-  title, onPress, secondary = false, disabled = false,
-}: { title: string; onPress: () => void; secondary?: boolean; disabled?: boolean }) {
+  title,
+  onPress,
+  secondary = false,
+  disabled = false,
+  loading = false,
+  loadingTitle,
+}: {
+  title: string;
+  onPress: () => void;
+  secondary?: boolean;
+  disabled?: boolean;
+  loading?: boolean;
+  loadingTitle?: string;
+}) {
   const styles = useAppStyles();
+  const { palette } = useAppTheme();
+  const isDisabled = disabled || loading;
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
+      accessibilityState={{ disabled: isDisabled, busy: loading }}
+      android_ripple={{ color: secondary ? palette.primarySoft : 'rgba(255, 255, 255, 0.24)' }}
+      disabled={isDisabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.actionButton,
         secondary && styles.secondaryButton,
-        disabled && styles.disabled,
-        pressed && styles.pressed,
+        loading && styles.loadingButton,
+        disabled && !loading && styles.disabled,
+        pressed && !isDisabled && (secondary ? styles.secondaryButtonPressed : styles.actionButtonPressed),
       ]}
     >
-      <Text style={[styles.actionText, secondary && styles.secondaryText]}>{title}</Text>
+      <View style={styles.actionButtonContent}>
+        {loading ? (
+          <ActivityIndicator
+            size="small"
+            color={secondary ? palette.primaryText : palette.onPrimary}
+          />
+        ) : null}
+        <Text style={[styles.actionText, secondary && styles.secondaryText]}>
+          {loading ? (loadingTitle ?? title) : title}
+        </Text>
+      </View>
     </Pressable>
   );
 }
@@ -650,6 +708,12 @@ function AppContent() {
   const [paymentMethod, setPaymentMethod] = useState('');
   const [paymentAttempt, setPaymentAttempt] = useState<{ idempotency_key: string; amount: string; method: string } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [transitioningOrderKey, setTransitioningOrderKey] = useState<string | null>(null);
+  const [openingPaymentOrderId, setOpeningPaymentOrderId] = useState<string | null>(null);
+  const [togglingCatalogId, setTogglingCatalogId] = useState<string | null>(null);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
+  const [loadingSubscription, setLoadingSubscription] = useState(false);
+  const [selectingShopId, setSelectingShopId] = useState<string | null>(null);
 
   const updateSession = useCallback((nextSession: Session) => {
     const activeSession = sessionRef.current;
@@ -714,6 +778,12 @@ function AppContent() {
     setPaymentMethod('');
     setPaymentAttempt(null);
     setSaving(false);
+    setTransitioningOrderKey(null);
+    setOpeningPaymentOrderId(null);
+    setTogglingCatalogId(null);
+    setLoadingNotifications(false);
+    setLoadingSubscription(false);
+    setSelectingShopId(null);
     setPage('home');
     setError('');
   }, []);
@@ -770,6 +840,8 @@ function AppContent() {
       || sessionRef.current?.business.id !== session.business.id) return;
     const generation = workspaceGeneration.current;
     const businessId = session.business.id;
+    setLoadingNotifications(true);
+    setError('');
     try {
       const response = await apiRequest<{ data?: { items?: WhatsAppNotification[] } }>(
         session,
@@ -781,6 +853,10 @@ function AppContent() {
     } catch (historyError) {
       if (isCurrentWorkspace(generation, businessId)) {
         setError(historyError instanceof Error ? historyError.message : copy.error);
+      }
+    } finally {
+      if (isCurrentWorkspace(generation, businessId)) {
+        setLoadingNotifications(false);
       }
     }
   }, [copy.error, online, session, updateSession, isCurrentWorkspace]);
@@ -849,6 +925,7 @@ function AppContent() {
   const toggleCatalogItem = async (item: LocalCatalogItem) => {
     if (!session) return;
     setSaving(true);
+    setTogglingCatalogId(item.id);
     setError('');
     try {
       await apiRequest(session, `/api/v1/catalog/${item.id}`, {
@@ -864,6 +941,7 @@ function AppContent() {
     } catch (catalogError) {
       setError(catalogError instanceof Error ? catalogError.message : copy.error);
     } finally {
+      setTogglingCatalogId(null);
       setSaving(false);
     }
   };
@@ -873,6 +951,8 @@ function AppContent() {
       || sessionRef.current?.business.id !== session.business.id) return;
     const generation = workspaceGeneration.current;
     const businessId = session.business.id;
+    setLoadingSubscription(true);
+    setError('');
     try {
       const response = await apiRequest<{ data?: SubscriptionBilling }>(
         session,
@@ -896,6 +976,10 @@ function AppContent() {
     } catch (billingError) {
       if (isCurrentWorkspace(generation, businessId)) {
         setError(billingError instanceof Error ? billingError.message : copy.error);
+      }
+    } finally {
+      if (isCurrentWorkspace(generation, businessId)) {
+        setLoadingSubscription(false);
       }
     }
   }, [copy.error, online, session, subscriptionPayment.method, subscriptionPlanId, updateSession, isCurrentWorkspace]);
@@ -1114,6 +1198,7 @@ function AppContent() {
   const selectShop = async (shop: ShopOption) => {
     if (!pendingCredentials) return;
     setAuthBusy(true);
+    setSelectingShopId(shop.id);
     setError('');
     try {
       const result = await signIn(pendingCredentials.email, pendingCredentials.password, shop.id);
@@ -1135,6 +1220,7 @@ function AppContent() {
     } catch (selectionError) {
       setError(selectionError instanceof Error ? selectionError.message : copy.error);
     } finally {
+      setSelectingShopId(null);
       setAuthBusy(false);
     }
   };
@@ -1322,21 +1408,43 @@ function AppContent() {
       setError(copy.paymentOnline);
       return;
     }
-    const fromKey = order.workflow_stage_key ?? order.status;
-    const fromStage = businessConfiguration?.workflow.stages.find((stage) => stage.key === fromKey);
+    const stages = businessConfiguration?.workflow.stages ?? [];
+    const fromStage = resolveMobileWorkflowStage(stages, order);
     const transition = businessConfiguration?.workflow.transitions.find((item) =>
       item.fromStageId === fromStage?.id
-      && (!targetStageKey || businessConfiguration.workflow.stages.find((stage) => stage.id === item.toStageId)?.key === targetStageKey));
-    const nextStage = businessConfiguration?.workflow.stages.find((stage) => stage.id === transition?.toStageId);
+      && (!targetStageKey || stages.find((stage) => stage.id === item.toStageId)?.key === targetStageKey));
+    const nextStage = stages.find((stage) => stage.id === transition?.toStageId)
+      ?? (targetStageKey ? stages.find((stage) => stage.key === targetStageKey) : undefined);
     if (!nextStage) return;
+    const transitionKey = `${order.id}:${nextStage.key}`;
+    setTransitioningOrderKey(transitionKey);
+    setError('');
     try {
-      await apiRequest(session, `/api/v1/orders/${order.id}/workflow`, {
+      const response = await apiRequest<{
+        data?: {
+          workflowStageKey?: string | null;
+          status?: string;
+          version?: number;
+          updatedAt?: string;
+        };
+      }>(session, `/api/v1/orders/${order.id}/workflow`, {
         method: 'POST',
         body: { toStageKey: nextStage.key, version: order.version },
       }, updateSession);
+      await applyLocalOrderWorkflowTransition({
+        businessId: session.business.id,
+        orderId: order.id,
+        workflowStageKey: response.data?.workflowStageKey ?? nextStage.key,
+        status: response.data?.status,
+        version: typeof response.data?.version === 'number' ? response.data.version : order.version + 1,
+        updatedAt: response.data?.updatedAt,
+      });
+      await refreshLocal(session.business.id);
       await runSync();
     } catch (transitionError) {
       setError(transitionError instanceof Error ? transitionError.message : copy.error);
+    } finally {
+      setTransitioningOrderKey(null);
     }
   };
 
@@ -1345,12 +1453,17 @@ function AppContent() {
       setError(copy.paymentOnline);
       return;
     }
-    const existing = await findPendingPaymentAttempt(session.business.id, order.id);
-    setPaymentOrder(order);
-    setPaymentAttempt(existing ?? null);
-    setPaymentAmount(existing?.amount ?? '');
-    setPaymentMethod(existing?.method ?? paymentMethodOptions[0] ?? '');
+    setOpeningPaymentOrderId(order.id);
     setError('');
+    try {
+      const existing = await findPendingPaymentAttempt(session.business.id, order.id);
+      setPaymentOrder(order);
+      setPaymentAttempt(existing ?? null);
+      setPaymentAmount(existing?.amount ?? '');
+      setPaymentMethod(existing?.method ?? paymentMethodOptions[0] ?? '');
+    } finally {
+      setOpeningPaymentOrderId(null);
+    }
   };
 
   const recordPayment = async () => {
@@ -1427,7 +1540,16 @@ function AppContent() {
           <Text style={styles.fieldLabel}>{field.label}{field.required ? ' *' : ''}</Text>
           <View style={styles.chipWrap}>
             {[true, false].map((option) => (
-              <Pressable key={String(option)} onPress={() => updateValue(option)} style={[styles.chip, value === option && styles.chipSelected]}>
+              <Pressable
+                key={String(option)}
+                android_ripple={{ color: palette.primarySoft }}
+                onPress={() => updateValue(option)}
+                style={({ pressed }) => [
+                  styles.chip,
+                  value === option && styles.chipSelected,
+                  pressed && styles.chipPressed,
+                ]}
+              >
                 <Text style={[styles.chipText, value === option && styles.chipTextSelected]}>{option ? 'True' : 'False'}</Text>
               </Pressable>
             ))}
@@ -1446,10 +1568,15 @@ function AppContent() {
               return (
                 <Pressable
                   key={option.key}
+                  android_ripple={{ color: palette.primarySoft }}
                   onPress={() => updateValue(field.type === 'DROPDOWN'
                     ? (active ? undefined : option.key)
                     : active ? selected.filter((item) => item !== option.key) : [...selected, option.key])}
-                  style={[styles.chip, active && styles.chipSelected]}
+                  style={({ pressed }) => [
+                    styles.chip,
+                    active && styles.chipSelected,
+                    pressed && styles.chipPressed,
+                  ]}
                 >
                   <Text style={[styles.chipText, active && styles.chipTextSelected]}>{option.label}</Text>
                 </Pressable>
@@ -1509,9 +1636,14 @@ function AppContent() {
                 <Pressable
                   accessibilityRole="button"
                   accessibilityState={{ selected: language === option.id }}
+                  android_ripple={{ color: palette.primarySoft }}
                   key={option.id}
                   onPress={() => void changeLanguage(option.id)}
-                  style={[styles.languageChip, language === option.id && styles.languageChipSelected]}
+                  style={({ pressed }) => [
+                    styles.languageChip,
+                    language === option.id && styles.languageChipSelected,
+                    pressed && styles.chipPressed,
+                  ]}
                 >
                   <Text style={styles.languageChipText}>{option.label}</Text>
                 </Pressable>
@@ -1525,27 +1657,48 @@ function AppContent() {
             <View style={styles.card}>
               <Text style={styles.heading}>{shopChoices.length ? copy.chooseShop : branding.loginTitle || copy.signInTitle}</Text>
               {shopChoices.length ? shopChoices.map((shop) => (
-                <ActionButton key={shop.id} title={shop.name} onPress={() => void selectShop(shop)} disabled={authBusy} secondary />
+                <ActionButton
+                  key={shop.id}
+                  title={shop.name}
+                  loading={selectingShopId === shop.id}
+                  loadingTitle={copy.loading}
+                  onPress={() => void selectShop(shop)}
+                  disabled={authBusy}
+                  secondary
+                />
               )) : (
                 <>
                   <Field label={copy.email} value={email} onChangeText={setEmail} keyboardType="email-address" />
                   <Field label={copy.password} value={password} onChangeText={setPassword} secureTextEntry />
                   {error ? <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text> : null}
-                  <ActionButton title={authBusy ? copy.loading : copy.signIn} onPress={() => void handleSignIn()} disabled={authBusy || !email.trim() || !password} />
+                  <ActionButton
+                    title={copy.signIn}
+                    loading={authBusy}
+                    loadingTitle={copy.loading}
+                    onPress={() => void handleSignIn()}
+                    disabled={authBusy || !email.trim() || !password}
+                  />
                 </>
               )}
               {shopChoices.length && error ? <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text> : null}
-              {authBusy ? <ActivityIndicator color={palette.primary} style={styles.spinner} /> : null}
               {branding.footerText ? <Text style={styles.authFooter}>{branding.footerText}</Text> : null}
               {(branding.supportUrl || branding.supportEmail) ? (
                 <View style={styles.supportLinks}>
                   {branding.supportUrl ? (
-                    <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(branding.supportUrl).catch(() => Alert.alert(copy.error))}>
+                    <Pressable
+                      accessibilityRole="link"
+                      onPress={() => void Linking.openURL(branding.supportUrl).catch(() => Alert.alert(copy.error))}
+                      style={({ pressed }) => [pressed && styles.pressed]}
+                    >
                       <Text style={styles.supportLink}>{copy.support}</Text>
                     </Pressable>
                   ) : null}
                   {branding.supportEmail ? (
-                    <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(`mailto:${branding.supportEmail}`).catch(() => Alert.alert(copy.error))}>
+                    <Pressable
+                      accessibilityRole="link"
+                      onPress={() => void Linking.openURL(`mailto:${branding.supportEmail}`).catch(() => Alert.alert(copy.error))}
+                      style={({ pressed }) => [pressed && styles.pressed]}
+                    >
                       <Text style={styles.supportLink}>{copy.emailSupport}</Text>
                     </Pressable>
                   ) : null}
@@ -1610,8 +1763,22 @@ function AppContent() {
               <Text style={styles.syncError}>{syncError || `${syncState.attention} ${copy.attention}`}</Text>
             ) : null}
           </View>
-          <Pressable accessibilityRole="button" disabled={syncing || online !== true} onPress={() => void runSync()} style={styles.syncButton}>
-            <Text style={styles.syncButtonText}>{syncing ? '…' : copy.retry}</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: syncing || online !== true, busy: syncing }}
+            android_ripple={{ color: palette.primarySoft }}
+            disabled={syncing || online !== true}
+            onPress={() => void runSync()}
+            style={({ pressed }) => [
+              styles.syncButton,
+              (syncing || online !== true) && styles.disabled,
+              pressed && !(syncing || online !== true) && styles.syncButtonPressed,
+            ]}
+          >
+            <View style={styles.actionButtonContent}>
+              {syncing ? <ActivityIndicator size="small" color={palette.primaryText} /> : null}
+              <Text style={styles.syncButtonText}>{syncing ? copy.syncing : copy.retry}</Text>
+            </View>
           </Pressable>
         </View>
         {syncState.attention_details.length ? (
@@ -1682,7 +1849,7 @@ function AppContent() {
                 <Field label={copy.notes} value={customerNotes} onChangeText={setCustomerNotes} multiline />
                 {customerFields.map((field) => renderDynamicField(field, customerCustomFields, setCustomerCustomFields))}
                 <Text style={styles.offlineHint}>{copy.saved}</Text>
-                <ActionButton title={saving ? '…' : copy.save} onPress={() => void saveCustomer()} disabled={saving} />
+                <ActionButton title={copy.save} loading={saving} loadingTitle={copy.loading} onPress={() => void saveCustomer()} disabled={saving} />
               </View>
             ) : null}
             {filteredCustomers.length ? filteredCustomers.map((customer) => (
@@ -1717,8 +1884,13 @@ function AppContent() {
                   {businessConfiguration?.itemTypes.map((itemType) => (
                     <Pressable
                       key={itemType.key}
+                      android_ripple={{ color: palette.primarySoft }}
                       onPress={() => { setCatalogTypeKey(itemType.key); setCatalogCustomFields({}); }}
-                      style={[styles.chip, selectedCatalogTypeKey === itemType.key && styles.chipSelected]}
+                      style={({ pressed }) => [
+                        styles.chip,
+                        selectedCatalogTypeKey === itemType.key && styles.chipSelected,
+                        pressed && styles.chipPressed,
+                      ]}
                     >
                       <Text style={[styles.chipText, selectedCatalogTypeKey === itemType.key && styles.chipTextSelected]}>{itemType.label}</Text>
                     </Pressable>
@@ -1734,7 +1906,7 @@ function AppContent() {
                 {visibleCatalogFields.map((field) =>
                   renderDynamicField(field, catalogCustomFields, setCatalogCustomFields))}
                 <Text style={styles.offlineHint}>{copy.saved} Catalog items will sync when a connection is available.</Text>
-                <ActionButton title={saving ? '…' : copy.save} onPress={() => void saveCatalogItem()} disabled={saving || !catalogName.trim()} />
+                <ActionButton title={copy.save} loading={saving} loadingTitle={copy.loading} onPress={() => void saveCatalogItem()} disabled={saving || !catalogName.trim()} />
               </View>
             ) : null}
             {catalogItems.filter((item) =>
@@ -1755,8 +1927,22 @@ function AppContent() {
                   {item.syncState === 'synced' ? '✓' : ['conflict', 'rejected'].includes(item.syncState) ? '!' : '↑'}
                 </Text>
                 {can('settings:manage') && online === true && item.syncState === 'synced' ? (
-                  <Pressable accessibilityRole="button" onPress={() => void toggleCatalogItem(item)} disabled={saving}>
-                    <Text style={styles.syncBadge}>{item.active ? 'Deactivate' : 'Activate'}</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ disabled: saving, busy: togglingCatalogId === item.id }}
+                    android_ripple={{ color: palette.primarySoft }}
+                    onPress={() => void toggleCatalogItem(item)}
+                    disabled={saving}
+                    style={({ pressed }) => [
+                      styles.chip,
+                      saving && styles.disabled,
+                      pressed && !saving && styles.chipPressed,
+                    ]}
+                  >
+                    <View style={styles.actionButtonContent}>
+                      {togglingCatalogId === item.id ? <ActivityIndicator size="small" color={palette.primaryText} /> : null}
+                      <Text style={styles.chipText}>{item.active ? 'Deactivate' : 'Activate'}</Text>
+                    </View>
                   </Pressable>
                 ) : null}
               </View>
@@ -1784,7 +1970,16 @@ function AppContent() {
                 <Text style={styles.fieldLabel}>{copy.chooseCustomer}</Text>
                 <View style={styles.chipWrap}>
                   {customers.map((customer) => (
-                    <Pressable key={customer.id} onPress={() => setSelectedCustomer(customer.id)} style={[styles.chip, selectedCustomer === customer.id && styles.chipSelected]}>
+                    <Pressable
+                      key={customer.id}
+                      android_ripple={{ color: palette.primarySoft }}
+                      onPress={() => setSelectedCustomer(customer.id)}
+                      style={({ pressed }) => [
+                        styles.chip,
+                        selectedCustomer === customer.id && styles.chipSelected,
+                        pressed && styles.chipPressed,
+                      ]}
+                    >
                       <Text style={[styles.chipText, selectedCustomer === customer.id && styles.chipTextSelected]}>{customer.name}</Text>
                     </Pressable>
                   ))}
@@ -1801,8 +1996,13 @@ function AppContent() {
                       {businessConfiguration.itemTypes.map((itemType) => (
                         <Pressable
                           key={itemType.key}
+                          android_ripple={{ color: palette.primarySoft }}
                           onPress={() => setOrderItemTypeKey(itemType.key)}
-                          style={[styles.chip, currentItemType?.key === itemType.key && styles.chipSelected]}
+                          style={({ pressed }) => [
+                            styles.chip,
+                            currentItemType?.key === itemType.key && styles.chipSelected,
+                            pressed && styles.chipPressed,
+                          ]}
                         >
                           <Text style={[styles.chipText, currentItemType?.key === itemType.key && styles.chipTextSelected]}>{itemType.label}</Text>
                         </Pressable>
@@ -1817,11 +2017,16 @@ function AppContent() {
                       {catalogItems.filter((item) => item.active && item.typeKey === currentItemType?.key).map((item) => (
                         <Pressable
                           key={item.id}
+                          android_ripple={{ color: palette.primarySoft }}
                           onPress={() => {
                             setItemName(item.name);
                             if (item.unitPrice) setUnitPrice(item.unitPrice);
                           }}
-                          style={[styles.chip, itemName === item.name && styles.chipSelected]}
+                          style={({ pressed }) => [
+                            styles.chip,
+                            itemName === item.name && styles.chipSelected,
+                            pressed && styles.chipPressed,
+                          ]}
                         >
                           <Text style={[styles.chipText, itemName === item.name && styles.chipTextSelected]}>{item.name}</Text>
                         </Pressable>
@@ -1838,20 +2043,20 @@ function AppContent() {
                 <Field label={copy.dueDate} value={dueDate} onChangeText={setDueDate} />
                 <Field label={copy.notes} value={orderNotes} onChangeText={setOrderNotes} multiline />
                 <Text style={styles.offlineHint}>{copy.saved}</Text>
-                <ActionButton title={saving ? '…' : copy.saveOrder} onPress={() => void saveOrder()} disabled={saving || customers.length === 0} />
+                <ActionButton title={copy.saveOrder} loading={saving} loadingTitle={copy.loading} onPress={() => void saveOrder()} disabled={saving || customers.length === 0} />
               </View>
             ) : null}
             {orders.length ? orders.map((order) => {
-              const currentStage = businessConfiguration?.workflow.stages.find((stage) =>
-                stage.key === (order.workflow_stage_key ?? order.status));
+              const currentStage = resolveMobileWorkflowStage(businessConfiguration?.workflow.stages, order);
               const outgoingTransitions = businessConfiguration?.workflow.transitions
                 .filter((transition) => transition.fromStageId === currentStage?.id) ?? [];
+              const orderTransitioning = Boolean(transitioningOrderKey?.startsWith(`${order.id}:`));
               return (
                 <View key={order.id} style={styles.orderCard}>
                   <View style={styles.orderTop}>
                     <View style={styles.listMain}>
                       <Text style={styles.listTitle}>{order.item_name ?? order.garment_name} · {order.customer_name}</Text>
-                      <Text style={styles.listMeta}>{stageLabel(order.workflow_stage_key ?? order.status)} · {order.promised_at.slice(0, 10)}</Text>
+                      <Text style={styles.listMeta}>{currentStage?.label ?? stageLabel(order.workflow_stage_key ?? order.status)} · {order.promised_at.slice(0, 10)}</Text>
                       <StoredCustomFields serialized={order.order_custom_fields_json} definitions={orderFields} errorLabel={copy.error} />
                       <StoredCustomFields serialized={order.item_custom_fields_json} definitions={orderItemFields} errorLabel={copy.error} />
                     </View>
@@ -1860,13 +2065,16 @@ function AppContent() {
                   {order.sync_state !== 'synced' ? <Text style={styles.pendingLabel}>{copy.pending}</Text> : null}
                   {outgoingTransitions.map((transition) => {
                     const target = businessConfiguration?.workflow.stages.find((stage) => stage.id === transition.toStageId);
+                    const isThisTransitionLoading = target ? transitioningOrderKey === `${order.id}:${target.key}` : false;
                     return target && can('orders:transition') ? (
                       <ActionButton
                         key={transition.id}
                         title={`${copy.nextStage}: ${target.label}`}
+                        loading={isThisTransitionLoading}
+                        loadingTitle={`${copy.loading} (${target.label})`}
                         onPress={() => void transitionOrder(order, target.key)}
                         secondary
-                        disabled={online !== true || order.sync_state !== 'synced'}
+                        disabled={online !== true || order.sync_state !== 'synced' || orderTransitioning}
                       />
                     ) : null;
                   })}
@@ -1885,21 +2093,40 @@ function AppContent() {
                             <Pressable
                               accessibilityRole="button"
                               accessibilityState={{ selected: method === paymentMethod, disabled: Boolean(paymentAttempt) }}
+                              android_ripple={{ color: palette.primarySoft }}
                               disabled={Boolean(paymentAttempt)}
                               key={method}
                               onPress={() => setPaymentMethod(method)}
-                              style={[styles.chip, paymentMethod === method && styles.chipSelected]}
+                              style={({ pressed }) => [
+                                styles.chip,
+                                paymentMethod === method && styles.chipSelected,
+                                Boolean(paymentAttempt) && styles.disabled,
+                                pressed && !paymentAttempt && styles.chipPressed,
+                              ]}
                             >
                               <Text style={[styles.chipText, paymentMethod === method && styles.chipTextSelected]}>{paymentMethodLabel(method)}</Text>
                             </Pressable>
                           ))}
                         </View>
                         {paymentAttempt ? <Text style={styles.offlineHint}>{copy.paymentUnconfirmed}</Text> : null}
-                        <ActionButton title={saving ? '…' : paymentAttempt ? copy.retry : copy.recordPayment} onPress={() => void recordPayment()} disabled={saving || online !== true} />
+                        <ActionButton
+                          title={paymentAttempt ? copy.retry : copy.recordPayment}
+                          loading={saving}
+                          loadingTitle={copy.loading}
+                          onPress={() => void recordPayment()}
+                          disabled={saving || online !== true}
+                        />
                         <ActionButton title={copy.cancel} onPress={() => { setPaymentOrder(null); setPaymentAttempt(null); }} secondary disabled={saving} />
                       </View>
                     ) : (
-                      <ActionButton title={copy.recordPayment} onPress={() => void openOrderPayment(order)} secondary disabled={online !== true || order.sync_state !== 'synced'} />
+                      <ActionButton
+                        title={copy.recordPayment}
+                        loading={openingPaymentOrderId === order.id}
+                        loadingTitle={copy.loading}
+                        onPress={() => void openOrderPayment(order)}
+                        secondary
+                        disabled={online !== true || order.sync_state !== 'synced' || openingPaymentOrderId === order.id}
+                      />
                     )
                   ) : null}
                 </View>
@@ -1919,7 +2146,16 @@ function AppContent() {
                 <Text style={styles.fieldLabel}>{copy.chooseCustomer}</Text>
                 <View style={styles.chipWrap}>
                   {customers.map((customer) => (
-                    <Pressable key={customer.id} onPress={() => setMeasurementCustomer(customer.id)} style={[styles.chip, measurementCustomer === customer.id && styles.chipSelected]}>
+                    <Pressable
+                      key={customer.id}
+                      android_ripple={{ color: palette.primarySoft }}
+                      onPress={() => setMeasurementCustomer(customer.id)}
+                      style={({ pressed }) => [
+                        styles.chip,
+                        measurementCustomer === customer.id && styles.chipSelected,
+                        pressed && styles.chipPressed,
+                      ]}
+                    >
                       <Text style={[styles.chipText, measurementCustomer === customer.id && styles.chipTextSelected]}>{customer.name}</Text>
                     </Pressable>
                   ))}
@@ -1927,7 +2163,16 @@ function AppContent() {
                 <Text style={styles.fieldLabel}>{copy.chooseMeasurementTemplate}</Text>
                 <View style={styles.chipWrap}>
                   {templates.map((template) => (
-                    <Pressable key={template.id} onPress={() => { setMeasurementTemplate(template.id); setMeasurementValues({}); }} style={[styles.chip, measurementTemplate === template.id && styles.chipSelected]}>
+                    <Pressable
+                      key={template.id}
+                      android_ripple={{ color: palette.primarySoft }}
+                      onPress={() => { setMeasurementTemplate(template.id); setMeasurementValues({}); }}
+                      style={({ pressed }) => [
+                        styles.chip,
+                        measurementTemplate === template.id && styles.chipSelected,
+                        pressed && styles.chipPressed,
+                      ]}
+                    >
                       <Text style={[styles.chipText, measurementTemplate === template.id && styles.chipTextSelected]}>{template.name}</Text>
                     </Pressable>
                   ))}
@@ -1943,7 +2188,7 @@ function AppContent() {
                   />
                 ))}
                 <Field label={copy.notes} value={measurementNotes} onChangeText={setMeasurementNotes} multiline />
-                <ActionButton title={saving ? '…' : copy.saveMeasurement} onPress={() => void saveMeasurements()} disabled={saving || !selectedTemplate} />
+                <ActionButton title={copy.saveMeasurement} loading={saving} loadingTitle={copy.loading} onPress={() => void saveMeasurements()} disabled={saving || !selectedTemplate} />
               </View>
             ) : null}
 
@@ -1991,7 +2236,15 @@ function AppContent() {
             }) : (
               <View style={styles.emptyCard}><Text style={styles.emptyText}>{copy.emptyNotifications}</Text></View>
             )}
-            {online === true ? <ActionButton title={copy.retry} onPress={() => void refreshNotificationHistory()} secondary /> : null}
+            {online === true ? (
+              <ActionButton
+                title={copy.retry}
+                loading={loadingNotifications}
+                loadingTitle={copy.loading}
+                onPress={() => void refreshNotificationHistory()}
+                secondary
+              />
+            ) : null}
             <Text style={styles.offlineHint}>{copy.sent} confirms Meta accepted the message. {copy.delivered} and {copy.read.toLowerCase()} require verified status callbacks.</Text>
           </>
         ) : null}
@@ -2025,6 +2278,7 @@ function AppContent() {
                       {subscriptionBilling.plans.map((plan) => (
                         <Pressable
                           key={plan.id}
+                          android_ripple={{ color: palette.primarySoft }}
                           onPress={() => {
                             setSubscriptionPlanId(plan.id);
                             setSubscriptionPayment((current) => ({
@@ -2032,7 +2286,11 @@ function AppContent() {
                               amount: subscriptionCycle === 'MONTHLY' ? plan.monthlyPrice : plan.yearlyPrice,
                             }));
                           }}
-                          style={[styles.chip, subscriptionPlanId === plan.id && styles.chipSelected]}
+                          style={({ pressed }) => [
+                            styles.chip,
+                            subscriptionPlanId === plan.id && styles.chipSelected,
+                            pressed && styles.chipPressed,
+                          ]}
                         >
                           <Text style={[styles.chipText, subscriptionPlanId === plan.id && styles.chipTextSelected]}>{plan.name}</Text>
                         </Pressable>
@@ -2043,6 +2301,7 @@ function AppContent() {
                       {(['MONTHLY', 'YEARLY'] as const).map((cycle) => (
                         <Pressable
                           key={cycle}
+                          android_ripple={{ color: palette.primarySoft }}
                           onPress={() => {
                             setSubscriptionCycle(cycle);
                             const selected = subscriptionBilling.plans.find((plan) => plan.id === subscriptionPlanId);
@@ -2051,7 +2310,11 @@ function AppContent() {
                               amount: selected ? (cycle === 'MONTHLY' ? selected.monthlyPrice : selected.yearlyPrice) : '',
                             }));
                           }}
-                          style={[styles.chip, subscriptionCycle === cycle && styles.chipSelected]}
+                          style={({ pressed }) => [
+                            styles.chip,
+                            subscriptionCycle === cycle && styles.chipSelected,
+                            pressed && styles.chipPressed,
+                          ]}
                         >
                           <Text style={[styles.chipText, subscriptionCycle === cycle && styles.chipTextSelected]}>{cycle === 'MONTHLY' ? copy.monthly : copy.yearly}</Text>
                         </Pressable>
@@ -2060,7 +2323,16 @@ function AppContent() {
                     <Text style={styles.fieldLabel}>{copy.paymentMethod}</Text>
                     <View style={styles.chipWrap}>
                       {subscriptionBilling.paymentMethods.map((method) => (
-                        <Pressable key={method} onPress={() => setSubscriptionPayment((current) => ({ ...current, method }))} style={[styles.chip, subscriptionPayment.method === method && styles.chipSelected]}>
+                        <Pressable
+                          key={method}
+                          android_ripple={{ color: palette.primarySoft }}
+                          onPress={() => setSubscriptionPayment((current) => ({ ...current, method }))}
+                          style={({ pressed }) => [
+                            styles.chip,
+                            subscriptionPayment.method === method && styles.chipSelected,
+                            pressed && styles.chipPressed,
+                          ]}
+                        >
                           <Text style={[styles.chipText, subscriptionPayment.method === method && styles.chipTextSelected]}>{method}</Text>
                         </Pressable>
                       ))}
@@ -2071,7 +2343,9 @@ function AppContent() {
                     <Field label={copy.paymentDate} value={subscriptionPayment.paymentDate} onChangeText={(paymentDate) => setSubscriptionPayment((current) => ({ ...current, paymentDate }))} />
                     <Text style={styles.offlineHint}>{copy.pendingAdminReview}</Text>
                     <ActionButton
-                      title={saving ? '…' : copy.submitForReview}
+                      title={copy.submitForReview}
+                      loading={saving}
+                      loadingTitle={copy.loading}
                       onPress={() => void submitSubscriptionPayment()}
                       disabled={saving || !subscriptionPlanId || !subscriptionPayment.method || Number(subscriptionPayment.amount) <= 0 || !subscriptionPayment.transactionReference || !subscriptionPayment.senderName || !subscriptionPayment.paymentDate}
                     />
@@ -2092,7 +2366,15 @@ function AppContent() {
             ) : (
               <View style={styles.emptyCard}>
                 <Text style={styles.emptyText}>{copy.subscriptionOnline}</Text>
-                {online === true ? <ActionButton title={copy.retry} onPress={() => void refreshSubscriptionBilling()} secondary /> : null}
+                {online === true ? (
+                  <ActionButton
+                    title={copy.retry}
+                    loading={loadingSubscription}
+                    loadingTitle={copy.loading}
+                    onPress={() => void refreshSubscriptionBilling()}
+                    secondary
+                  />
+                ) : null}
               </View>
             )}
           </>
@@ -2113,9 +2395,13 @@ function AppContent() {
                 <Pressable
                   accessibilityRole="radio"
                   accessibilityState={{ checked: language === option.id }}
+                  android_ripple={{ color: palette.primarySoft }}
                   key={option.id}
                   onPress={() => void changeLanguage(option.id)}
-                  style={styles.languageRow}
+                  style={({ pressed }) => [
+                    styles.languageRow,
+                    pressed && styles.languageRowPressed,
+                  ]}
                 >
                   <Text style={styles.listTitle}>{option.label}</Text>
                   <Text style={styles.radio}>{language === option.id ? '●' : '○'}</Text>
@@ -2159,9 +2445,14 @@ function AppContent() {
                 accessibilityRole="tab"
                 accessibilityState={{ selected: active }}
                 accessibilityLabel={item.label}
+                android_ripple={{ color: palette.primarySoft }}
                 key={item.id}
                 onPress={() => { setPage(item.id); setError(''); }}
-                style={[styles.tab, active && styles.tabActive]}
+                style={({ pressed }) => [
+                  styles.tab,
+                  active && styles.tabActive,
+                  pressed && styles.tabPressed,
+                ]}
               >
                 <Icon name={item.icon} size={24} color={active ? palette.primaryText : palette.mutedText} />
                 <Text numberOfLines={1} style={[styles.tabLabel, active && styles.tabLabelActive]}>{item.label}</Text>
@@ -2206,7 +2497,8 @@ function createStyles(palette: AppPalette) {
   syncTitle: { color: palette.success, fontSize: 15, fontWeight: '800' },
   syncMeta: { color: palette.secondaryText, fontSize: 14, marginTop: 4 },
   syncError: { color: palette.danger, fontSize: 14, marginTop: 4 },
-  syncButton: { backgroundColor: palette.surface, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 8 },
+  syncButton: { backgroundColor: palette.surface, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 8, borderWidth: 1, borderColor: palette.successBorder },
+  syncButtonPressed: { backgroundColor: palette.primarySoft, borderColor: palette.primary, opacity: 0.84, transform: [{ scale: 0.97 }] },
   syncButtonText: { color: palette.primaryText, fontSize: 15, fontWeight: '800' },
   pageTitle: { color: palette.text, fontSize: 27, fontWeight: '900', letterSpacing: -0.4, marginBottom: 14 },
   subtitle: { color: palette.secondaryText, fontSize: 15, marginTop: -6, marginBottom: 14, lineHeight: 20 },
@@ -2227,12 +2519,16 @@ function createStyles(palette: AppPalette) {
   fieldLabel: { color: palette.secondaryText, fontSize: 15, fontWeight: '800', marginBottom: 7 },
   input: { minHeight: 50, borderRadius: 10, borderWidth: 1, borderColor: palette.borderStrong, paddingHorizontal: 12, color: palette.text, fontSize: 16, backgroundColor: palette.surface },
   multiline: { minHeight: 76, textAlignVertical: 'top', paddingTop: 11 },
-  actionButton: { minHeight: 52, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: palette.primary, paddingHorizontal: 15, paddingVertical: 11, marginTop: 5 },
+  actionButton: { minHeight: 52, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: palette.primary, paddingHorizontal: 15, paddingVertical: 11, marginTop: 5, overflow: 'hidden' },
+  actionButtonContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  actionButtonPressed: { backgroundColor: mixHex(palette.primary, '#000000', 0.78), opacity: 0.88, transform: [{ scale: 0.98 }] },
   actionText: { color: palette.onPrimary, fontSize: 15.5, fontWeight: '800', textAlign: 'center' },
-  secondaryButton: { backgroundColor: palette.surfaceMuted, borderWidth: 1, borderColor: palette.border },
+  secondaryButton: { backgroundColor: palette.surfaceMuted, borderWidth: 1, borderColor: palette.borderStrong },
+  secondaryButtonPressed: { backgroundColor: palette.primarySoft, borderColor: palette.primary, opacity: 0.88, transform: [{ scale: 0.98 }] },
   secondaryText: { color: palette.primaryText },
+  loadingButton: { opacity: 0.85 },
   disabled: { opacity: 0.5 },
-  pressed: { opacity: 0.75 },
+  pressed: { opacity: 0.72, transform: [{ scale: 0.98 }] },
   spinner: { marginTop: 10 },
   errorText: { color: palette.danger, fontSize: 15, lineHeight: 20, marginTop: 8 },
   errorBanner: { color: palette.danger, backgroundColor: palette.dangerSurface, borderRadius: 10, padding: 12, fontSize: 15, lineHeight: 19, marginBottom: 13 },
@@ -2251,20 +2547,22 @@ function createStyles(palette: AppPalette) {
   emptyCard: { backgroundColor: palette.surface, borderRadius: 15, padding: 22, borderWidth: 1, borderColor: palette.border },
   emptyText: { color: palette.secondaryText, fontSize: 15, textAlign: 'center', lineHeight: 21 },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginBottom: 12 },
-  chip: { borderWidth: 1, borderColor: palette.border, borderRadius: 18, paddingHorizontal: 11, paddingVertical: 7, backgroundColor: palette.surface },
+  chip: { borderWidth: 1, borderColor: palette.border, borderRadius: 18, paddingHorizontal: 11, paddingVertical: 7, backgroundColor: palette.surface, overflow: 'hidden' },
   chipSelected: { backgroundColor: palette.primarySoft, borderColor: palette.primary },
+  chipPressed: { backgroundColor: palette.primarySoft, borderColor: palette.primary, opacity: 0.82, transform: [{ scale: 0.97 }] },
   chipText: { color: palette.secondaryText, fontSize: 15, fontWeight: '700' },
   chipTextSelected: { color: palette.primaryText },
   twoFields: { flexDirection: 'row', gap: 10 },
   halfField: { flex: 1 },
-  languageRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 },
+  languageRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10 },
+  languageRowPressed: { backgroundColor: palette.primarySoft, opacity: 0.85 },
   themeToggle: { minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, borderWidth: 1, borderColor: palette.border, borderRadius: 12, paddingHorizontal: 13, paddingVertical: 9, backgroundColor: palette.surfaceMuted },
   themeToggleCompact: { width: 44, minHeight: 44, paddingHorizontal: 0, paddingVertical: 0 },
   themeToggleText: { color: palette.primaryText, fontSize: 15, fontWeight: '700' },
   authFooter: { color: palette.mutedText, fontSize: 13, lineHeight: 18, textAlign: 'center', marginTop: 12 },
   supportLinks: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 16, marginTop: 10 },
   supportLink: { color: palette.primaryText, fontSize: 14, fontWeight: '700', textDecorationLine: 'underline' },
-  languageChip: { backgroundColor: palette.surface, borderRadius: 18, paddingHorizontal: 11, paddingVertical: 8, borderWidth: 1, borderColor: palette.border },
+  languageChip: { backgroundColor: palette.surface, borderRadius: 18, paddingHorizontal: 11, paddingVertical: 8, borderWidth: 1, borderColor: palette.border, overflow: 'hidden' },
   languageChipSelected: { backgroundColor: palette.primarySoft, borderColor: palette.primary },
   languageChipText: { color: palette.secondaryText, fontSize: 15, fontWeight: '700' },
   radio: { color: palette.primaryText, fontSize: 17 },
@@ -2274,8 +2572,9 @@ function createStyles(palette: AppPalette) {
   tabBarContent: { minHeight: 76, paddingTop: 6, paddingBottom: 8, paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center', gap: 2 },
   // Sized to the label rather than an equal share of the row, so longer labels
   // stay fully readable; minWidth keeps a comfortable tap target.
-  tab: { minWidth: 76, minHeight: 60, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 10 },
+  tab: { minWidth: 76, minHeight: 60, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 10, overflow: 'hidden' },
   tabActive: { backgroundColor: palette.primarySoft },
+  tabPressed: { backgroundColor: palette.primarySoft, opacity: 0.82, transform: [{ scale: 0.97 }] },
   tabLabel: { color: palette.secondaryText, fontSize: 14, fontWeight: '700' },
   tabLabelActive: { color: palette.primaryText, fontWeight: '800' },
   });

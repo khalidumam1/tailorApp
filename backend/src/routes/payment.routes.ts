@@ -45,7 +45,7 @@ function samePayment(
 
 function mapFinancialConflict(error: unknown): never {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    if (error.code === 'P2034') {
+    if (error.code === 'P2034' || error.code === 'P2028') {
       throw new HttpError(409, 'A concurrent financial change occurred; retry with the same idempotency key', 'FINANCIAL_CONFLICT');
     }
     if (error.code === 'P2002') {
@@ -195,7 +195,11 @@ router.post('/orders/:orderId', requireBusinessPermission('payments:write'), asy
       });
       await queuePaymentReceived(tx, created.id);
       return created;
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 20_000,
+      timeout: 30_000,
+    });
     res.status(201).json({ data: payment });
   } catch (error) {
     mapFinancialConflict(error);
@@ -264,7 +268,11 @@ router.post('/:paymentId/reversals', requireBusinessPermission('payments:write')
         },
       });
       return created;
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 20_000,
+      timeout: 30_000,
+    });
     res.status(201).json({ data: reversal });
   } catch (error) {
     mapFinancialConflict(error);

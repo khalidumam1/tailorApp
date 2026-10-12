@@ -731,7 +731,12 @@ router.get('/changes', asyncHandler(async (req, res) => {
     permissions.has('orders:read') && enabledModules.includes('orders')
       ? prisma.order.findMany({
         where: { businessId, ...cursorOrderWhere(cursor.orders) },
-        include: { items: true, statusHistory: { orderBy: { createdAt: 'asc' } } },
+        include: {
+          items: true,
+          currentWorkflowStage: true,
+          workflowHistory: { orderBy: { createdAt: 'asc' } },
+          statusHistory: { orderBy: { createdAt: 'asc' } },
+        },
         orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
         take: query.limit + 1,
       })

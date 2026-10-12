@@ -1,4 +1,4 @@
-import { Prisma, type CustomFieldDefinition } from '@prisma/client';
+import { Prisma, type CustomFieldDefinition, type OrderStatus } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import express from 'express';
 import {
@@ -13,7 +13,14 @@ import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { calculateNetPaid, calculateOutstanding } from '../domain/finance.js';
 import { customFieldValueData, validateCustomFieldValues, withBuiltInOrderItemFields } from '../domain/custom-fields.js';
-import { businessRoleKey, isAllowedOrderTransition } from '../domain/orders.js';
+import {
+  businessRoleKey,
+  isAllowedOrderTransition,
+  isRetryableOrderTransactionError,
+  resolveCurrentWorkflowStage,
+  stageToOrderStatus,
+  STAGE_KEY_ALIASES,
+} from '../domain/orders.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { assertPlanLimit } from '../plan-limits.js';
@@ -25,6 +32,12 @@ const itemTypesSchema = z.array(z.object({
   key: z.string(),
   label: z.string(),
 }).strict());
+
+const ORDER_TRANSACTION_OPTIONS = {
+  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+  maxWait: 20_000,
+  timeout: 30_000,
+} as const;
 
 function effectiveFields(
   templateFields: CustomFieldDefinition[],
@@ -42,8 +55,27 @@ function getContext(req: express.Request): { businessId: string; actorId: string
   return { businessId: req.auth.business.id, actorId: req.auth.userId };
 }
 
+async function runSerializableOrderTransaction<T>(
+  operation: (tx: Prisma.TransactionClient) => Promise<T>,
+  maxAttempts = 3,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await prisma.$transaction(operation, ORDER_TRANSACTION_OPTIONS);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableOrderTransactionError(error) || attempt === maxAttempts) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 40 * attempt));
+    }
+  }
+  throw lastError;
+}
+
 function mapOrderWriteError(error: unknown): never {
-  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
+  if (isRetryableOrderTransactionError(error)) {
     throw new HttpError(409, 'Order changed concurrently; refresh and retry', 'VERSION_CONFLICT');
   }
   throw error;
@@ -240,7 +272,7 @@ router.post('/', requireBusinessPermission('orders:write'), asyncHandler(async (
   }
 
   try {
-    const order = await prisma.$transaction(async (tx) => {
+    const order = await runSerializableOrderTransaction(async (tx) => {
       await assertPlanLimit(tx, businessId, 'orders:write');
       const catalogItems = await Promise.all(items.map(async (item) => {
         const catalogItem = await tx.businessItem.upsert({
@@ -322,13 +354,13 @@ router.post('/', requireBusinessPermission('orders:write'), asyncHandler(async (
           requestId: req.requestId,
         },
       });
-      await queueOrderCreated(tx, created.id);
       return created;
-    }, {
-      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-      maxWait: 20_000,
-      timeout: 30_000,
     });
+    try {
+      await queueOrderCreated(prisma, order.id);
+    } catch (notificationError) {
+      req.log.warn({ err: notificationError, orderId: order.id }, 'Failed to queue WhatsApp notification for created order');
+    }
     res.status(201).json({ data: order });
   } catch (error) {
     mapOrderWriteError(error);
@@ -340,39 +372,42 @@ router.post('/:orderId/workflow', requireBusinessPermission('orders:transition')
   const orderId = idSchema.parse(req.params.orderId);
   const input = transitionWorkflowSchema.parse(req.body);
 
+  const business = await prisma.business.findUnique({
+    where: { id: businessId },
+    include: {
+      configuration: { select: { version: true } },
+      template: {
+        include: {
+          workflowStages: { where: { active: true }, orderBy: { sortOrder: 'asc' } },
+          workflowTransitions: true,
+        },
+      },
+      workflowStages: { where: { active: true }, orderBy: { sortOrder: 'asc' } },
+      workflowTransitions: true,
+    },
+  });
+  if (!business) throw new HttpError(404, 'Business not found', 'BUSINESS_NOT_FOUND');
+
+  const stages = business.workflowStages.length
+    ? business.workflowStages : business.template?.workflowStages ?? [];
+  const transitions = business.workflowStages.length
+    ? business.workflowTransitions : business.template?.workflowTransitions ?? [];
+  const toStage = stages.find((stage) => stage.key === input.toStageKey)
+    ?? (STAGE_KEY_ALIASES[input.toStageKey] ?? [])
+      .map((alias) => stages.find((stage) => stage.key === alias))
+      .find(Boolean);
+
   try {
-    const updated = await prisma.$transaction(async (tx) => {
+    const transitioned = await runSerializableOrderTransaction(async (tx) => {
       const order = await tx.order.findFirst({
         where: { id: orderId, businessId, deletedAt: null },
-        include: {
-          currentWorkflowStage: true,
-          business: {
-            include: {
-              configuration: true,
-              template: {
-                include: {
-                  workflowStages: { where: { active: true }, orderBy: { sortOrder: 'asc' } },
-                  workflowTransitions: true,
-                },
-              },
-              workflowStages: { where: { active: true }, orderBy: { sortOrder: 'asc' } },
-              workflowTransitions: true,
-            },
-          },
-        },
+        include: { currentWorkflowStage: true },
       });
       if (!order) throw new HttpError(404, 'Order not found', 'ORDER_NOT_FOUND');
       if (order.version !== input.version) {
         throw new HttpError(409, 'Order changed since it was loaded; refresh before updating', 'VERSION_CONFLICT');
       }
-      const stages = order.business.workflowStages.length
-        ? order.business.workflowStages : order.business.template?.workflowStages ?? [];
-      const transitions = order.business.workflowStages.length
-        ? order.business.workflowTransitions : order.business.template?.workflowTransitions ?? [];
-      const fromStage = stages.find((stage) => stage.key === order.workflowStageKey)
-        ?? order.currentWorkflowStage
-        ?? stages.find((stage) => stage.key === order.status);
-      const toStage = stages.find((stage) => stage.key === input.toStageKey);
+      const fromStage = resolveCurrentWorkflowStage(stages, order);
       if (!fromStage || !toStage) {
         throw new HttpError(409, 'Order stage is not available in the published workflow', 'WORKFLOW_STAGE_UNAVAILABLE');
       }
@@ -381,7 +416,7 @@ router.post('/:orderId/workflow', requireBusinessPermission('orders:transition')
       if (!transition) {
         throw new HttpError(409, `Transition from ${fromStage.label} to ${toStage.label} is not allowed`, 'INVALID_WORKFLOW_TRANSITION');
       }
-      if (transition.allowedRoleKeys.length > 0) {
+      if (Array.isArray(transition.allowedRoleKeys) && transition.allowedRoleKeys.length > 0) {
         const membership = await tx.membership.findFirst({
           where: { id: req.auth?.membershipId, businessId, userId: actorId },
           select: { role: { select: { name: true } } },
@@ -390,9 +425,11 @@ router.post('/:orderId/workflow', requireBusinessPermission('orders:transition')
           throw new HttpError(403, 'Your business role cannot perform this workflow transition', 'WORKFLOW_ROLE_DENIED');
         }
       }
+      const nextStatus = stageToOrderStatus(toStage, order.status);
       const result = await tx.order.updateMany({
         where: { id: order.id, businessId, version: input.version, deletedAt: null },
         data: {
+          status: nextStatus,
           workflowStageId: toStage.id,
           workflowStageKey: toStage.key,
           version: { increment: 1 },
@@ -413,6 +450,17 @@ router.post('/:orderId/workflow', requireBusinessPermission('orders:transition')
           note: input.note,
         },
       });
+      if (nextStatus !== order.status) {
+        await tx.orderStatusHistory.create({
+          data: {
+            orderId,
+            fromStatus: order.status,
+            toStatus: nextStatus,
+            changedById: actorId,
+            note: input.note,
+          },
+        });
+      }
       await tx.auditEvent.create({
         data: {
           businessId,
@@ -420,27 +468,36 @@ router.post('/:orderId/workflow', requireBusinessPermission('orders:transition')
           action: 'order.workflow_stage_changed',
           entityType: 'order',
           entityId: orderId,
-          metadata: { from: fromStage.key, to: toStage.key, configurationVersion: order.business.configuration?.version ?? 0 },
+          metadata: { from: fromStage.key, to: toStage.key, configurationVersion: business.configuration?.version ?? 0 },
           requestId: req.requestId,
         },
       });
-      await queueOrderStatusChanged(
-        tx,
-        order.id,
-        fromStage.label,
-        toStage.label,
-        `status-changed:${order.id}:${order.version}:${toStage.id}`,
-      );
-      if (Array.isArray(toStage.actions) && toStage.actions.includes('ORDER_READY')) {
-        await queueOrderReady(tx, order.id);
-      }
       const resultOrder = await tx.order.findFirstOrThrow({
         where: { id: orderId, businessId },
         include: { currentWorkflowStage: true, workflowHistory: { orderBy: { createdAt: 'asc' } } },
       });
-      return resultOrder;
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-    res.json({ data: updated });
+      return {
+        resultOrder,
+        fromStage,
+        toStage,
+        previousVersion: order.version,
+      };
+    });
+    try {
+      await queueOrderStatusChanged(
+        prisma,
+        orderId,
+        transitioned.fromStage.label,
+        transitioned.toStage.label,
+        `status-changed:${orderId}:${transitioned.previousVersion}:${transitioned.toStage.id}`,
+      );
+      if (Array.isArray(transitioned.toStage.actions) && transitioned.toStage.actions.includes('ORDER_READY')) {
+        await queueOrderReady(prisma, orderId);
+      }
+    } catch (notificationError) {
+      req.log.warn({ err: notificationError, orderId }, 'Failed to queue WhatsApp notification for workflow transition');
+    }
+    res.json({ data: transitioned.resultOrder });
   } catch (error) {
     mapOrderWriteError(error);
   }
@@ -479,10 +536,11 @@ router.post('/:orderId/status', requireBusinessPermission('orders:transition'), 
   const targetKey = order.business.template?.key === 'tailor' && input.toStatus === 'FINISHING'
     ? 'FITTING'
     : input.toStatus;
-  const fromStage = stages.find((stage) => stage.key === order.workflowStageKey)
-    ?? stages.find((stage) => stage.id === order.workflowStageId)
-    ?? stages.find((stage) => stage.key === order.status);
-  const toStage = stages.find((stage) => stage.key === targetKey);
+  const fromStage = resolveCurrentWorkflowStage(stages, order);
+  const toStage = stages.find((stage) => stage.key === targetKey)
+    ?? (STAGE_KEY_ALIASES[targetKey] ?? [])
+      .map((alias) => stages.find((stage) => stage.key === alias))
+      .find(Boolean);
   const configuredTransition = fromStage && toStage
     ? transitions.find((transition) => transition.fromStageId === fromStage.id && transition.toStageId === toStage.id)
     : undefined;
@@ -497,7 +555,7 @@ router.post('/:orderId/status', requireBusinessPermission('orders:transition'), 
   } else if (!configuredTransition) {
     throw new HttpError(409, `Cannot transition order from ${fromStage.label} to ${toStage.label}`, 'INVALID_STATUS_TRANSITION');
   }
-  if (configuredTransition && configuredTransition.allowedRoleKeys.length > 0) {
+  if (configuredTransition && Array.isArray(configuredTransition.allowedRoleKeys) && configuredTransition.allowedRoleKeys.length > 0) {
     const membership = await prisma.membership.findFirst({
       where: { id: req.auth?.membershipId, businessId, userId: actorId },
       select: { role: { select: { name: true } } },
@@ -508,7 +566,7 @@ router.post('/:orderId/status', requireBusinessPermission('orders:transition'), 
   }
 
   try {
-    const updated = await prisma.$transaction(async (tx) => {
+    const updated = await runSerializableOrderTransaction(async (tx) => {
       const result = await tx.order.updateMany({
         where: { id: order.id, businessId, status: order.status, version: input.version, deletedAt: null },
         data: {
@@ -555,16 +613,22 @@ router.post('/:orderId/status', requireBusinessPermission('orders:transition'), 
           requestId: req.requestId,
         },
       });
+      return next;
+    });
+    try {
       await queueOrderStatusChanged(
-        tx,
+        prisma,
         order.id,
         fromStage?.label ?? order.status,
         toStage?.label ?? input.toStatus,
         `status-changed:${order.id}:${order.version}:${input.toStatus}`,
       );
-      if (input.toStatus === 'READY_FOR_PICKUP') await queueOrderReady(tx, order.id);
-      return next;
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      if (input.toStatus === 'READY_FOR_PICKUP' || (toStage && Array.isArray(toStage.actions) && toStage.actions.includes('ORDER_READY'))) {
+        await queueOrderReady(prisma, order.id);
+      }
+    } catch (notificationError) {
+      req.log.warn({ err: notificationError, orderId: order.id }, 'Failed to queue WhatsApp notification for status transition');
+    }
     res.json({ data: updated });
   } catch (error) {
     mapOrderWriteError(error);
