@@ -93,6 +93,25 @@ test('CORS rejects origins not explicitly allowlisted', async () => {
   assert.equal(body.error.code, 'CORS_ORIGIN_DENIED');
 });
 
+test('CORS preflight allows the Idempotency-Key header used by browser payment posts', async () => {
+  const response = await fetch(`${baseUrl}/api/v1/payments/orders/00000000-0000-4000-8000-000000000000`, {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'http://localhost:5173',
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'authorization,content-type,idempotency-key',
+    },
+  });
+  assert.ok(response.status >= 200 && response.status < 300, `unexpected preflight status ${response.status}`);
+  assert.equal(response.headers.get('access-control-allow-origin'), 'http://localhost:5173');
+  const allowedHeaders = (response.headers.get('access-control-allow-headers') ?? '')
+    .split(',')
+    .map((header) => header.trim().toLowerCase());
+  for (const header of ['authorization', 'content-type', 'idempotency-key']) {
+    assert.ok(allowedHeaders.includes(header), `preflight must allow ${header}`);
+  }
+});
+
 test('protected profile endpoint rejects missing credentials before database access', async () => {
   const response = await fetch(`${baseUrl}/api/v1/auth/me`);
   assert.equal(response.status, 401);

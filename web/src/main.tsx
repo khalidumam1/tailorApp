@@ -241,6 +241,7 @@ function App() {
   const [paymentOrderId, setPaymentOrderId] = useState('');
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'BANK' | 'DIGITAL'>('CASH');
+  const paymentAttemptRef = useRef<{ orderId: string; amount: string; method: string; idempotencyKey: string } | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [platformView, setPlatformView] = useState<PlatformView>('overview');
   const [settingsTab, setSettingsTab] = useState<'branding' | 'billing'>('branding');
@@ -1205,7 +1206,27 @@ function App() {
     setError(null);
     try {
       const input = createPaymentSchema.parse({ amount: paymentAmount, method: paymentMethod });
-      const payment = await withSession((token) => api.createPayment(token, paymentOrderId, input, crypto.randomUUID()));
+      // Reuse the idempotency key while retrying the same payment after an uncertain result
+      // (timeout / lost connection), so the server replays it instead of recording it twice.
+      const previous = paymentAttemptRef.current;
+      const attempt = previous && previous.orderId === paymentOrderId
+        && previous.amount === input.amount && previous.method === input.method
+        ? previous
+        : { orderId: paymentOrderId, amount: input.amount, method: input.method, idempotencyKey: crypto.randomUUID() };
+      paymentAttemptRef.current = attempt;
+      let payment: Awaited<ReturnType<typeof api.createPayment>>;
+      try {
+        payment = await withSession((token) => api.createPayment(token, paymentOrderId, input, attempt.idempotencyKey));
+      } catch (postError) {
+        // A definite server rejection means this key will never succeed for this payment, so
+        // the next submit should use a fresh key. Network, timeout, auth and 5xx errors keep it.
+        if (postError instanceof ApiError && postError.status >= 400 && postError.status < 500
+          && ![401, 408, 429].includes(postError.status)) {
+          paymentAttemptRef.current = null;
+        }
+        throw postError;
+      }
+      paymentAttemptRef.current = null;
       setPaymentAmount('');
       const paymentReceipt = await withSession((token) => api.receipt(token, payment.id));
       setReceipt(paymentReceipt);
