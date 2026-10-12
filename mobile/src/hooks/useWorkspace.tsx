@@ -107,6 +107,7 @@ export type WhatsAppNotification = {
 };
 
 type ShopOption = { id: string; name: string };
+export type BusinessRole = { id: string; name: string; isSystem: boolean; memberCount: number };
 type SyncState = Awaited<ReturnType<typeof loadSyncState>>;
 type SubscriptionPlan = { id: string; name: string; monthlyPrice: string; yearlyPrice: string };
 type SubscriptionBilling = {
@@ -303,11 +304,10 @@ export type WorkspaceContextValue = {
   runSync: () => Promise<void>;
   refreshNotificationHistory: () => Promise<void>;
   refreshSubscriptionBilling: () => Promise<void>;
-  renderDynamicField: (
-    field: BusinessConfiguration['fields'][number],
-    values: Record<string, unknown>,
-    setValues: (update: (current: Record<string, unknown>) => Record<string, unknown>) => void,
-  ) => React.ReactNode;
+  cancelOrderPayment: () => void;
+  saveBusinessConfiguration: (patch: Record<string, unknown>) => Promise<boolean>;
+  fetchRoles: () => Promise<BusinessRole[]>;
+  inviteStaffMember: (input: { name: string; email: string; initialPassword: string; roleId: string }) => Promise<boolean>;
 
   // Auth-only
   email: string;
@@ -1308,6 +1308,66 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   void loadNotificationsOnEntry;
   void loadSubscriptionOnEntry;
 
+  const cancelOrderPayment = useCallback(() => {
+    setPaymentOrder(null);
+    setPaymentAttempt(null);
+    setPaymentAmount('');
+    setPaymentMethod('');
+    setError('');
+  }, []);
+
+  // Saves business settings through the configuration API. The server checks
+  // the configuration version, so the payload always carries the version that
+  // was loaded; on success the fresh configuration replaces the cached one.
+  const saveBusinessConfiguration = useCallback(async (patch: Record<string, unknown>): Promise<boolean> => {
+    if (!session || online !== true || !businessConfiguration) {
+      setError(copy.settingsOnline);
+      return false;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await apiRequest(session, '/api/v1/business/configuration', {
+        method: 'PUT',
+        body: { version: businessConfiguration.version, ...patch },
+      }, updateSession);
+      const response = await apiRequest<{ data: unknown }>(session, '/api/v1/business/configuration', {}, updateSession);
+      const parsed = parseBusinessConfiguration(response.data);
+      await writeBusinessConfigurationCache(session.business.id, JSON.stringify(parsed));
+      setBusinessConfiguration(parsed);
+      return true;
+    } catch (saveFailure) {
+      setError(saveFailure instanceof Error ? saveFailure.message : copy.error);
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }, [businessConfiguration, copy.error, copy.settingsOnline, online, session, updateSession]);
+
+  const fetchRoles = useCallback(async (): Promise<BusinessRole[]> => {
+    if (!session || online !== true) throw new Error(copy.settingsOnline);
+    const response = await apiRequest<{ data?: { items?: BusinessRole[] } }>(session, '/api/v1/business/roles', {}, updateSession);
+    return (response.data?.items ?? []).filter((role) => role.name !== 'Owner');
+  }, [copy.settingsOnline, online, session, updateSession]);
+
+  const inviteStaffMember = useCallback(async (input: { name: string; email: string; initialPassword: string; roleId: string }): Promise<boolean> => {
+    if (!session || online !== true) {
+      setError(copy.settingsOnline);
+      return false;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await apiRequest(session, '/api/v1/business/staff', { method: 'POST', body: input }, updateSession);
+      return true;
+    } catch (inviteFailure) {
+      setError(inviteFailure instanceof Error ? inviteFailure.message : copy.error);
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }, [copy.error, copy.settingsOnline, online, session, updateSession]);
+
   // Helpers
   const membership = session?.permissions ?? [];
   const can = (permission: string) => membership.includes(permission);
@@ -1485,7 +1545,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     runSync,
     refreshNotificationHistory,
     refreshSubscriptionBilling,
-    renderDynamicField: () => null,
+    cancelOrderPayment,
+    saveBusinessConfiguration,
+    fetchRoles,
+    inviteStaffMember,
     email,
     setEmail,
     password,
@@ -1512,7 +1575,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     changeLanguage, submitSubscriptionPayment, saveCustomer, saveOrder, saveMeasurements,
     saveCatalogItem, toggleCatalogItem, transitionOrder, openOrderPayment, recordPayment,
     runSync, refreshNotificationHistory, refreshSubscriptionBilling, email, password,
-    authBusy, shopChoices,
+    authBusy, shopChoices, cancelOrderPayment, saveBusinessConfiguration, fetchRoles, inviteStaffMember,
   ]);
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

@@ -11,7 +11,8 @@
     "android": "npm run build --prefix shared && expo run:android",
     "ios": "npm run build --prefix shared && expo run:ios",
     "typecheck": "npm run build --prefix shared && tsc --noEmit",
-    "build:shared": "npm run build --prefix shared"
+    "build:shared": "npm run build --prefix shared",
+    "test": "tsx --test src/data/__tests__/*.test.ts"
   },
   "dependencies": {
     "@morrowdigital/watermelondb-expo-plugin": "2.3.3",

@@ -1,60 +1,93 @@
 /**
- * Orders screen — Payrio-style kanban with 3 stage columns and an analytics
- * sparkline at the bottom. Each column shows up to 3 order cards with
- * customer name, due date, total and a "Next stage" arrow button.
+ * Orders screen — kanban with one column per configured workflow stage, an
+ * order form, stage-transition buttons, and an inline payment form per order.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { formatCurrency } from '../local';
 import { useAppStyles } from '../theme/useAppStyles';
 import { useAppTheme } from '../theme/palette';
-import { Icon, type IconName } from '../Icons';
-import { ActionButton, EmptyState, IconDot, StatusPill } from '../theme/primitives';
+import { Icon } from '../Icons';
+import { ActionButton, EmptyState } from '../theme/primitives';
 import { useWorkspace, resolveMobileWorkflowStage } from '../hooks/useWorkspace';
 import { computeDashboardSummary } from '../data/analytics';
 import { AreaChart } from '../components/AreaChart';
+import { OrderForm } from '../components/OrderForm';
+import { PaymentForm } from '../components/PaymentForm';
 
-const KANBAN_STAGES = [
-  { key: 'CUTTING', labelFallback: 'Cutting' },
-  { key: 'STITCHING', labelFallback: 'Stitching' },
-  { key: 'FITTING', labelFallback: 'Fitting' },
+const FALLBACK_STAGES = [
+  { key: 'CUTTING', label: 'Cutting' },
+  { key: 'STITCHING', label: 'Stitching' },
+  { key: 'FITTING', label: 'Fitting' },
 ] as const;
 
-export function OrdersScreen() {
+export function OrdersScreen({
+  intent,
+  onIntentHandled,
+  onOpenCustomers,
+}: {
+  intent?: string | null;
+  onIntentHandled: () => void;
+  onOpenCustomers: () => void;
+}) {
   const styles = useAppStyles();
   const { palette } = useAppTheme();
   const ws = useWorkspace();
   const copy = ws.copy;
   const [filter, setFilter] = useState<string>('all');
 
-  useEffect(() => { void ws.runSync(); }, [ws.runSync]);
+  // "New order" shortcut from the dashboard opens the form directly.
+  useEffect(() => {
+    if (intent === 'new-order') {
+      if (ws.can('orders:write')) ws.setOrderForm(true);
+      onIntentHandled();
+    }
+  }, [intent, onIntentHandled, ws]);
 
-  const stages = ws.businessConfiguration?.workflow.stages ?? [];
+  const stages = useMemo(
+    () => [...(ws.businessConfiguration?.workflow.stages ?? [])].sort((a, b) => a.sortOrder - b.sortOrder),
+    [ws.businessConfiguration],
+  );
   const stageMap: Record<string, string> = {};
   for (const stage of stages) stageMap[stage.key] = stage.label;
+  const summary = computeDashboardSummary(ws.orders, stageMap);
+  const currency = ws.businessConfiguration?.business.currency;
 
   const filterChips: Array<{ key: string; label: string }> = [
     { key: 'all', label: copy.paymentSegAll },
     ...stages.map((s) => ({ key: s.key, label: s.label })),
   ];
+  const filtered = filter === 'all'
+    ? ws.orders
+    : ws.orders.filter((o) => resolveMobileWorkflowStage(stages, o)?.key === filter);
 
-  const summary = computeDashboardSummary(ws.orders, stageMap);
-  const filtered = filter === 'all' ? ws.orders : ws.orders.filter((o) => (o.workflow_stage_key ?? o.status) === filter);
+  // Columns: configured stages, or the fallback trio if no configuration is cached yet.
+  const columns = stages.length
+    ? stages.map((stage) => ({ key: stage.key, label: stage.label }))
+    : FALLBACK_STAGES.map((stage) => ({ key: stage.key, label: stage.label }));
+  const initialKey = stages.find((stage) => stage.isInitial)?.key;
 
-  // Group into kanban columns (use first 3 known stages as the columns).
-  const kanbanStageKeys = KANBAN_STAGES.map((s) => s.key);
+  const openOrderPayment = ws.openOrderPayment;
 
   return (
     <>
       <View style={styles.pageHeadingRow}>
         <View>
-          <Text style={styles.pageTitle}>{copy.orders}</Text>
-          <Text style={styles.pageSubtitle}>{interpolateLocal(filtered.length)}</Text>
+          <Text style={styles.pageTitle}>{ws.term('orders', copy.orders)}</Text>
+          <Text style={styles.pageSubtitle}>{filtered.length} {ws.term('orders', copy.orders).toLowerCase()}</Text>
         </View>
         {ws.can('orders:write') ? (
-          <ActionButton title={`＋ ${copy.newOrder}`} onPress={() => ws.setOrderForm(!ws.orderForm)} />
+          <ActionButton
+            title={`＋ ${copy.newOrder}`}
+            secondary={ws.orderForm}
+            onPress={() => { ws.setError(''); ws.setOrderForm(!ws.orderForm); }}
+          />
         ) : null}
       </View>
+
+      {ws.orderForm && ws.can('orders:write') ? (
+        <OrderForm onOpenCustomers={onOpenCustomers} />
+      ) : null}
 
       {/* Filter chips */}
       <View style={styles.chipWrap}>
@@ -75,61 +108,91 @@ export function OrdersScreen() {
         })}
       </View>
 
-      {/* Kanban */}
+      {/* Kanban — one column per configured stage */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.kanbanScroll}>
-        {kanbanStageKeys.map((stageKey, index) => {
-          const ordersInColumn = filtered.filter((o) => {
-            const stage = resolveMobileWorkflowStage(stages, o);
-            if (stage?.key) return stage.key === stageKey;
-            // Fall back to the first 3 workflow stages by index for installs
-            // that have not synced their labels yet.
-            const orderIndex = stages.findIndex((s) => s.key === (o.workflow_stage_key ?? o.status));
-            return orderIndex === index;
+        {columns.map((column, index) => {
+          const ordersInColumn = filtered.filter((order) => {
+            const stage = resolveMobileWorkflowStage(stages, order);
+            if (stage) return stage.key === column.key;
+            return initialKey !== undefined ? column.key === initialKey : index === 0;
           });
-          const accent = index === 0 ? 'cardAccentMint' : index === 1 ? 'cardAccentBlue' : 'cardAccentAmber';
+          const accent = index % 3 === 0 ? 'cardAccentMint' : index % 3 === 1 ? 'cardAccentBlue' : 'cardAccentAmber';
           return (
-            <View key={stageKey} style={[styles.kanbanColumn, styles[accent as 'cardAccentMint' | 'cardAccentBlue' | 'cardAccentAmber']]}>
+            <View key={column.key} style={[styles.kanbanColumn, styles[accent]]}>
               <View style={styles.kanbanHeader}>
-                <Text style={styles.kanbanTitle}>{stageMap[stageKey] ?? KANBAN_STAGES[index].labelFallback}</Text>
+                <Text style={styles.kanbanTitle}>{column.label}</Text>
                 <Text style={styles.kanbanCount}>{ordersInColumn.length}</Text>
               </View>
               {ordersInColumn.length === 0 ? (
                 <Text style={styles.kanbanEmpty}>—</Text>
               ) : (
-                ordersInColumn.slice(0, 4).map((order) => {
+                ordersInColumn.slice(0, 6).map((order) => {
                   const currentStage = resolveMobileWorkflowStage(stages, order);
-                  const outgoing = ws.businessConfiguration?.workflow.transitions.filter(
-                    (t) => t.fromStageId === currentStage?.id,
-                  ) ?? [];
-                  const nextStage = outgoing
+                  const outgoing = (ws.businessConfiguration?.workflow.transitions ?? [])
+                    .filter((t) => t.fromStageId === currentStage?.id)
                     .map((t) => stages.find((s) => s.id === t.toStageId))
-                    .find((s) => s);
+                    .filter((s): s is NonNullable<typeof s> => Boolean(s));
+                  const synced = order.sync_state === 'synced';
+                  const orderBusy = Boolean(ws.transitioningOrderKey?.startsWith(`${order.id}:`));
+                  const paymentOpen = ws.paymentOrder?.id === order.id;
                   return (
                     <View key={order.id} style={[styles.card, { marginBottom: 8 }]}>
                       <View style={styles.orderTop}>
                         <View style={styles.listMain}>
-                          <Text style={styles.listTitle} numberOfLines={1}>
+                          <Text style={styles.listTitle} numberOfLines={2}>
                             {order.item_name ?? order.garment_name} · {order.customer_name}
                           </Text>
-                          <Text style={styles.listMeta}>{order.promised_at.slice(0, 10)}</Text>
-                          {order.sync_state !== 'synced' ? <Text style={styles.pendingLabel}>{copy.pending}</Text> : null}
+                          <Text style={styles.listMeta}>{stageMap[order.workflow_stage_key ?? order.status] ?? currentStage?.label ?? ''} · {order.promised_at.slice(0, 10)}</Text>
+                          {!synced ? <Text style={styles.pendingLabel}>{copy.pending}</Text> : null}
                         </View>
-                        <Text style={styles.listPrice}>{formatCurrency(order.total, ws.businessConfiguration?.business.currency)}</Text>
+                        <Text style={styles.listPrice}>{formatCurrency(order.total, currency)}</Text>
                       </View>
-                      {nextStage && ws.can('orders:transition') ? (
+
+                      {ws.can('orders:transition') ? outgoing.map((target) => {
+                        const transitionBusy = ws.transitioningOrderKey === `${order.id}:${target.key}`;
+                        return (
+                          <Pressable
+                            key={target.id}
+                            accessibilityRole="button"
+                            accessibilityState={{ disabled: orderBusy || !synced || ws.online !== true, busy: transitionBusy }}
+                            android_ripple={{ color: palette.primarySoft }}
+                            disabled={orderBusy || !synced || ws.online !== true}
+                            onPress={() => void ws.transitionOrder(order, target.key)}
+                            style={({ pressed }) => [
+                              styles.nextStageBtn,
+                              (orderBusy || !synced || ws.online !== true) && styles.disabled,
+                              pressed && styles.pressed,
+                            ]}
+                          >
+                            <Text style={styles.nextStageText}>
+                              {transitionBusy ? copy.loading : `${copy.nextStage}: ${target.label}`}
+                            </Text>
+                            <Icon name="arrowRight" size={16} color={palette.primaryText} />
+                          </Pressable>
+                        );
+                      }) : null}
+
+                      {ws.can('payments:write') && !paymentOpen ? (
                         <Pressable
                           accessibilityRole="button"
-                          accessibilityState={{ disabled: ws.transitioningOrderKey === `${order.id}:${nextStage.key}` || order.sync_state !== 'synced' || ws.online !== true }}
+                          accessibilityState={{ disabled: ws.online !== true || !synced, busy: ws.openingPaymentOrderId === order.id }}
                           android_ripple={{ color: palette.primarySoft }}
-                          onPress={() => void ws.transitionOrder(order, nextStage.key)}
-                          style={({ pressed }) => [styles.nextStageBtn, pressed && styles.pressed]}
+                          disabled={ws.online !== true || !synced || ws.openingPaymentOrderId === order.id}
+                          onPress={() => void openOrderPayment(order)}
+                          style={({ pressed }) => [
+                            styles.nextStageBtn,
+                            (ws.online !== true || !synced) && styles.disabled,
+                            pressed && styles.pressed,
+                          ]}
                         >
                           <Text style={styles.nextStageText}>
-                            {copy.nextStage}: {nextStage.label}
+                            {ws.openingPaymentOrderId === order.id ? copy.loading : copy.recordPayment}
                           </Text>
-                          <Icon name="arrowRight" size={16} color={palette.primaryText} />
+                          <Icon name="wallet" size={16} color={palette.primaryText} />
                         </Pressable>
                       ) : null}
+
+                      {paymentOpen && ws.can('payments:write') ? <PaymentForm /> : null}
                     </View>
                   );
                 })
@@ -139,13 +202,19 @@ export function OrdersScreen() {
         })}
       </ScrollView>
 
+      {filtered.length === 0 ? (
+        <View style={{ marginTop: 12 }}>
+          <EmptyState title={copy.emptyOrders} />
+        </View>
+      ) : null}
+
       {/* Analytics sparkline */}
       <View style={[styles.chartCard, { marginTop: 16 }]}>
         <View style={styles.chartHeader}>
           <View>
             <Text style={styles.chartLabel}>{copy.last8weeks}</Text>
             <Text style={styles.chartValue}>
-              {formatCurrency(summary.weeklyOrderValue.reduce((s, p) => s + p.value, 0).toFixed(2), ws.businessConfiguration?.business.currency)}
+              {formatCurrency(summary.weeklyOrderValue.reduce((s, p) => s + p.value, 0).toFixed(2), currency)}
             </Text>
           </View>
           <View style={styles.chartPill}>
@@ -154,18 +223,8 @@ export function OrdersScreen() {
             </Text>
           </View>
         </View>
-        <AreaChart data={summary.weeklyOrderValue} currency={ws.businessConfiguration?.business.currency} copyKey={copy.totalCount} />
+        <AreaChart data={summary.weeklyOrderValue} currency={currency} copyKey={copy.totalCount} />
       </View>
-
-      {filtered.length === 0 ? (
-        <View style={{ marginTop: 12 }}>
-          <EmptyState title={copy.emptyOrders} />
-        </View>
-      ) : null}
     </>
   );
-}
-
-function interpolateLocal(value: number): string {
-  return `${value} ${'orders'.toLowerCase()}`;
 }

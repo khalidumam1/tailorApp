@@ -14,8 +14,9 @@ import { useWorkspace } from '../hooks/useWorkspace';
 import { computeDashboardSummary } from '../data/analytics';
 import { interpolate } from '../i18n';
 import { AreaChart } from '../components/AreaChart';
+import type { Navigate } from '../navigation';
 
-export function DashboardScreen() {
+export function DashboardScreen({ onNavigate }: { onNavigate: Navigate }) {
   const styles = useAppStyles();
   const { palette } = useAppTheme();
   const ws = useWorkspace();
@@ -95,18 +96,20 @@ export function DashboardScreen() {
       {/* Quick action row */}
       <View style={styles.quickRow}>
         {([
-          { icon: 'plus' as IconName, label: copy.newOrderAction, onPress: () => {} },
-          { icon: 'wallet' as IconName, label: copy.recordPaymentAction, onPress: () => {} },
-          { icon: 'send' as IconName, label: copy.sendMessageAction, onPress: () => {} },
-          { icon: 'chart' as IconName, label: copy.reportAction, onPress: () => {} },
-        ] as const).map((q) => (
+          { icon: 'plus' as IconName, label: copy.newOrderAction, disabled: !ws.can('orders:write'), onPress: () => onNavigate('orders', 'new-order') },
+          { icon: 'wallet' as IconName, label: copy.recordPaymentAction, disabled: !ws.can('payments:write'), onPress: () => onNavigate('payments', 'record-payment') },
+          { icon: 'send' as IconName, label: copy.sendMessageAction, disabled: !ws.can('customers:read'), onPress: () => onNavigate('customers') },
+          { icon: 'chart' as IconName, label: copy.reportAction, disabled: false, onPress: () => onNavigate('analytics') },
+        ]).map((q) => (
           <Pressable
             key={q.label}
             accessibilityRole="button"
             accessibilityLabel={q.label}
+            accessibilityState={{ disabled: q.disabled }}
             android_ripple={{ color: palette.primarySoft }}
+            disabled={q.disabled}
             onPress={q.onPress}
-            style={({ pressed }) => [styles.quickAction, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.quickAction, q.disabled && styles.disabled, pressed && styles.pressed]}
           >
             <View style={styles.quickActionIcon}>
               <Icon name={q.icon} size={20} color={palette.primaryText} />
@@ -177,7 +180,9 @@ export function DashboardScreen() {
       {/* Recent activity */}
       <View style={styles.sectionRow}>
         <Text style={styles.sectionTitle}>{copy.recentActivity}</Text>
-        <Text style={styles.sectionLink}>{copy.viewAll}</Text>
+        <Pressable accessibilityRole="button" onPress={() => onNavigate('orders')} hitSlop={8}>
+          <Text style={styles.sectionLink}>{copy.viewAll}</Text>
+        </Pressable>
       </View>
 
       {ws.orders.length === 0 ? (
@@ -186,7 +191,7 @@ export function DashboardScreen() {
         ws.orders.slice(0, 6).map((order) => {
           const stage = stageMapObj[order.workflow_stage_key ?? order.status] ?? order.workflow_stage_key ?? order.status;
           return (
-            <View key={order.id} style={styles.listCard}>
+            <Pressable key={order.id} accessibilityRole="button" onPress={() => onNavigate('orders')} android_ripple={{ color: palette.primarySoft }} style={styles.listCard}>
               <IconDot tone={order.sync_state === 'synced' ? 'mint' : 'amber'} name="orders" />
               <View style={styles.listMain}>
                 <Text style={styles.listTitle} numberOfLines={1}>
@@ -198,7 +203,7 @@ export function DashboardScreen() {
                 <Text style={styles.listPrice}>{formatCurrency(order.total, ws.businessConfiguration?.business.currency)}</Text>
                 {order.sync_state !== 'synced' ? <StatusPill tone="amber">{copy.pending}</StatusPill> : null}
               </View>
-            </View>
+            </Pressable>
           );
         })
       )}
