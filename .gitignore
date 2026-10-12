@@ -12,3 +12,7 @@ ios/build/
 coverage/
 .expo/
 *.tsbuildinfo
+image-search/
+docs/ui-previews/
+docs/ui-previews-v2/
+docs/ui-previews-v2-built/
