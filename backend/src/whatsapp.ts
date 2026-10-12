@@ -585,7 +585,11 @@ export async function enqueueSubscriptionExpiryNotifications(): Promise<void> {
       where: { id: 'subscription-expiry' },
       data: { lastId: subscriptions.at(-1)?.id ?? null },
     });
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 10_000,
+    timeout: 30_000,
+  });
 }
 
 export async function enqueueDuePaymentNotifications(): Promise<void> {
@@ -654,7 +658,11 @@ export async function enqueueDuePaymentNotifications(): Promise<void> {
       });
     }
     return dueOrders.length === 100 ? dueOrders.at(-1)?.id : undefined;
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 10_000,
+    timeout: 30_000,
+  });
   duePaymentCursor = nextCursor;
 }
 

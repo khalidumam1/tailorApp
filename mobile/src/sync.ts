@@ -1170,6 +1170,29 @@ export async function createPaymentAttempt(input: {
   });
 }
 
+export async function applyLocalOrderWorkflowTransition(input: {
+  businessId: string;
+  orderId: string;
+  workflowStageKey: string;
+  status?: string;
+  version: number;
+  updatedAt?: string;
+}): Promise<void> {
+  const database = await openLocalDatabase();
+  const orders = database.get<OrderRecord>('orders');
+  await database.write(async () => {
+    const local = await findRecord(orders, input.orderId);
+    if (!local || local.businessId !== input.businessId) return;
+    await local.update((record) => {
+      record.workflowStageKey = input.workflowStageKey;
+      if (input.status) record.status = input.status;
+      record.version = input.version;
+      record.syncState = 'synced';
+      record.updatedAt = input.updatedAt ? timestampToMilliseconds(input.updatedAt) : Date.now();
+    });
+  });
+}
+
 export async function updatePaymentAttempt(
   idempotencyKey: string,
   status: 'confirmed' | 'rejected' | 'pending',

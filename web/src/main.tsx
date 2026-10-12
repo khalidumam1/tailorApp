@@ -1146,11 +1146,14 @@ function App() {
     }
   }
 
+  const [transitioningOrderKey, setTransitioningOrderKey] = useState<string | null>(null);
+
   async function changeWorkflowStage(order: Order, nextStageKey: string) {
     if (!session) return;
     const nextStage = businessConfiguration?.workflow.stages.find((stage) => stage.key === nextStageKey);
     if (nextStageKey === 'CANCELLED' && !window.confirm(`Cancel order ${order.orderNumber}? This action cannot be undone.`)) return;
     setWorking(true);
+    setTransitioningOrderKey(`${order.id}:${nextStageKey}`);
     setError(null);
     try {
       await withSession((token) => api.transitionWorkflow(token, order, nextStageKey));
@@ -1159,6 +1162,7 @@ function App() {
     } catch (cause) {
       setError(messageFor(cause));
     } finally {
+      setTransitioningOrderKey(null);
       setWorking(false);
     }
   }
@@ -3159,17 +3163,28 @@ function App() {
                       <span className="muted">{money(order.outstanding, businessConfiguration?.business.currency)} outstanding</span>
                       <div className="row-actions">
                         {permissions.has('orders:transition') && businessConfiguration?.workflow.transitions
-                          .filter((transition) => transition.fromStageId === (order.workflowStageId
-                            ?? businessConfiguration.workflow.stages.find((stage) =>
-                              stage.key === (order.workflowStageKey ?? order.status))?.id))
+                          .filter((transition) => {
+                            const stages = businessConfiguration.workflow.stages;
+                            const stageKey = order.workflowStageKey ?? order.currentWorkflowStage?.key ?? order.status;
+                            const currentStage = (order.workflowStageId ? stages.find((stage) => stage.id === order.workflowStageId) : undefined)
+                              ?? stages.find((stage) => stage.key === stageKey)
+                              ?? (stageKey === 'FINISHING' ? stages.find((stage) => stage.key === 'FITTING') : undefined)
+                              ?? (stageKey === 'FITTING' ? stages.find((stage) => stage.key === 'FINISHING') : undefined)
+                              ?? (stageKey === 'READY_FOR_PICKUP' ? stages.find((stage) => stage.key === 'READY') : undefined)
+                              ?? (stageKey === 'READY' ? stages.find((stage) => stage.key === 'READY_FOR_PICKUP') : undefined)
+                              ?? (stageKey === 'COLLECTED' ? stages.find((stage) => stage.key === 'DELIVERED' || stage.key === 'COMPLETED') : undefined)
+                              ?? (order.status === 'NEW' ? stages.find((stage) => stage.isInitial) : undefined);
+                            return transition.fromStageId === currentStage?.id;
+                          })
                           .map((transition) => {
                             const stage = businessConfiguration.workflow.stages.find((item) => item.id === transition.toStageId);
+                            const isTransitioningThis = transitioningOrderKey === (stage ? `${order.id}:${stage.key}` : '');
                             return stage ? <button
                               className="button button-secondary"
                               key={transition.id}
                               disabled={working || !online}
                               onClick={() => void changeWorkflowStage(order, stage.key)}
-                            >Move to {stage.label}</button> : null;
+                            >{isTransitioningThis ? `Moving to ${stage.label}…` : `Move to ${stage.label}`}</button> : null;
                           })}
                         {permissions.has('payments:write') && Number(order.outstanding) > 0 && (
                           <button className="button button-secondary" onClick={() => { setPaymentOrderId(order.id); setPaymentAmount(order.outstanding); }}>Record payment</button>
