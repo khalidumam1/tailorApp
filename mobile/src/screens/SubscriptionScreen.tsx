@@ -2,8 +2,8 @@
  * Subscription & billing — Payrio-style with a hero current-plan card, a
  * horizontal scroll of plan comparison cards and a payment history list.
  */
-import { useEffect } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Alert, Pressable, ScrollView, Share, Text, View } from 'react-native';
 import { useAppStyles } from '../theme/useAppStyles';
 import { useAppTheme } from '../theme/palette';
 import { ActionButton, EmptyState, Field, StatusPill } from '../theme/primitives';
@@ -23,7 +23,29 @@ export function SubscriptionScreen() {
   const currentPlan = billing?.subscription;
   const plans = billing?.plans ?? [];
   const cycle = ws.subscriptionCycle;
-  const usagePercent = currentPlan ? 56 : 0; // Visual indicator: derive from the plan and active orders.
+  // Plan options and the renewal form are revealed by "Manage plan" (or upgrade),
+  // and always shown when there is no current plan to manage.
+  const [showManage, setShowManage] = useState(false);
+  const plansVisible = showManage || !currentPlan;
+  const currency = ws.businessConfiguration?.business.currency;
+
+  // The billing API returns no PDF link for the mobile app, so the invoice
+  // details are shared as text (the receipt PDF needs the web app).
+  const shareInvoice = () => {
+    const latest = billing?.payments.find((payment) => payment.invoiceNumber) ?? billing?.payments[0];
+    if (!latest) {
+      Alert.alert(copy.shareInvoice, copy.noSubscriptionPayments);
+      return;
+    }
+    const message = [
+      ws.session?.business.name ?? '',
+      `${copy.receipt}: ${latest.invoiceNumber ?? '—'}`,
+      `${latest.plan.name} · ${latest.status}`,
+      `${formatCurrency(latest.amount, currency)} · ${latest.method} · ${new Date(latest.createdAt).toLocaleDateString()}`,
+      `${latest.transactionReference} · ${latest.senderName}`,
+    ].join('\n');
+    void Share.share({ message }).catch(() => Alert.alert(copy.error));
+  };
 
   return (
     <>
@@ -53,20 +75,24 @@ export function SubscriptionScreen() {
             <Text style={styles.heroMeta}>{ws.term('orders', copy.orders)}: {ws.orders.length}</Text>
           </View>
 
-          {/* Plan usage progress */}
-          <View style={{ marginTop: 14 }}>
-            <View style={styles.listRow}>
-              <Text style={styles.listMeta}>{copy.planUsage}</Text>
-              <Text style={styles.listMeta}>{usagePercent}%</Text>
-            </View>
-            <View style={[styles.barTrack, { marginTop: 6 }]}>
-              <View style={[styles.barFill, { width: `${usagePercent}%` }]} />
-            </View>
-          </View>
-
           <View style={styles.customerActions}>
-            <Text style={styles.customerAction}>{copy.managePlan}</Text>
-            <Text style={styles.customerAction}>{copy.downloadInvoice}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: plansVisible }}
+              android_ripple={{ color: palette.primarySoft }}
+              onPress={() => setShowManage((open) => !open)}
+              style={({ pressed }) => [pressed && styles.pressed]}
+            >
+              <Text style={styles.customerAction}>{copy.managePlan}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              android_ripple={{ color: palette.primarySoft }}
+              onPress={shareInvoice}
+              style={({ pressed }) => [pressed && styles.pressed]}
+            >
+              <Text style={styles.customerAction}>{copy.shareInvoice}</Text>
+            </Pressable>
           </View>
         </View>
       ) : (
@@ -85,7 +111,7 @@ export function SubscriptionScreen() {
       ) : null}
 
       {/* Plan comparison row */}
-      {plans.length > 0 ? (
+      {plansVisible && plans.length > 0 ? (
         <>
           <View style={styles.sectionRow}>
             <Text style={styles.sectionTitle}>{copy.changePlan}</Text>
@@ -112,6 +138,7 @@ export function SubscriptionScreen() {
                       onPress={() => {
                         ws.setSubscriptionPlanId(plan.id);
                         ws.setSubscriptionPayment((current) => ({ ...current, amount: price }));
+                        setShowManage(true);
                       }}
                       style={({ pressed }) => [styles.chip, { marginTop: 10, alignSelf: 'flex-start' }, pressed && styles.chipPressed]}
                     >
@@ -144,7 +171,7 @@ export function SubscriptionScreen() {
         <EmptyState title={copy.noSubscriptionPayments} />
       )}
 
-      {ws.can('subscriptions:manage') && plans.length ? (
+      {ws.can('subscriptions:manage') && plans.length && plansVisible ? (
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>{copy.requestRenewal}</Text>
           <Text style={styles.fieldLabel}>{copy.plan}</Text>

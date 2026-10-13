@@ -615,6 +615,8 @@ export function createStyles(palette: AppPalette) {
     splitRow: { flexDirection: 'row', gap: 10 },
     halfField: { flex: 1 },
     pageHeadingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12 },
+    backRow: { flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', paddingVertical: 8, paddingRight: 12, marginBottom: 8 },
+    backText: { color: palette.primaryText, fontSize: 15, fontWeight: '800' },
     pendingLabel: { color: palette.warning, fontSize: 13, fontWeight: '700', marginBottom: 4 },
     syncBadge: { color: palette.mutedText, fontWeight: '900' },
 

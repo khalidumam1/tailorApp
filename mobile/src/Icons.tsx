@@ -29,6 +29,7 @@ export type IconName =
   | 'search'
   | 'arrowUp'
   | 'arrowRight'
+  | 'arrowLeft'
   | 'arrowDown'
   | 'card'
   | 'users'
@@ -205,6 +206,12 @@ export function Icon({ name, size = 24, color = '#182A25' }: { name: IconName; s
       return (
         <Svg width={size} height={size} viewBox="0 0 24 24">
           <Path d="M12 5v14M6 13l6 6 6-6" {...props} />
+        </Svg>
+      );
+    case 'arrowLeft':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24">
+          <Path d="M19 12H5M11 6l-6 6 6 6" {...props} />
         </Svg>
       );
     case 'arrowRight':

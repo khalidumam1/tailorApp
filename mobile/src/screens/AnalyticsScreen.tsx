@@ -1,27 +1,48 @@
 /**
- * Analytics — Payrio-style. Shows the 8-week order value area chart, the
- * pipeline breakdown bar list, a collected-vs-outstanding stacked bar, and
- * a top-items list. Everything is derived from the local order list.
+ * Analytics — order value over time (range chips change the window), the
+ * pipeline breakdown, collections this month from the real payment ledger,
+ * and the top items on recent orders.
  */
-import { useEffect } from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { useAppStyles } from '../theme/useAppStyles';
 import { useAppTheme } from '../theme/palette';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { computeDashboardSummary } from '../data/analytics';
+import { loadPayments, summarizePayments } from '../data/payments';
 import { AreaChart } from '../components/AreaChart';
 import { BarList } from '../components/BarList';
 import { StackedBar } from '../components/StackedBar';
 import { formatCurrency } from '../local';
 import { interpolate } from '../i18n';
 
+const RANGES = [
+  { key: '1W', weeks: 1 },
+  { key: '1M', weeks: 4 },
+  { key: '8W', weeks: 8 },
+] as const;
+
 export function AnalyticsScreen() {
   const styles = useAppStyles();
   const { palette } = useAppTheme();
   const ws = useWorkspace();
   const copy = ws.copy;
+  const [range, setRange] = useState<(typeof RANGES)[number]['key']>('8W');
+  const [collectedThisMonth, setCollectedThisMonth] = useState<number | null>(null);
+  const canReadPayments = ws.can('payments:read');
 
-  useEffect(() => { void ws.runSync(); }, [ws.runSync]);
+  // Collections come from the recorded payment ledger (online only).
+  useEffect(() => {
+    let active = true;
+    if (!ws.session || ws.online !== true || !canReadPayments) {
+      setCollectedThisMonth(null);
+      return () => { active = false; };
+    }
+    loadPayments(ws.session)
+      .then((rows) => { if (active) setCollectedThisMonth(summarizePayments(rows).collectedThisMonth); })
+      .catch(() => { if (active) setCollectedThisMonth(null); });
+    return () => { active = false; };
+  }, [ws.online, ws.session, canReadPayments, ws.syncState.last_successful_sync]);
 
   const stages = ws.businessConfiguration?.workflow.stages ?? [];
   const stageMap: Record<string, string> = {};
@@ -29,13 +50,12 @@ export function AnalyticsScreen() {
   const summary = computeDashboardSummary(ws.orders, stageMap);
 
   const currency = ws.businessConfiguration?.business.currency ?? 'PKR';
-  const orderValueTotal = summary.weeklyOrderValue.reduce((s, p) => s + p.value, 0);
-  const collectedFromOrders = ws.orders
-    .filter((o) => (o as any).paid === true)
-    .reduce((s, o) => s + Number(o.total || 0), 0);
-  const outstandingFromOrders = summary.totalOutstanding;
-  const collected = collectedFromOrders || orderValueTotal * 0.4;
-  const outstanding = outstandingFromOrders - collected;
+  const weeks = RANGES.find((item) => item.key === range)?.weeks ?? 8;
+  const series = summary.weeklyOrderValue.slice(-weeks);
+  const orderValueTotal = series.reduce((s, p) => s + p.value, 0);
+  const serverOutstanding = ws.dashboard.outstanding;
+  const outstanding = serverOutstanding !== undefined && serverOutstanding !== null ? Math.max(Number(serverOutstanding), 0) : null;
+  const collected = Math.max(collectedThisMonth ?? 0, 0);
 
   return (
     <ScrollView showsVerticalScrollIndicator={false}>
@@ -50,7 +70,7 @@ export function AnalyticsScreen() {
       <View style={styles.chartCard}>
         <View style={styles.chartHeader}>
           <View>
-            <Text style={styles.chartLabel}>{copy.last8weeks}</Text>
+            <Text style={styles.chartLabel}>{range === '8W' ? copy.last8weeks : range === '1M' ? '1M' : '1W'}</Text>
             <Text style={styles.chartValue}>{formatCurrency(orderValueTotal.toFixed(2), currency)}</Text>
             <Text style={styles.listMeta}>{copy.orderValue}</Text>
           </View>
@@ -60,13 +80,23 @@ export function AnalyticsScreen() {
             </Text>
           </View>
         </View>
-        <AreaChart data={summary.weeklyOrderValue} currency={currency} copyKey={copy.totalCount} height={170} />
+        <AreaChart data={series} currency={currency} copyKey={copy.totalCount} height={170} />
         <View style={styles.chipWrap}>
-          {['1W', '1M', '3M', '1Y', copy.viewAll.split(' ')[0]].map((label, i) => (
-            <View key={label} style={[styles.chip, i === 1 && styles.chipSelected]}>
-              <Text style={[styles.chipText, i === 1 && styles.chipTextSelected]}>{label}</Text>
-            </View>
-          ))}
+          {RANGES.map((item) => {
+            const active = range === item.key;
+            return (
+              <Pressable
+                key={item.key}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                android_ripple={{ color: palette.primarySoft }}
+                onPress={() => setRange(item.key)}
+                style={({ pressed }) => [styles.chip, active && styles.chipSelected, pressed && styles.chipPressed]}
+              >
+                <Text style={[styles.chipText, active && styles.chipTextSelected]}>{item.key}</Text>
+              </Pressable>
+            );
+          })}
         </View>
       </View>
 
@@ -88,20 +118,25 @@ export function AnalyticsScreen() {
         />
       </View>
 
-      {/* Collections this month */}
+      {/* Collections this month (ledger) against outstanding (server total) */}
       <View style={styles.chartCard}>
         <View style={styles.chartHeader}>
           <View>
             <Text style={styles.chartLabel}>{copy.collectionsThisMonth}</Text>
-            <Text style={styles.listMeta}>{formatCurrency((collected + Math.max(outstanding, 0)).toFixed(2), currency)} {copy.totalCount.replace('{0}', '')}</Text>
+            <Text style={styles.chartValue}>
+              {collectedThisMonth === null ? '—' : formatCurrency(collected.toFixed(2), currency)}
+            </Text>
+            {collectedThisMonth === null ? <Text style={styles.listMeta}>{copy.paymentsOnline}</Text> : null}
           </View>
         </View>
-        <StackedBar
-          segments={[
-            { label: copy.collectedToday, value: Math.max(collected, 0), color: palette.success, meta: formatCurrency(collected.toFixed(2), currency) },
-            { label: copy.outstandingLabel, value: Math.max(outstanding, 0), color: palette.danger, meta: formatCurrency(outstanding.toFixed(2), currency) },
-          ]}
-        />
+        {collectedThisMonth !== null && outstanding !== null ? (
+          <StackedBar
+            segments={[
+              { label: copy.collectedToday, value: collected, color: palette.success, meta: formatCurrency(collected.toFixed(2), currency) },
+              { label: copy.outstandingLabel, value: outstanding, color: palette.danger, meta: formatCurrency(outstanding.toFixed(2), currency) },
+            ]}
+          />
+        ) : null}
       </View>
 
       {/* Top items */}
@@ -109,7 +144,7 @@ export function AnalyticsScreen() {
         <View style={styles.chartHeader}>
           <View>
             <Text style={styles.chartLabel}>{copy.topItems}</Text>
-            <Text style={styles.listMeta}>By quantity on recent orders</Text>
+            <Text style={styles.listMeta}>{copy.byQuantity}</Text>
           </View>
         </View>
         {summary.topItems.length === 0 ? (

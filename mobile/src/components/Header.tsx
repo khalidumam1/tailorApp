@@ -15,9 +15,10 @@ import { useWorkspace } from '../hooks/useWorkspace';
 
 type HeaderProps = {
   onNotificationsPress?: () => void;
+  onSearchPress?: () => void;
 };
 
-export function Header({ onNotificationsPress }: HeaderProps) {
+export function Header({ onNotificationsPress, onSearchPress }: HeaderProps) {
   const styles = useAppStyles();
   const { palette } = useAppTheme();
   const ws = useWorkspace();
@@ -54,7 +55,7 @@ export function Header({ onNotificationsPress }: HeaderProps) {
         accessibilityRole="search"
         accessibilityLabel={ws.copy.searchPlaceholder}
         android_ripple={{ color: palette.primarySoft }}
-        onPress={onNotificationsPress}
+        onPress={onSearchPress}
         style={({ pressed }) => [styles.searchPill, pressed && styles.pressed]}
       >
         <Icon name="search" size={18} color={palette.mutedText} />

@@ -1,18 +1,13 @@
 /**
  * TailorApp mobile shell.
  *
- * This file is the entry point. It composes the theme provider, the
- * workspace provider, and the per-screen rendering. Every screen reads
- * its data from `useWorkspace()` so the screens stay small and focused
- * on UI concerns.
- *
- * Tab bar: a Payrio-style floating 5-tab glass bar (Home · Orders ·
- * Payments · Activity · More). Other workspaces (Measurements, WhatsApp,
- * Subscription, Settings, Business settings) are reachable from the
- * More hub.
+ * Composes the theme provider, the workspace provider, and the navigation.
+ * Five root tabs (Home · Orders · Payments · Activity · More) sit in the
+ * floating tab bar. Every other page is pushed onto a back stack and opened
+ * with a back control (or the Android back button).
  */
-import { useState } from 'react';
-import { ActivityIndicator, ScrollView, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, BackHandler, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import {
@@ -20,22 +15,30 @@ import {
   useAppTheme,
 } from './src/theme/palette';
 import { useAppStyles } from './src/theme/useAppStyles';
-import { WorkspaceProvider, useWorkspace, type Page } from './src/hooks/useWorkspace';
+import { WorkspaceProvider, useWorkspace } from './src/hooks/useWorkspace';
+import type { NavIntent, NavPage, Navigate, TabKey } from './src/navigation';
 
 import { Header } from './src/components/Header';
-import { TabBar, type TabDescriptor, type TabKey } from './src/components/TabBar';
+import { TabBar, type TabDescriptor } from './src/components/TabBar';
+import { Icon } from './src/Icons';
 
 import { LoginScreen } from './src/screens/LoginScreen';
 import { DashboardScreen } from './src/screens/DashboardScreen';
 import { OrdersScreen } from './src/screens/OrdersScreen';
 import { CustomersScreen } from './src/screens/CustomersScreen';
+import { CatalogScreen } from './src/screens/CatalogScreen';
 import { PaymentsScreen } from './src/screens/PaymentsScreen';
 import { ActivityScreen } from './src/screens/ActivityScreen';
 import { MoreScreen } from './src/screens/MoreScreen';
+import { MeasurementsScreen } from './src/screens/MeasurementsScreen';
+import { NotificationsScreen } from './src/screens/NotificationsScreen';
+import { SubscriptionScreen } from './src/screens/SubscriptionScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { BusinessSettingsScreen } from './src/screens/BusinessSettingsScreen';
-import { SubscriptionScreen } from './src/screens/SubscriptionScreen';
+import { AnalyticsScreen } from './src/screens/AnalyticsScreen';
 import { ActionButton } from './src/theme/primitives';
+
+const TAB_PAGES: TabKey[] = ['home', 'orders', 'payments', 'activity', 'more'];
 
 export default function App() {
   return (
@@ -53,8 +56,39 @@ function AppShell() {
   const ws = useWorkspace();
   const styles = useAppStyles();
   const { themeMode, palette } = useAppTheme();
-  const [activeTab, setActiveTab] = useState<TabKey>('home');
-  const [page, setPage] = useState<Page>('home');
+  // stack[0] is always a root tab; deeper entries are pushed pages.
+  const [stack, setStack] = useState<NavPage[]>(['home']);
+  const [intent, setIntent] = useState<NavIntent | null>(null);
+
+  const navigate = useCallback<Navigate>((target, nextIntent) => {
+    setIntent(nextIntent ?? null);
+    setStack((current) => {
+      if ((TAB_PAGES as NavPage[]).includes(target)) return [target];
+      if (current[current.length - 1] === target) return current;
+      return [...current, target];
+    });
+  }, []);
+
+  const goBack = useCallback(() => {
+    setStack((current) => (current.length > 1 ? current.slice(0, -1) : current));
+  }, []);
+
+  const clearIntent = useCallback(() => setIntent(null), []);
+
+  // Android back button: pop a pushed page before leaving the app.
+  const canGoBack = stack.length > 1;
+  useEffect(() => {
+    if (!canGoBack) return undefined;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      goBack();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [canGoBack, goBack]);
+
+  // Clear per-page errors whenever the page changes.
+  const page = stack[stack.length - 1];
+  useEffect(() => { ws.setError(''); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (ws.booting) {
     return (
@@ -91,47 +125,83 @@ function AppShell() {
     { key: 'more', label: ws.copy.moreTab, icon: 'menu' },
   ];
 
-  // Decide which screen to render based on the active tab and any explicit
-  // page navigation (e.g. tapping an item inside More).
   let content: React.ReactNode = null;
-  if (page === 'home' || activeTab === 'home') content = <DashboardScreen />;
-  else if (page === 'orders' || activeTab === 'orders') content = <OrdersScreen />;
-  else if (page === 'customers') content = <CustomersScreen />;
-  else if (page === 'payments' || activeTab === 'payments') content = <PaymentsScreen />;
-  else if (page === 'activity' || activeTab === 'activity') content = <ActivityScreen />;
-  else if (page === 'more' || activeTab === 'more') {
-    content = <MoreScreen onNavigate={(p) => { setPage(p); setActiveTab('more'); }} />;
+  switch (page) {
+    case 'home':
+      content = <DashboardScreen onNavigate={navigate} />;
+      break;
+    case 'orders':
+      content = <OrdersScreen intent={intent} onIntentHandled={clearIntent} onOpenCustomers={() => navigate('customers')} />;
+      break;
+    case 'payments':
+      content = <PaymentsScreen intent={intent} onIntentHandled={clearIntent} />;
+      break;
+    case 'activity':
+      content = <ActivityScreen />;
+      break;
+    case 'more':
+      content = <MoreScreen onNavigate={navigate} />;
+      break;
+    case 'customers':
+      content = <CustomersScreen />;
+      break;
+    case 'catalog':
+      content = <CatalogScreen />;
+      break;
+    case 'measurements':
+      content = <MeasurementsScreen />;
+      break;
+    case 'notifications':
+      content = <NotificationsScreen />;
+      break;
+    case 'subscription':
+      content = <SubscriptionScreen />;
+      break;
+    case 'settings':
+      content = <SettingsScreen />;
+      break;
+    case 'business-settings':
+      content = <BusinessSettingsScreen />;
+      break;
+    case 'analytics':
+      content = <AnalyticsScreen />;
+      break;
+    default:
+      content = null;
   }
-  else if (page === 'settings') content = <SettingsScreen />;
-  else if (page === 'business-settings') content = <BusinessSettingsScreen />;
-  else if (page === 'subscription') content = <SubscriptionScreen />;
 
   return (
     <SafeAreaView style={[styles.safe, ws.rtl && styles.rtlLayout]} edges={['top']}>
       <StatusBar style={themeMode === 'dark' ? 'light' : 'dark'} />
-      <Header onNotificationsPress={() => { setPage('notifications'); setActiveTab('activity'); }} />
+      <Header
+        onNotificationsPress={() => navigate('notifications')}
+        onSearchPress={() => navigate('customers')}
+      />
       <View style={styles.workspace}>
         <ScrollView
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
+          {stack.length > 1 ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={ws.copy.back}
+              android_ripple={{ color: palette.primarySoft, borderless: true }}
+              onPress={goBack}
+              style={({ pressed }) => [styles.backRow, pressed && styles.pressed]}
+            >
+              <Icon name="arrowLeft" size={18} color={palette.primaryText} />
+              <Text style={styles.backText}>{ws.copy.back}</Text>
+            </Pressable>
+          ) : null}
           {ws.error ? <Text accessibilityRole="alert" style={styles.errorBanner}>{ws.error}</Text> : null}
           {content}
         </ScrollView>
         <TabBar
           tabs={tabs}
-          active={activeTab}
-          onChange={(next) => {
-            setActiveTab(next);
-            // Reset the explicit page so the tab dictates the content.
-            if (next === 'home') setPage('home');
-            else if (next === 'orders') setPage('orders');
-            else if (next === 'payments') setPage('payments');
-            else if (next === 'activity') setPage('activity');
-            else if (next === 'more') setPage('more');
-            ws.setError('');
-          }}
+          active={stack[0] as TabKey}
+          onChange={(next) => navigate(next)}
         />
       </View>
     </SafeAreaView>

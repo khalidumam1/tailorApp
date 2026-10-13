@@ -1,45 +1,33 @@
 /**
- * More — Payrio-style hub for screens that don't deserve their own tab:
- * measurements, notifications, subscription, settings, business settings,
- * activity / analytics.
+ * More — hub for screens that don't have their own tab. Each row opens its
+ * page with a back control; rows are shown only when the signed-in user has
+ * the permission and the business module is enabled.
  */
 import { Pressable, Text, View } from 'react-native';
 import { useAppStyles } from '../theme/useAppStyles';
 import { useAppTheme } from '../theme/palette';
 import { Icon, type IconName } from '../Icons';
 import { useWorkspace } from '../hooks/useWorkspace';
-import type { Page } from '../hooks/useWorkspace';
+import type { NavPage, Navigate } from '../navigation';
 
-type MoreItem = {
-  id: Page;
-  label: string;
-  hint: string;
-  icon: IconName;
-  tone: 'primary' | 'mint' | 'amber' | 'blue' | 'violet' | 'red';
-};
+type Tone = 'primary' | 'mint' | 'amber' | 'blue' | 'violet' | 'red';
 
-export function MoreScreen({ onNavigate }: { onNavigate: (page: Page) => void }) {
+export function MoreScreen({ onNavigate }: { onNavigate: Navigate }) {
   const styles = useAppStyles();
   const { palette } = useAppTheme();
   const ws = useWorkspace();
   const copy = ws.copy;
 
-  const items: MoreItem[] = ([
-    { id: 'analytics' as Page, label: copy.analytics, hint: copy.reportAction, icon: 'chart' as IconName, tone: 'primary' as const },
-    { id: 'measurements' as Page, label: copy.measurements, hint: 'Customer measurement revisions', icon: 'measurements' as IconName, tone: 'violet' as const },
-    { id: 'notifications' as Page, label: copy.notifications, hint: copy.notificationHistory, icon: 'notifications' as IconName, tone: 'mint' as const },
-    { id: 'catalog' as Page, label: 'Catalog', hint: 'Saved items & types', icon: 'catalog' as IconName, tone: 'amber' as const },
-    { id: 'subscription' as Page, label: copy.subscription, hint: copy.subscriptionTitle, icon: 'subscription' as IconName, tone: 'blue' as const },
-    { id: 'business-settings' as Page, label: copy.businessSettings, hint: copy.customizeWorkspace, icon: 'settings' as IconName, tone: 'red' as const },
-    { id: 'settings' as Page, label: copy.settings, hint: copy.appearance, icon: 'palette' as IconName, tone: 'primary' as const },
-  ] as const).filter((item) => {
-    // Hide screens the user doesn't have permission for.
-    if (item.id === 'measurements') return ws.can('measurements:read') && ws.moduleEnabled('measurements');
-    if (item.id === 'notifications') return ws.can('notifications:read') && ws.moduleEnabled('notifications');
-    if (item.id === 'catalog') return ws.can('orders:read') && ws.moduleEnabled('catalog');
-    if (item.id === 'subscription') return ws.can('subscriptions:read');
-    return true;
-  });
+  const items: Array<{ id: NavPage; label: string; hint: string; icon: IconName; tone: Tone; visible: boolean }> = [
+    { id: 'analytics', label: copy.analytics, hint: copy.reportAction, icon: 'chart', tone: 'primary', visible: ws.can('orders:read') },
+    { id: 'customers', label: ws.term('customers', copy.customers), hint: copy.search, icon: 'customers', tone: 'blue', visible: ws.can('customers:read') && ws.moduleEnabled('customers') },
+    { id: 'measurements', label: ws.term('measurements', copy.measurements), hint: copy.latestRevision, icon: 'measurements', tone: 'violet', visible: ws.can('measurements:read') && ws.moduleEnabled('measurements') },
+    { id: 'notifications', label: copy.notifications, hint: copy.notificationHistory, icon: 'notifications', tone: 'mint', visible: ws.can('notifications:read') },
+    { id: 'catalog', label: copy.catalog, hint: copy.catalogHint, icon: 'catalog', tone: 'amber', visible: ws.can('orders:read') && ws.moduleEnabled('catalog') },
+    { id: 'subscription', label: copy.subscription, hint: copy.subscriptionTitle, icon: 'subscription', tone: 'blue', visible: ws.can('subscriptions:read') },
+    { id: 'business-settings', label: copy.businessSettings, hint: copy.customizeWorkspace, icon: 'settings', tone: 'red', visible: true },
+    { id: 'settings', label: copy.settings, hint: copy.appearance, icon: 'palette', tone: 'primary', visible: true },
+  ];
 
   return (
     <>
@@ -49,7 +37,7 @@ export function MoreScreen({ onNavigate }: { onNavigate: (page: Page) => void })
           <Text style={styles.pageSubtitle}>{ws.branding.brandName} · {ws.session?.business.name}</Text>
         </View>
       </View>
-      {items.map((item) => (
+      {items.filter((item) => item.visible).map((item) => (
         <Pressable
           key={item.id}
           accessibilityRole="button"
@@ -72,7 +60,7 @@ export function MoreScreen({ onNavigate }: { onNavigate: (page: Page) => void })
   );
 }
 
-function iconDotStyle(styles: ReturnType<typeof useAppStyles>, tone: 'primary' | 'mint' | 'amber' | 'blue' | 'violet' | 'red') {
+function iconDotStyle(styles: ReturnType<typeof useAppStyles>, tone: Tone) {
   switch (tone) {
     case 'mint': return styles.iconDotMint;
     case 'amber': return styles.iconDotAmber;
@@ -83,12 +71,7 @@ function iconDotStyle(styles: ReturnType<typeof useAppStyles>, tone: 'primary' |
   }
 }
 
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-void capitalize; // silence "unused" warning when refactored
-
-function iconColor(palette: any, tone: 'primary' | 'mint' | 'amber' | 'blue' | 'violet' | 'red'): string {
+function iconColor(palette: ReturnType<typeof useAppTheme>['palette'], tone: Tone): string {
   switch (tone) {
     case 'mint': return palette.success;
     case 'amber': return palette.warning;
