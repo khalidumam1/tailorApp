@@ -84,7 +84,7 @@ router.post('/setup', requireBusinessPermission('cashbook:write'), asyncHandler(
     await audit(tx, businessId, actorId, 'cashbook.accounts_initialized', 'financial_account', created.get('CASH')!.id, req.requestId, {
       systemCashAccountCount: [...created.values()].filter((account) => ['CASH', 'BANK', 'DIGITAL'].includes(account.systemKey ?? '')).length,
     });
-    return [...created.entries()].map(([systemKey, account]) => ({ systemKey, ...account }));
+    return [...created.values()];
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 20_000, timeout: 30_000 });
   res.json({ data: { accounts } });
 }));

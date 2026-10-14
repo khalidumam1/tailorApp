@@ -114,7 +114,7 @@ router.post('/setup', requireBusinessPermission('accounting:manage'), asyncHandl
     await audit(tx, businessId, actorId, 'accounting.chart_initialized', 'financial_account', [...created.values()][0]!.id, req.requestId, {
       systemAccountCount: created.size,
     });
-    return [...created.entries()].map(([systemKey, account]) => ({ systemKey, ...account }));
+    return [...created.values()];
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 20_000, timeout: 30_000 });
   res.json({ data: { accounts } });
 }));
