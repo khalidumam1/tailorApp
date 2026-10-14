@@ -1239,7 +1239,7 @@ model CashTransaction {
 
   @@unique([id, businessId])
   @@unique([businessId, idempotencyKey])
-  @@unique([businessId, journalEntryId])
+  @@unique([journalEntryId, businessId])
   @@index([businessId, financialAccountId, occurredAt])
 }
 
@@ -1259,7 +1259,7 @@ model FinancialOpeningBalance {
 
   @@unique([businessId, accountId])
   @@unique([businessId, idempotencyKey])
-  @@unique([businessId, journalEntryId])
+  @@unique([journalEntryId, businessId])
 }
 
 model BankReconciliation {
