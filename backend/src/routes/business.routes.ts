@@ -415,7 +415,7 @@ router.put('/configuration', requireBusinessPermission('settings:manage'), async
         },
       });
       return configuration;
-    });
+    }, { maxWait: 20_000, timeout: 30_000 });
     res.json({ data: saved });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
