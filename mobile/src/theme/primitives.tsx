@@ -82,6 +82,7 @@ export function Field({
   secureTextEntry,
   editable = true,
   helper,
+  maxLength,
 }: {
   label: string;
   value: string;
@@ -92,6 +93,7 @@ export function Field({
   secureTextEntry?: boolean;
   editable?: boolean;
   helper?: string;
+  maxLength?: number;
 }) {
   const styles = useAppStyles();
   const { palette } = useAppTheme();
@@ -104,6 +106,7 @@ export function Field({
         autoCorrect={false}
         keyboardType={keyboardType}
         editable={editable}
+        maxLength={maxLength}
         multiline={multiline}
         onChangeText={onChangeText}
         placeholder={placeholder ?? label}

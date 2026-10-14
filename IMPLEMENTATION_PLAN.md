@@ -26,7 +26,7 @@ Authenticate users with Argon2id passwords, short-lived signed access tokens and
 
 ### Initial audit classification
 
-- **A — Reusable core:** tenant-scoped customers, memberships and permissions, financial ledger, subscription lifecycle, WhatsApp sender/history, audit trail, and idempotent synchronization.
+- **A — Reusable core:** tenant-scoped customers, memberships and permissions, order-payment/reversal records (not a double-entry ledger), subscription lifecycle, WhatsApp sender/history, audit trail, and idempotent synchronization.
 - **B — Tailor template:** measurement terminology/templates, garment item labels, the current order status vocabulary, dashboard copy, and tailor staff labels.
 - **C — Refactor incrementally:** globally fixed order/payment/notification enums, web/mobile Tailor labels and screens, and the currently incomplete mobile offline operation coverage. Preserve their behavior until generic replacements are fully verified.
 
@@ -124,3 +124,42 @@ The runner applies migrations and the existing development seed only to that iso
 
 - Exposed the existing tenant-scoped, permission-checked configuration history API in Business Admin settings. Administrators can page through immutable snapshots of published business settings, custom fields, and workflows.
 - History entries are read-only, and stale requests are discarded when the active business session changes to prevent one tenant's history appearing in another tenant's settings.
+
+## ERP architecture audit and module-entitlement continuation (2026-10-13)
+
+- The initial ERP audit is documented in [`docs/ERP_ARCHITECTURE_AUDIT.md`](docs/ERP_ARCHITECTURE_AUDIT.md). It confirms the existing stack and reusable tenant/template/order/payment foundation, and records the absent inventory, purchasing, general cashbook, accounts, double-entry ledger and accounting-report domains.
+- Clarified the earlier classification: existing Decimal order-payment/reversal rows are not a general financial ledger or double-entry accounting.
+- Added platform-owned per-business module allow-lists using the existing `BusinessSetting` table; old businesses without an override keep their current template defaults. Updates are permission-checked, transactionally audited and bump the tenant configuration version for cache invalidation. The stored tenant module selection and operational records are retained when the platform temporarily disables a module.
+- Effective access is bounded by template support, platform entitlement and tenant selection. Existing business routes are guarded server-side; offline sync pull/new pushes and notification dispatch also apply the policy, while committed sync retries retain their idempotent receipts. Dashboard/report and order payment-derived data are gated by module access and permissions. Web/mobile navigation is filtered, direct app navigation is rejected, and open pages reset when their access is removed. The platform business directory includes module controls.
+- Four pure module-policy tests pass; module-policy plus isolated-database-safety tests pass (7/7). Latest checks: web typecheck/production build pass; mobile typecheck, Android/iOS Expo JS exports and unit suite pass (9/9); selected backend non-database tests pass (19/19); backend source/test syntax/transpile check passes (51 TypeScript files); `git diff --check` passes. Backend typecheck is blocked at Prisma client generation by the unreachable Prisma engine download. Three additional Prisma-dependent test files could not load without the generated client. No isolated `TEST_DATABASE_URL`, local PostgreSQL or Docker is available, so no migration, seed, or database-backed test was run. Full details are in [`docs/ERP_ARCHITECTURE_AUDIT.md`](docs/ERP_ARCHITECTURE_AUDIT.md).
+- This was the 2026-10-13 module-entitlement checkpoint. Its statement that ERP workflows had not yet been added is historical and is superseded by the 2026-10-14 ERP implementation continuation below. The migration and database-backed acceptance are still pending; see the verification limits there and in [`docs/ERP_ARCHITECTURE_AUDIT.md`](docs/ERP_ARCHITECTURE_AUDIT.md).
+
+## ERP implementation continuation (2026-10-14)
+
+This increment extends the existing product rather than rebuilding its tenant, configuration, catalog, payment or navigation layers. It adds the ERP workflows described in the architecture audit. Source code and migration artifacts are present in the working tree; because an isolated PostgreSQL instance is unavailable and Prisma engine download is blocked, database rollout and persistence behavior remain unverified.
+
+### Delivered in source
+
+- Added a forward-only migration, `backend/prisma/migrations/20261013100000_inventory_purchasing_accounting/`, and matching Prisma models for stock items/variants, locations, balances and movements; suppliers, purchase orders/lines, receipts and settlements; financial accounts, journals/lines, cash transactions, opening balances and bank-reconciliation matches. It also adds explicit tenant-composite relations, permission rows, role grants for business admins, per-business module-policy defaults, and one default inventory location per existing business. **This new migration has not been applied or tested in this environment.**
+- Added API routes under `/api/v1/inventory`, `/suppliers`, `/purchases`, `/cashbook` and `/accounting`. They derive tenant identity from authenticated business context, enforce permissions and effective module gates server-side, and use database transactions, Decimal values, idempotency/source keys, audit events, and forward-only reversals for posted history.
+- Inventory workflows cover variants, opening balances, receipts, consumption, customer/supplier returns, wastage, transfers, manual adjustments, weighted-average costing, location balances, valuation, movement history and reorder alerts. Opening stock is first-time-only; positive manual adjustments use the location's current average cost unless an override is entered, and an empty location requires a cost. Valuation table cells now use the typed server-calculated value rather than multiplying client-side.
+- Supplier and purchasing workflows cover active/inactive supplier records, supplier ledgers, purchase orders, partial receipt, and supplier payments/refunds. Open line quantities, outstanding payables and refund capacity are computed server-side and returned as typed display data, avoiding client-side financial arithmetic.
+- Cashbook/accounting workflows cover cash/bank/other accounts, opening balances, receipts, expenses, transfers, account/category administration, bank-statement reconciliation, balanced journal postings and explicit reversals. Operational postings connect inventory receipts, purchase settlements, expenses/transfers and customer order/payment events. Unpaid sales are posted to receivables rather than cash.
+- Added trial-balance, profit/loss, balance-sheet, stock-valuation, reorder-alert and supplier-ledger views. Web and mobile include the corresponding ERP navigation and practical entry/history screens. Web downloads starter inventory and supplier CSV worksheets only; there is no CSV import workflow.
+- The web application's global styling work applies the user-requested shadcn-admin visual direction across existing as well as ERP screens; no claim of pixel-identical visual acceptance is made without a browser/design review.
+
+### Verification at this continuation
+
+- `npm run typecheck --workspace @tailor/web` — passed.
+- `npm run typecheck --workspace @tailor/mobile` — passed.
+- Web production build — passed with a non-fatal Vite chunk-size warning; mobile unit suite — 9 passed, 0 failed.
+- Focused backend non-database suite (`erp-finance`, `inventory-costing`, `business-modules`, `isolated-test-database`) — 13 passed, 0 failed.
+- Backend source/test TypeScript syntax transpile — 63 files, 0 diagnostics; `git diff --check` — passed.
+- Full backend typecheck remains blocked before TypeScript checking because `prisma generate` cannot download the Prisma schema engine/checksum (TLS/network failure). Do not treat transpile-only validation as typechecking.
+- The new ERP migration has not been applied; no seed, isolated DB integration test, database-backed test, or report cross-check was run. `TEST_DATABASE_URL`, local PostgreSQL and Docker are unavailable. Never use the configured/shared application datasource for test migrations.
+
+### Still required before release
+
+- Provision a disposable local PostgreSQL database and seed identities; validate the entire migration chain and generated Prisma client there, then run ERP tenant-isolation, idempotency, concurrency, rollback/reversal, partial receipt/settlement, opening-balance and report cross-check tests.
+- Review exact ledger semantics and migration impact against preserved business records, and exercise the platform/business module-permission matrix in end-to-end web/mobile flows. Verify the referenced shadcn-admin theme visually against the requested reference across all web routes.
+- The templates are planning worksheets, not import tooling. No real online-bank connection, tax calculation, statutory/accounting compliance certification or regulatory review is implemented or claimed.

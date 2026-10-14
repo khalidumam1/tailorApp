@@ -31,6 +31,7 @@ const catalogItemSchema = z.object({
   sku: z.string().nullable(),
   unit: z.string(),
   unitPrice: z.string().nullable(),
+  stockVariantId: z.string().uuid().nullable(),
   sortOrder: z.number().int(),
   version: z.number().int(),
   active: z.boolean(),
@@ -54,8 +55,8 @@ const orderSchema = z.object({
   }).nullable().optional(),
   version: z.number().int(),
   total: z.string(),
-  paid: z.string(),
-  outstanding: z.string(),
+  paid: z.string().optional(),
+  outstanding: z.string().optional(),
   promisedAt: z.string(),
   createdAt: z.string(),
   customer: customerSummarySchema,
@@ -150,6 +151,160 @@ const paymentSchema = z.object({
   }),
 });
 
+const erpAccountSchema = z.object({
+  id: z.string().uuid(),
+  businessId: z.string().uuid(),
+  code: z.string(),
+  name: z.string(),
+  description: z.string().nullable().optional(),
+  type: z.enum(['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']),
+  systemKey: z.string().nullable().optional(),
+  isSystem: z.boolean().optional(),
+  cashbookEnabled: z.boolean().optional(),
+  active: z.boolean().optional(),
+  version: z.number().int().optional(),
+  balance: z.string().optional(),
+});
+const accountingJournalSchema = z.object({
+  id: z.string().uuid(),
+  entryNumber: z.string(),
+  entryDate: z.string(),
+  memo: z.string(),
+  sourceType: z.string(),
+  status: z.string(),
+  reversalOfId: z.string().uuid().nullable(),
+  lines: z.array(z.object({
+    id: z.string().uuid(),
+    accountId: z.string().uuid(),
+    debit: z.string(),
+    credit: z.string(),
+    memo: z.string().nullable(),
+    account: z.object({ id: z.string().uuid(), code: z.string(), name: z.string(), type: z.string() }),
+  })),
+});
+const inventoryVariantSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  sku: z.string().nullable(),
+  active: z.boolean(),
+  balances: z.array(z.object({
+    id: z.string().uuid(),
+    quantity: z.string(),
+    averageUnitCost: z.string(),
+    location: z.object({ id: z.string().uuid(), code: z.string(), name: z.string() }),
+  })),
+});
+const inventoryItemSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.enum(['MATERIAL', 'PRODUCT', 'SUPPLY']),
+  name: z.string(),
+  description: z.string().nullable(),
+  baseUnit: z.string(),
+  reorderPoint: z.string().nullable(),
+  version: z.number().int(),
+  active: z.boolean(),
+  variants: z.array(inventoryVariantSchema),
+});
+const inventoryValuationItemSchema = z.object({
+  variant: z.object({ id: z.string().uuid(), name: z.string(), sku: z.string().nullable(), stockItem: z.object({
+    id: z.string().uuid(), name: z.string(), kind: z.string(), baseUnit: z.string(), reorderPoint: z.string().nullable(),
+  }) }),
+  location: z.object({ id: z.string().uuid(), code: z.string(), name: z.string() }),
+  quantity: z.string(), averageUnitCost: z.string(), value: z.string(), reorderPoint: z.string().nullable(), lowStock: z.boolean(),
+});
+const inventoryMovementSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.string(),
+  quantity: z.string(),
+  unitCost: z.string(),
+  occurredAt: z.string(),
+  sourceType: z.string(),
+  sourceId: z.string(),
+  note: z.string().nullable(),
+  variant: z.object({ id: z.string().uuid(), name: z.string(), stockItem: z.object({ id: z.string().uuid(), name: z.string(), baseUnit: z.string() }) }).optional(),
+  location: z.object({ id: z.string().uuid(), code: z.string(), name: z.string() }).optional(),
+});
+const supplierSchema = z.object({
+  id: z.string().uuid(),
+  code: z.string(),
+  name: z.string(),
+  contactName: z.string().nullable().optional(),
+  phone: z.string().nullable(),
+  email: z.string().nullable(),
+  address: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  version: z.number().int(),
+  active: z.boolean(),
+  _count: z.object({ purchaseOrders: z.number().int(), settlements: z.number().int() }).optional(),
+});
+const supplierLedgerSchema = z.object({
+  supplier: z.object({ id: z.string().uuid(), code: z.string(), name: z.string(), phone: z.string().nullable(), email: z.string().nullable() }),
+  entries: z.array(z.object({
+    id: z.string().uuid(), kind: z.string(), occurredAt: z.string(), amount: z.string(), reference: z.string().nullable(),
+    purchaseOrderNumber: z.string().nullable(), note: z.string().nullable(), runningBalance: z.string(),
+  })),
+  balance: z.string(),
+});
+const purchaseOrderSchema = z.object({
+  id: z.string().uuid(),
+  orderNumber: z.string(),
+  status: z.enum(['DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED']),
+  orderedAt: z.string(),
+  dueAt: z.string().nullable(),
+  subtotal: z.string(),
+  taxAmount: z.string(),
+  total: z.string(),
+  notes: z.string().nullable(),
+  receivedTotal: z.string().optional(),
+  outstanding: z.string().optional(),
+  hasOutstanding: z.boolean().optional(),
+  refundCapacity: z.string().optional(),
+  hasRefundCapacity: z.boolean().optional(),
+  supplier: z.object({ id: z.string().uuid(), code: z.string(), name: z.string() }),
+  lines: z.array(z.object({
+    id: z.string().uuid(),
+    variantId: z.string().uuid(),
+    description: z.string(),
+    orderedQuantity: z.string(),
+    receivedQuantity: z.string(),
+    remainingQuantity: z.string().optional(),
+    hasRemainingQuantity: z.boolean().optional(),
+    unitCost: z.string(),
+    lineTotal: z.string(),
+    variant: z.object({ id: z.string().uuid(), name: z.string(), stockItem: z.object({ name: z.string(), baseUnit: z.string() }) }),
+  })),
+  receipts: z.array(z.object({ id: z.string().uuid(), receiptNumber: z.string(), receivedAt: z.string(), total: z.string() })).optional(),
+  settlements: z.array(z.object({ id: z.string().uuid(), kind: z.enum(['PAYMENT', 'REFUND']), amount: z.string(), occurredAt: z.string() })).optional(),
+});
+const cashTransactionSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.enum(['RECEIPT', 'EXPENSE', 'TRANSFER']),
+  amount: z.string(),
+  occurredAt: z.string(),
+  reference: z.string().nullable(),
+  memo: z.string(),
+  financialAccount: z.object({ id: z.string().uuid(), code: z.string(), name: z.string() }).optional(),
+  contraAccount: z.object({ id: z.string().uuid(), code: z.string(), name: z.string() }).optional(),
+  journalEntry: z.object({ id: z.string().uuid(), entryNumber: z.string() }).nullable().optional(),
+});
+const trialBalanceRowSchema = z.object({
+  accountId: z.string().uuid(), code: z.string(), name: z.string(), type: z.string(),
+  debitBalance: z.string(), creditBalance: z.string(),
+});
+const profitLossSchema = z.object({
+  from: z.string().nullable(), to: z.string().nullable(),
+  income: z.array(z.object({ accountId: z.string().uuid(), code: z.string(), name: z.string(), amount: z.string() })),
+  expenses: z.array(z.object({ accountId: z.string().uuid(), code: z.string(), name: z.string(), amount: z.string() })),
+  totalIncome: z.string(), totalExpenses: z.string(), netProfit: z.string(), currency: z.string(),
+});
+const balanceSheetSchema = z.object({
+  asOf: z.string().nullable(),
+  assets: z.array(z.object({ accountId: z.string().uuid(), code: z.string(), name: z.string(), balance: z.string() })),
+  liabilities: z.array(z.object({ accountId: z.string().uuid(), code: z.string(), name: z.string(), balance: z.string() })),
+  equity: z.array(z.object({ accountId: z.string().uuid(), code: z.string(), name: z.string(), balance: z.string() })),
+  currentEarnings: z.string(), totalAssets: z.string(), totalLiabilities: z.string(), totalEquity: z.string(), liabilitiesAndEquity: z.string(), currency: z.string(),
+});
+
 const notificationSchema = z.object({
   id: z.string().uuid(),
   customerId: z.string().uuid().nullable(),
@@ -212,6 +367,17 @@ const platformBusinessSchema = z.object({
   owner: z.object({ id: z.string().uuid(), name: z.string(), email: z.string() }).nullable().optional(),
   /** Memberships with access today (removed members are excluded). */
   activeMemberships: z.number().int().optional(),
+});
+
+const platformBusinessModulesSchema = z.object({
+  business: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    slug: z.string(),
+    template: z.object({ key: z.string(), name: z.string() }).nullable(),
+  }),
+  availableModules: z.array(z.string()),
+  enabledModules: z.array(z.string()),
 });
 
 const platformBusinessMemberSchema = z.object({
@@ -576,6 +742,18 @@ const errorSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
 }).passthrough();
 
+export type ErpAccount = z.infer<typeof erpAccountSchema>;
+export type InventoryItem = z.infer<typeof inventoryItemSchema>;
+export type InventoryValuationItem = z.infer<typeof inventoryValuationItemSchema>;
+export type InventoryMovement = z.infer<typeof inventoryMovementSchema>;
+export type Supplier = z.infer<typeof supplierSchema>;
+export type SupplierLedger = z.infer<typeof supplierLedgerSchema>;
+export type PurchaseOrder = z.infer<typeof purchaseOrderSchema>;
+export type CashTransaction = z.infer<typeof cashTransactionSchema>;
+export type TrialBalanceRow = z.infer<typeof trialBalanceRowSchema>;
+export type AccountingJournal = z.infer<typeof accountingJournalSchema>;
+export type ProfitLossReport = z.infer<typeof profitLossSchema>;
+export type BalanceSheetReport = z.infer<typeof balanceSheetSchema>;
 export type Customer = z.infer<typeof customerSchema>;
 export type CatalogItem = z.infer<typeof catalogItemSchema>;
 export type Order = z.infer<typeof orderSchema>;
@@ -587,6 +765,7 @@ export type Payment = z.infer<typeof paymentSchema>;
 export type WhatsAppNotification = z.infer<typeof notificationSchema>;
 export type Receipt = z.infer<typeof receiptSchema>;
 export type PlatformBusiness = z.infer<typeof platformBusinessSchema>;
+export type PlatformBusinessModules = z.infer<typeof platformBusinessModulesSchema>;
 export type PlatformBusinessMember = z.infer<typeof platformBusinessMemberSchema>;
 export type PlatformBusinessMembers = {
   business: { id: string; name: string; slug: string; status: PlatformBusiness['status'] };
@@ -835,6 +1014,178 @@ export const api = {
   dashboard(token: string) {
     return request('/reports/dashboard', dashboardSchema, { token });
   },
+  inventoryItems(token: string, query = '', includeInactive = false) {
+    const params = new URLSearchParams({ limit: '100' });
+    if (query) params.set('q', query);
+    if (includeInactive) params.set('includeInactive', 'true');
+    return request(`/inventory/items?${params}`, z.object({ items: z.array(inventoryItemSchema) }), { token });
+  },
+  inventoryValuation(token: string) {
+    return request('/inventory/valuation', z.object({ totalValue: z.string(), currency: z.string(), items: z.array(inventoryValuationItemSchema) }), { token });
+  },
+  inventoryReorderAlerts(token: string) {
+    return request('/inventory/reorder-alerts', z.object({
+      items: z.array(z.object({ variantId: z.string().uuid(), itemId: z.string().uuid(), itemName: z.string(), variantName: z.string(), kind: z.string(), quantity: z.string(), reorderPoint: z.string(), unit: z.string() })),
+      count: z.number().int(),
+    }), { token });
+  },
+  inventoryMovements(token: string, query: { variantId?: string; limit?: number } = {}) {
+    const params = new URLSearchParams({ limit: String(query.limit ?? 50) });
+    if (query.variantId) params.set('variantId', query.variantId);
+    return request(`/inventory/movements?${params}`, z.object({ items: z.array(inventoryMovementSchema), nextCursor: z.string().nullable() }), { token });
+  },
+  inventoryLocations(token: string) {
+    return request('/inventory/locations', z.object({ items: z.array(z.object({ id: z.string().uuid(), code: z.string(), name: z.string(), isDefault: z.boolean(), active: z.boolean() })) }), { token });
+  },
+  createInventoryLocation(token: string, input: { code: string; name: string }) {
+    return request('/inventory/locations', z.object({ id: z.string().uuid(), code: z.string(), name: z.string(), isDefault: z.boolean(), active: z.boolean() }), { token, method: 'POST', body: input });
+  },
+  createInventoryItem(token: string, input: {
+    kind: 'MATERIAL' | 'PRODUCT' | 'SUPPLY'; name: string; description?: string | null; baseUnit: string;
+    reorderPoint?: string | null; variant?: { name?: string; sku?: string | null; attributes?: Record<string, unknown>; opening?: { quantity: string; unitCost: string; locationId?: string } };
+  }, idempotencyKey: string = crypto.randomUUID()) {
+    return request('/inventory/items', inventoryItemSchema, { token, method: 'POST', body: input, idempotencyKey });
+  },
+  createInventoryVariant(token: string, itemId: string, input: {
+    name: string; sku?: string | null; attributes?: Record<string, unknown>;
+    opening?: { quantity: string; unitCost: string; locationId?: string };
+  }, idempotencyKey: string = crypto.randomUUID()) {
+    return request(`/inventory/items/${itemId}/variants`, inventoryVariantSchema, { token, method: 'POST', body: input, idempotencyKey });
+  },
+  createInventoryMovement(token: string, input: {
+    variantId: string; locationId?: string; kind: 'OPENING' | 'RECEIPT' | 'CONSUMPTION' | 'CUSTOMER_RETURN' | 'SUPPLIER_RETURN' | 'WASTAGE' | 'ADJUSTMENT';
+    direction?: 'IN' | 'OUT'; quantity: string; unitCost?: string; counterAccountId?: string; note?: string; occurredAt?: string;
+  }, idempotencyKey: string = crypto.randomUUID()) {
+    return request('/inventory/movements', inventoryMovementSchema, { token, method: 'POST', body: input, idempotencyKey });
+  },
+  transferInventory(token: string, input: { variantId: string; fromLocationId: string; toLocationId: string; quantity: string; note?: string; occurredAt?: string }, idempotencyKey: string = crypto.randomUUID()) {
+    return request('/inventory/transfers', z.object({ movedOut: inventoryMovementSchema, movedIn: inventoryMovementSchema }), { token, method: 'POST', body: input, idempotencyKey });
+  },
+  reverseInventoryMovement(token: string, movementId: string, reason: string, idempotencyKey: string = crypto.randomUUID()) {
+    return request(`/inventory/movements/${movementId}/reversals`, inventoryMovementSchema, { token, method: 'POST', body: { reason }, idempotencyKey });
+  },
+  suppliers(token: string, query = '', includeInactive = false) {
+    const params = new URLSearchParams({ limit: '100' });
+    if (query) params.set('q', query);
+    if (includeInactive) params.set('includeInactive', 'true');
+    return request(`/suppliers?${params}`, z.object({ items: z.array(supplierSchema), nextCursor: z.string().nullable() }), { token });
+  },
+  createSupplier(token: string, input: { name: string; contactName?: string | null; phone?: string | null; email?: string | null; address?: string | null; notes?: string | null }, idempotencyKey: string = crypto.randomUUID()) {
+    return request('/suppliers', supplierSchema, { token, method: 'POST', body: input, idempotencyKey });
+  },
+  updateSupplier(token: string, supplierId: string, input: { version: number; name?: string; contactName?: string | null; phone?: string | null; email?: string | null; address?: string | null; notes?: string | null; active?: boolean }) {
+    return request(`/suppliers/${supplierId}`, supplierSchema, { token, method: 'PATCH', body: input });
+  },
+  supplierLedger(token: string, supplierId: string) {
+    return request(`/suppliers/${supplierId}/ledger`, supplierLedgerSchema, { token });
+  },
+  purchases(token: string, query = '') {
+    const params = new URLSearchParams({ limit: '100' });
+    if (query) params.set('q', query);
+    return request(`/purchases?${params}`, z.object({ items: z.array(purchaseOrderSchema) }), { token });
+  },
+  createPurchaseOrder(token: string, input: { supplierId: string; orderedAt?: string; dueAt?: string | null; notes?: string | null; lines: Array<{ variantId: string; description?: string; quantity: string; unitCost: string }> }, idempotencyKey: string = crypto.randomUUID()) {
+    return request('/purchases', purchaseOrderSchema, { token, method: 'POST', body: input, idempotencyKey });
+  },
+  receivePurchaseOrder(token: string, purchaseOrderId: string, input: { invoiceReference?: string | null; receivedAt?: string; lines: Array<{ purchaseOrderLineId: string; quantity: string; unitCost?: string; locationId?: string }> }, idempotencyKey: string = crypto.randomUUID()) {
+    return request(`/purchases/${purchaseOrderId}/receive`, z.unknown(), { token, method: 'POST', body: input, idempotencyKey });
+  },
+  settlePurchaseOrder(token: string, purchaseOrderId: string, input: { kind: 'PAYMENT' | 'REFUND'; financialAccountId: string; amount: string; reference?: string | null; note?: string | null; occurredAt?: string }, idempotencyKey: string = crypto.randomUUID()) {
+    return request(`/purchases/${purchaseOrderId}/settlements`, z.unknown(), { token, method: 'POST', body: input, idempotencyKey });
+  },
+  cashbookSetup(token: string) {
+    return request('/cashbook/setup', z.object({ accounts: z.array(erpAccountSchema) }), { token, method: 'POST' });
+  },
+  cashbookAccounts(token: string) {
+    return request('/cashbook/accounts', z.object({ items: z.array(erpAccountSchema), setupRequired: z.boolean() }), { token });
+  },
+  cashbookCategories(token: string) {
+    return request('/cashbook/categories', z.object({ items: z.array(erpAccountSchema) }), { token });
+  },
+  createCashbookAccount(token: string, input: { code: string; name: string; description?: string | null }) {
+    return request('/cashbook/accounts', erpAccountSchema, { token, method: 'POST', body: input });
+  },
+  updateCashbookAccount(token: string, accountId: string, input: { version: number; name?: string; description?: string | null }) {
+    return request(`/cashbook/accounts/${accountId}`, erpAccountSchema, { token, method: 'PATCH', body: input });
+  },
+  setCashbookOpeningBalance(token: string, accountId: string, input: { amount: string; asOf: string }, idempotencyKey: string = crypto.randomUUID()) {
+    return request(`/cashbook/accounts/${accountId}/opening`, z.unknown(), { token, method: 'POST', body: input, idempotencyKey });
+  },
+  createCashbookCategory(token: string, input: { code: string; name: string; type: 'INCOME' | 'EXPENSE' }) {
+    return request('/cashbook/categories', erpAccountSchema, { token, method: 'POST', body: input });
+  },
+  updateCashbookCategory(token: string, accountId: string, input: { version: number; name?: string; description?: string | null }) {
+    return request(`/cashbook/categories/${accountId}`, erpAccountSchema, { token, method: 'PATCH', body: input });
+  },
+  cashbookTransactions(token: string, query: { accountId?: string; limit?: number } = {}) {
+    const params = new URLSearchParams({ limit: String(query.limit ?? 100) });
+    if (query.accountId) params.set('accountId', query.accountId);
+    return request(`/cashbook/transactions?${params}`, z.object({ items: z.array(cashTransactionSchema) }), { token });
+  },
+  createCashbookTransaction(token: string, input: { kind: 'RECEIPT' | 'EXPENSE' | 'TRANSFER'; financialAccountId: string; contraAccountId: string; amount: string; occurredAt?: string; reference?: string | null; memo: string }, idempotencyKey: string = crypto.randomUUID()) {
+    return request('/cashbook/transactions', cashTransactionSchema, { token, method: 'POST', body: input, idempotencyKey });
+  },
+  cashbookReconciliations(token: string) {
+    return request('/cashbook/reconciliations', z.object({ items: z.array(z.object({
+      id: z.string().uuid(), accountId: z.string().uuid(), statementStart: z.string(), statementEnd: z.string(),
+      openingBalance: z.string(), closingBalance: z.string(), status: z.enum(['OPEN', 'CLOSED']), closedAt: z.string().nullable(),
+      account: z.object({ id: z.string().uuid(), code: z.string(), name: z.string() }),
+      _count: z.object({ matches: z.number().int() }),
+    })) }), { token });
+  },
+  startBankReconciliation(token: string, input: { accountId: string; statementStart: string; statementEnd: string; openingBalance: string; closingBalance: string }, idempotencyKey: string = crypto.randomUUID()) {
+    return request('/cashbook/reconciliations', z.unknown(), { token, method: 'POST', body: input, idempotencyKey });
+  },
+  bankReconciliationLines(token: string, reconciliationId: string) {
+    return request(`/cashbook/reconciliations/${reconciliationId}/lines`, z.object({
+      reconciliation: z.object({ id: z.string().uuid(), status: z.enum(['OPEN', 'CLOSED']), accountId: z.string().uuid(), openingBalance: z.string(), closingBalance: z.string() }),
+      items: z.array(z.object({ id: z.string().uuid(), debit: z.string(), credit: z.string(), matched: z.boolean(), signedAmount: z.string(), journalEntry: z.object({ id: z.string().uuid(), entryNumber: z.string(), entryDate: z.string(), memo: z.string(), sourceType: z.string() }) })),
+    }), { token });
+  },
+  matchBankReconciliationLines(token: string, reconciliationId: string, journalLineIds: string[]) {
+    return request(`/cashbook/reconciliations/${reconciliationId}/matches`, z.object({ matchedCount: z.number().int() }), { token, method: 'POST', body: { journalLineIds } });
+  },
+  closeBankReconciliation(token: string, reconciliationId: string) {
+    return request(`/cashbook/reconciliations/${reconciliationId}/close`, z.unknown(), { token, method: 'POST' });
+  },
+  accountingSetup(token: string) {
+    return request('/accounting/setup', z.object({ accounts: z.array(erpAccountSchema) }), { token, method: 'POST' });
+  },
+  accountingAccounts(token: string) {
+    return request('/accounting/accounts', z.object({ items: z.array(erpAccountSchema), setupRequired: z.boolean() }), { token });
+  },
+  createAccountingAccount(token: string, input: { code: string; name: string; type: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE'; description?: string | null; cashbookEnabled?: boolean; parentId?: string | null }) {
+    return request('/accounting/accounts', erpAccountSchema, { token, method: 'POST', body: input });
+  },
+  updateAccountingAccount(token: string, accountId: string, input: { version: number; name?: string; description?: string | null; active?: boolean; cashbookEnabled?: boolean; parentId?: string | null }) {
+    return request(`/accounting/accounts/${accountId}`, erpAccountSchema, { token, method: 'PATCH', body: input });
+  },
+  accountingJournals(token: string, query: { from?: string; to?: string; limit?: number } = {}) {
+    const params = new URLSearchParams({ limit: String(query.limit ?? 100) });
+    if (query.from) params.set('from', query.from);
+    if (query.to) params.set('to', query.to);
+    return request(`/accounting/journals?${params}`, z.object({ items: z.array(accountingJournalSchema), nextCursor: z.string().nullable() }), { token });
+  },
+  postAccountingJournal(token: string, input: { entryDate?: string; memo: string; lines: Array<{ accountId: string; debit: string; credit: string; memo?: string }> }, idempotencyKey: string = crypto.randomUUID()) {
+    return request('/accounting/journals', z.unknown(), { token, method: 'POST', body: input, idempotencyKey });
+  },
+  reverseAccountingJournal(token: string, entryId: string, reason: string, idempotencyKey: string = crypto.randomUUID()) {
+    return request(`/accounting/journals/${entryId}/reversals`, z.unknown(), { token, method: 'POST', body: { reason }, idempotencyKey });
+  },
+  trialBalance(token: string, asOf?: string) {
+    const params = asOf ? `?${new URLSearchParams({ asOf })}` : '';
+    return request(`/accounting/reports/trial-balance${params}`, z.object({ asOf: z.string().nullable(), items: z.array(trialBalanceRowSchema), debitTotal: z.string(), creditTotal: z.string(), currency: z.string() }), { token });
+  },
+  profitLoss(token: string, range: { from?: string; to?: string } = {}) {
+    const params = new URLSearchParams();
+    if (range.from) params.set('from', range.from);
+    if (range.to) params.set('to', range.to);
+    return request(`/accounting/reports/profit-loss${params.size ? `?${params}` : ''}`, profitLossSchema, { token });
+  },
+  balanceSheet(token: string, asOf?: string) {
+    const params = asOf ? `?${new URLSearchParams({ asOf })}` : '';
+    return request(`/accounting/reports/balance-sheet${params}`, balanceSheetSchema, { token });
+  },
   customers(token: string, query = '') {
     const params = new URLSearchParams({ limit: '100' });
     if (query) params.set('q', query);
@@ -856,6 +1207,7 @@ export const api = {
     sku?: string;
     unit: string;
     unitPrice?: string;
+    stockVariantId?: string | null;
     sortOrder: number;
     customFields: Record<string, unknown>;
   }) {
@@ -869,6 +1221,7 @@ export const api = {
     sku?: string | null;
     unit?: string;
     unitPrice?: string | null;
+    stockVariantId?: string | null;
     sortOrder?: number;
     active?: boolean;
     customFields?: Record<string, unknown>;
@@ -900,11 +1253,12 @@ export const api = {
     if (query) params.set('q', query);
     return request(`/orders?${params}`, z.object({ items: z.array(orderSchema), nextCursor: z.string().nullable() }), { token });
   },
-  createOrder(token: string, input: OrderInput) {
+  createOrder(token: string, input: OrderInput, idempotencyKey: string = crypto.randomUUID()) {
     return request('/orders', orderSchema.omit({ paid: true, outstanding: true }), {
       token,
       method: 'POST',
       body: input,
+      idempotencyKey,
     });
   },
   transitionOrder(token: string, order: Order, toStatus: Order['status']) {
@@ -1018,6 +1372,16 @@ export const api = {
       items: z.array(platformBusinessSchema),
       nextCursor: z.string().nullable(),
     }), { token });
+  },
+  platformBusinessModules(token: string, businessId: string) {
+    return request(`/platform/businesses/${businessId}/modules`, platformBusinessModulesSchema, { token });
+  },
+  setPlatformBusinessModules(token: string, businessId: string, enabledModules: string[]) {
+    return request(`/platform/businesses/${businessId}/modules`, platformBusinessModulesSchema.extend({ unchanged: z.boolean().optional() }), {
+      token,
+      method: 'PUT',
+      body: { enabledModules },
+    });
   },
   platformTemplates(token: string) {
     return request('/platform/templates', z.object({ items: z.array(businessTemplateSchema) }), { token });

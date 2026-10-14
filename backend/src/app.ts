@@ -29,6 +29,11 @@ import businessRoutes from './routes/business.routes.js';
 import catalogRoutes from './routes/catalog.routes.js';
 import businessStructureRoutes from './routes/business-structure.routes.js';
 import staffRoutes from './routes/staff.routes.js';
+import inventoryRoutes from './routes/inventory.routes.js';
+import suppliersRoutes from './routes/suppliers.routes.js';
+import purchasesRoutes from './routes/purchases.routes.js';
+import accountingRoutes from './routes/accounting.routes.js';
+import cashbookRoutes from './routes/cashbook.routes.js';
 
 declare global {
   namespace Express {
@@ -141,6 +146,11 @@ app.use('/api/v1/platform/templates', templateRoutes);
 app.use('/api/v1/business', businessStructureRoutes);
 app.use('/api/v1/business', staffRoutes);
 app.use('/api/v1/business', businessRoutes);
+app.use('/api/v1/inventory', inventoryRoutes);
+app.use('/api/v1/suppliers', suppliersRoutes);
+app.use('/api/v1/purchases', purchasesRoutes);
+app.use('/api/v1/accounting', accountingRoutes);
+app.use('/api/v1/cashbook', cashbookRoutes);
 app.use('/api/v1/catalog', catalogRoutes);
 app.use('/api/v1/platform/billing', platformBillingRoutes);
 app.use('/api/v1/subscriptions', subscriptionRoutes);

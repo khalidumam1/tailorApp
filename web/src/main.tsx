@@ -28,19 +28,21 @@ import {
   type MeasurementTemplate,
   type LoginResult,
   type MeasurementProfile,
+  type InventoryItem,
   type Order,
   type Payment,
   type Receipt,
   type Session,
   type WhatsAppNotification,
 } from './api';
+import { ErpWorkspace } from './ErpWorkspace';
 import { BusinessStructureEditors } from './BusinessStructureEditors';
 import { BusinessTeamAdmin } from './BusinessTeamAdmin';
 import { AreaChart, BarList, ColumnChart, DonutChart, paletteColor, Sparkline } from './Charts';
 import { Icon, type IconName } from './Icons';
 import './styles.css';
 
-type View = 'dashboard' | 'orders' | 'catalog' | 'customers' | 'measurements' | 'payments' | 'notifications' | 'subscription' | 'configuration';
+type View = 'dashboard' | 'orders' | 'catalog' | 'customers' | 'measurements' | 'payments' | 'notifications' | 'subscription' | 'configuration' | 'erp';
 type PlatformView =
   | 'overview'
   | 'businesses'
@@ -82,6 +84,14 @@ if (typeof document !== 'undefined') {
   document.documentElement.dataset.theme = initialThemePreference ?? 'light';
 }
 
+const erpNavigationAccess: Array<{ module: string; permission: string }> = [
+  { module: 'inventory', permission: 'inventory:read' },
+  { module: 'suppliers', permission: 'suppliers:read' },
+  { module: 'purchasing', permission: 'purchasing:read' },
+  { module: 'cashbook', permission: 'cashbook:read' },
+  { module: 'accounting', permission: 'accounting:read' },
+];
+
 const navigation: Array<{ view: View; label: string; permission?: string; module?: string }> = [
   { view: 'dashboard', label: 'Overview', permission: 'orders:read' },
   { view: 'orders', label: 'Orders', permission: 'orders:read', module: 'orders' },
@@ -90,13 +100,14 @@ const navigation: Array<{ view: View; label: string; permission?: string; module
   { view: 'measurements', label: 'Measurements', permission: 'measurements:read', module: 'measurements' },
   { view: 'payments', label: 'Payments', permission: 'payments:read', module: 'payments' },
   { view: 'notifications', label: 'WhatsApp notifications', permission: 'notifications:read', module: 'notifications' },
+  { view: 'erp', label: 'Operations & finance' },
   { view: 'subscription', label: 'Subscription & billing', permission: 'subscriptions:read' },
   { view: 'configuration', label: 'Business settings', permission: 'settings:manage' },
 ];
 
 /** Sidebar sections — keeps the primary workspace separate from administration. */
 const navigationGroups: Array<{ label: string; views: View[] }> = [
-  { label: 'Workspace', views: ['dashboard', 'orders', 'catalog', 'customers', 'measurements', 'payments', 'notifications'] },
+  { label: 'Workspace', views: ['dashboard', 'orders', 'catalog', 'customers', 'measurements', 'payments', 'notifications', 'erp'] },
   { label: 'Administration', views: ['subscription', 'configuration'] },
 ];
 
@@ -206,6 +217,7 @@ function App() {
   const [notificationTemplateJson, setNotificationTemplateJson] = useState('{}');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [catalogItems, setCatalogItems] = useState<import('./api').CatalogItem[]>([]);
+  const [catalogInventoryItems, setCatalogInventoryItems] = useState<InventoryItem[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [notifications, setNotifications] = useState<WhatsAppNotification[]>([]);
@@ -222,6 +234,7 @@ function App() {
   const [catalogSku, setCatalogSku] = useState('');
   const [catalogUnit, setCatalogUnit] = useState('unit');
   const [catalogUnitPrice, setCatalogUnitPrice] = useState('');
+  const [catalogStockVariantId, setCatalogStockVariantId] = useState('');
   const [catalogCustomFields, setCatalogCustomFields] = useState<Record<string, unknown>>({});
   const [editingCatalogItemId, setEditingCatalogItemId] = useState<string | null>(null);
   const [orderCustomerId, setOrderCustomerId] = useState('');
@@ -234,6 +247,7 @@ function App() {
   const [orderPrice, setOrderPrice] = useState('');
   const [orderDueAt, setOrderDueAt] = useState(dateTimeInput(7));
   const [orderMeasurementId, setOrderMeasurementId] = useState('');
+  const orderSubmission = useRef<{ fingerprint: string; idempotencyKey: string } | null>(null);
   const [measurementCustomerId, setMeasurementCustomerId] = useState('');
   const [measurementTemplateId, setMeasurementTemplateId] = useState('');
   const [measurementValues, setMeasurementValues] = useState<Record<string, string>>({});
@@ -274,6 +288,13 @@ function App() {
   const [membersNotice, setMembersNotice] = useState<string | null>(null);
   const [removingMemberId, setRemovingMemberId] = useState('');
   const [removalReason, setRemovalReason] = useState('');
+  const [modulesBusinessId, setModulesBusinessId] = useState('');
+  const [businessModules, setBusinessModules] = useState<import('./api').PlatformBusinessModules | null>(null);
+  const [businessModuleDraft, setBusinessModuleDraft] = useState<string[]>([]);
+  const [modulesLoading, setModulesLoading] = useState(false);
+  const [modulesError, setModulesError] = useState<string | null>(null);
+  const [modulesNotice, setModulesNotice] = useState<string | null>(null);
+  const modulesRequestRef = useRef(0);
   const [platformStaffName, setPlatformStaffName] = useState('');
   const [platformStaffEmail, setPlatformStaffEmail] = useState('');
   const [platformStaffPassword, setPlatformStaffPassword] = useState('');
@@ -354,11 +375,14 @@ function App() {
     setNotificationTemplateJson('{}');
     setCustomers([]);
     setCatalogItems([]);
+    setCatalogInventoryItems([]);
     setOrders([]);
     setPayments([]);
     setNotifications([]);
     setTemplates([]);
     setProfiles([]);
+    setPaymentOrderId('');
+    setPaymentAmount('');
     setReceipt(null);
     setShopSubscription(null);
     setSelectedSubscriptionPlanId('');
@@ -448,7 +472,21 @@ function App() {
   }, [clearSessionData, session]);
 
   const reloadCurrent = useCallback(async () => {
-    if (!session || currentUser?.context.scope !== 'business') return;
+    if (!session || currentUser?.context.scope !== 'business' || view === 'erp') return;
+    const grantedPermissions = new Set(currentUser.context.permissions);
+    const enabledModules = new Set(businessConfiguration?.enabledModules ?? []);
+    const activeNavigationItem = navigation.find((item) => item.view === view);
+    if (view === 'dashboard'
+      && (!grantedPermissions.has('orders:read') || !enabledModules.has('orders'))) {
+      setDashboard(null);
+      setOrders([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    if (view !== 'dashboard' && (!activeNavigationItem
+      || (activeNavigationItem.permission && !grantedPermissions.has(activeNavigationItem.permission))
+      || (activeNavigationItem.module && !enabledModules.has(activeNavigationItem.module)))) return;
     setLoading(true);
     setError(null);
     try {
@@ -473,7 +511,14 @@ function App() {
         setCustomers(customerResult.items);
         setCatalogItems(catalogResult.items);
       } else if (view === 'catalog') {
-        setCatalogItems((await withSession((token) => api.catalog(token, search, true))).items);
+        const [catalogResult, inventoryResult] = await Promise.all([
+          withSession((token) => api.catalog(token, search, true)),
+          businessConfiguration?.enabledModules.includes('inventory')
+            ? withSession((token) => api.inventoryItems(token, '', true))
+            : Promise.resolve({ items: [] as InventoryItem[] }),
+        ]);
+        setCatalogItems(catalogResult.items);
+        setCatalogInventoryItems(inventoryResult.items);
       } else if (view === 'customers') {
         setCustomers((await withSession((token) => api.customers(token, search))).items);
       } else if (view === 'measurements') {
@@ -505,7 +550,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [businessConfiguration?.enabledModules, currentUser?.context.scope, measurementCustomerId, measurementTemplateId, search, selectedSubscriptionPlanId, session, subscriptionPayment.method, view, withSession]);
+  }, [businessConfiguration?.enabledModules, currentUser?.context.permissions, currentUser?.context.scope, measurementCustomerId, measurementTemplateId, search, selectedSubscriptionPlanId, session, subscriptionPayment.method, view, withSession]);
 
   useEffect(() => {
     const onlineChanged = () => setOnline(navigator.onLine);
@@ -548,12 +593,11 @@ function App() {
     root.dataset.theme = themeMode;
     root.style.setProperty('--configured-primary', applicationBranding.primaryColor);
     root.style.setProperty('--configured-accent', applicationBranding.accentColor);
-    root.style.setProperty('--brand-foreground', accessibleTextColor(applicationBranding.primaryColor));
     document.title = `${applicationBranding.brandName} · ${currentUser?.context.scope === 'platform' ? 'Platform console' : currentUser ? 'Business workspace' : 'Sign in'}`;
     const description = document.querySelector<HTMLMetaElement>('meta[name="description"]');
     if (description) description.content = applicationBranding.description || 'Manage your business in one clear workspace.';
     const themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-    if (themeColor) themeColor.content = themeMode === 'dark' ? '#0d1511' : applicationBranding.primaryColor;
+    if (themeColor) themeColor.content = themeMode === 'dark' ? '#09090b' : '#ffffff';
     let favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (!favicon) {
       favicon = document.createElement('link');
@@ -617,6 +661,42 @@ function App() {
       });
     return () => { active = false; };
   }, [currentUser?.context.scope, session?.accessToken, withSession]);
+
+  useEffect(() => {
+    if (!session || currentUser?.context.scope !== 'business' || view === 'dashboard') return;
+    const target = navigation.find((item) => item.view === view);
+    const permissions = new Set(currentUser.context.permissions);
+    const modules = new Set(businessConfiguration?.enabledModules ?? []);
+    const hasErpAccess = erpNavigationAccess.some((item) => modules.has(item.module) && permissions.has(item.permission));
+    if (!target
+      || (target.permission && !permissions.has(target.permission))
+      || (target.module && !modules.has(target.module))
+      || (target.view === 'erp' && !hasErpAccess)) {
+      setView('dashboard');
+      setError(null);
+      setLoading(false);
+    }
+  }, [businessConfiguration?.enabledModules, currentUser?.context.permissions, currentUser?.context.scope, session?.accessToken, view]);
+
+  useEffect(() => {
+    const paymentsEnabled = businessConfiguration?.enabledModules.includes('payments') === true;
+    const canReadPayments = paymentsEnabled && currentUser?.context.permissions.includes('payments:read') === true;
+    const canWritePayments = paymentsEnabled && currentUser?.context.permissions.includes('payments:write') === true;
+    if (!canReadPayments) {
+      setPayments([]);
+      setOrders((current) => current.map((order) => {
+        const sanitized = { ...order };
+        delete sanitized.paid;
+        delete sanitized.outstanding;
+        return sanitized;
+      }));
+    }
+    if (!canWritePayments) {
+      setPaymentOrderId('');
+      setPaymentAmount('');
+    }
+    if (!paymentsEnabled) setReceipt(null);
+  }, [businessConfiguration?.enabledModules, currentUser?.context.permissions]);
 
   useEffect(() => {
     let active = true;
@@ -904,8 +984,8 @@ function App() {
     let paid = 0;
     let outstanding = 0;
     for (const order of orders) {
-      paid += Number(order.paid);
-      outstanding += Number(order.outstanding);
+      paid += Number(order.paid ?? 0);
+      outstanding += Number(order.outstanding ?? 0);
     }
     return [
       { label: 'Collected', value: paid, color: '#059669' },
@@ -1028,6 +1108,7 @@ function App() {
           sku: catalogSku || null,
           unit: catalogUnit,
           unitPrice: catalogUnitPrice || null,
+          ...(businessConfiguration.enabledModules.includes('inventory') ? { stockVariantId: catalogStockVariantId || null } : {}),
           sortOrder: current.sortOrder,
           customFields: catalogCustomFields,
         }));
@@ -1039,6 +1120,7 @@ function App() {
           ...(catalogSku ? { sku: catalogSku } : {}),
           unit: catalogUnit,
           ...(catalogUnitPrice ? { unitPrice: catalogUnitPrice } : {}),
+          ...(businessConfiguration.enabledModules.includes('inventory') ? { stockVariantId: catalogStockVariantId || null } : {}),
           sortOrder: catalogItems.length,
           customFields: catalogCustomFields,
         }));
@@ -1047,6 +1129,7 @@ function App() {
       setCatalogDescription('');
       setCatalogSku('');
       setCatalogUnitPrice('');
+      setCatalogStockVariantId('');
       setCatalogCustomFields({});
       setEditingCatalogItemId(null);
       setNotice(`${businessConfiguration.terminology.item ?? 'Catalog item'} saved.`);
@@ -1081,6 +1164,7 @@ function App() {
     setCatalogSku(item.sku ?? '');
     setCatalogUnit(item.unit);
     setCatalogUnitPrice(item.unitPrice ?? '');
+    setCatalogStockVariantId(item.stockVariantId ?? '');
     const configuredFieldKeys = new Set((businessConfiguration?.fields ?? [])
       .filter((field) => field.module === 'catalog' && ['item', 'catalog-item'].includes(field.screen))
       .map((field) => field.key));
@@ -1131,7 +1215,13 @@ function App() {
         }],
         customFields: orderCustomFields,
       });
-      await withSession((token) => api.createOrder(token, input));
+      const fingerprint = JSON.stringify(input);
+      const idempotencyKey = orderSubmission.current?.fingerprint === fingerprint
+        ? orderSubmission.current.idempotencyKey
+        : crypto.randomUUID();
+      orderSubmission.current = { fingerprint, idempotencyKey };
+      await withSession((token) => api.createOrder(token, input, idempotencyKey));
+      orderSubmission.current = null;
       setOrderPrice('');
       setOrderItemName('');
       setOrderMeasurementId('');
@@ -1538,6 +1628,65 @@ function App() {
     setMembersNotice(null);
     setRemovingMemberId('');
     setRemovalReason('');
+  }
+
+  async function loadBusinessModules(businessId: string) {
+    const requestId = ++modulesRequestRef.current;
+    setModulesLoading(true);
+    setModulesError(null);
+    try {
+      const result = await withSession((token) => api.platformBusinessModules(token, businessId));
+      if (requestId === modulesRequestRef.current) {
+        setBusinessModules(result);
+        setBusinessModuleDraft(result.enabledModules);
+      }
+    } catch (cause) {
+      if (requestId === modulesRequestRef.current) setModulesError(messageFor(cause));
+    } finally {
+      if (requestId === modulesRequestRef.current) setModulesLoading(false);
+    }
+  }
+
+  function openBusinessModules(business: import('./api').PlatformBusiness) {
+    setModulesBusinessId(business.id);
+    setBusinessModules(null);
+    setBusinessModuleDraft([]);
+    setModulesError(null);
+    setModulesNotice(null);
+    void loadBusinessModules(business.id);
+  }
+
+  function closeBusinessModules() {
+    modulesRequestRef.current += 1;
+    setModulesBusinessId('');
+    setBusinessModules(null);
+    setBusinessModuleDraft([]);
+    setModulesError(null);
+    setModulesNotice(null);
+    setModulesLoading(false);
+  }
+
+  async function saveBusinessModules() {
+    if (!modulesBusinessId || !businessModules) return;
+    setWorking(true);
+    setModulesError(null);
+    setModulesNotice(null);
+    try {
+      const result = await withSession((token) => api.setPlatformBusinessModules(
+        token,
+        modulesBusinessId,
+        businessModuleDraft,
+      ));
+      setBusinessModules(result);
+      setBusinessModuleDraft(result.enabledModules);
+      setModulesNotice(result.unchanged
+        ? 'No module access changes were needed.'
+        : 'Module access updated. Disabled modules are hidden and blocked by the API; existing records are kept.');
+    } catch (cause) {
+      setModulesError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
   }
 
   async function refreshBusinessDirectory() {
@@ -2317,6 +2466,7 @@ function App() {
                     <td><StatusPill status={business.status} /></td>
                     <td><div className="row-actions">
                       {grants.has('platform:businesses:read') && <button className="button button-secondary" disabled={!online} onClick={() => openBusinessMembers(business)}>Members</button>}
+                      {grants.has('platform:businesses:read') && grants.has('platform:businesses:manage') && <button className="button button-secondary" disabled={!online} onClick={() => openBusinessModules(business)}>Modules</button>}
                       {grants.has('platform:businesses:manage') && !business.owner && <button className="button button-secondary" disabled={!online} onClick={() => setOwnerBusinessId(business.id)}>Assign owner</button>}
                       {grants.has('platform:businesses:manage') && business.status !== 'ACTIVE' && <button className="button button-primary" disabled={working || !online || !business.owner} title={business.owner ? undefined : 'Assign an owner before activating'} onClick={() => void updateBusinessStatus(business, 'ACTIVE')}>Activate</button>}
                       {grants.has('platform:businesses:manage') && business.status === 'ACTIVE' && <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void updateBusinessStatus(business, 'SUSPENDED')}>Suspend</button>}
@@ -2719,6 +2869,49 @@ function App() {
             </section>
           </div>
         )}
+        {modulesBusinessId && (
+          <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeBusinessModules(); }}>
+            <section className="dialog-card" role="dialog" aria-modal="true" aria-labelledby="business-modules-title">
+              <button type="button" className="dialog-close" aria-label="Close" onClick={closeBusinessModules}>×</button>
+              <p className="eyebrow">Platform entitlements</p>
+              <h2 id="business-modules-title">{businessModules?.business.name ?? platformBusinesses.find((item) => item.id === modulesBusinessId)?.name ?? 'Business'} modules</h2>
+              <p className="muted">Choose which supported modules this business may use. Disabling a module hides it from the business workspace and blocks its APIs; existing records are kept.</p>
+              {businessModules?.business.template && <p className="fine-print">Template: {businessModules.business.template.name}. Only modules supplied by this template are listed.</p>}
+              {modulesError && <p className="form-error" role="alert">{modulesError}</p>}
+              {modulesNotice && <p className="form-notice" role="status">{modulesNotice}</p>}
+              {modulesLoading && !businessModules ? <p className="muted" role="status">Loading module entitlements…</p> : businessModules ? (
+                <>
+                  <div className="configuration-options">
+                    {businessModules.availableModules.map((module) => (
+                      <label className="checkbox-row" key={module}>
+                        <input
+                          type="checkbox"
+                          checked={businessModuleDraft.includes(module)}
+                          disabled={working || !online || modulesLoading}
+                          onChange={(event) => setBusinessModuleDraft((current) => event.target.checked
+                            ? [...current, module]
+                            : current.filter((value) => value !== module))}
+                        />
+                        {module}
+                      </label>
+                    ))}
+                  </div>
+                  {businessModules.availableModules.length === 0 && <EmptyState title="No modules supplied by this template" />}
+                  <div className="dialog-actions">
+                    <button
+                      type="button"
+                      className="button button-primary"
+                      disabled={working || !online || modulesLoading
+                        || [...businessModuleDraft].sort().join('|') === [...businessModules.enabledModules].sort().join('|')}
+                      onClick={() => void saveBusinessModules()}
+                    >{working ? 'Saving…' : 'Save module access'}</button>
+                    <button type="button" className="button button-quiet" disabled={working} onClick={closeBusinessModules}>Close</button>
+                  </div>
+                </>
+              ) : <EmptyState title="Module settings unavailable" action="Retry" onAction={() => void loadBusinessModules(modulesBusinessId)} />}
+            </section>
+          </div>
+        )}
         {ownerBusinessId && (
           <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOwnerBusinessId(''); }}>
             <form className="dialog-card" role="dialog" aria-modal="true" aria-labelledby="owner-title" onSubmit={assignOwner}>
@@ -2747,7 +2940,9 @@ function App() {
   const widgetEnabled = (widget: string) =>
     !businessConfiguration || businessConfiguration.dashboardWidgets.includes(widget);
   const visibleNavigation = navigation
-    .filter((item) => (!item.permission || permissions.has(item.permission)) && moduleEnabled(item.module))
+    .filter((item) => item.view === 'erp'
+      ? erpNavigationAccess.some((access) => businessConfiguration?.enabledModules.includes(access.module) && permissions.has(access.permission))
+      : (!item.permission || permissions.has(item.permission)) && moduleEnabled(item.module))
     .map((item) => ({
       ...item,
       label: item.view === 'orders' ? term('orders', item.label)
@@ -2789,7 +2984,7 @@ function App() {
                     aria-current={view === item.view ? 'page' : undefined}
                     onClick={() => { setView(item.view); setError(null); }}
                   >
-                    <span className="nav-icon"><Icon name={item.view} /></span>
+                    <span className="nav-icon"><Icon name={item.view === 'erp' ? 'reports' : item.view} /></span>
                     <span className="nav-label">{item.label}</span>
                     {item.view === 'orders' && dashboard && dashboard.overdue > 0 && <span className="nav-badge">{dashboard.overdue}</span>}
                   </button>
@@ -2824,6 +3019,17 @@ function App() {
         {notice && <div className="alert alert-success" role="status">{notice}<button aria-label="Dismiss" onClick={() => setNotice(null)}>×</button></div>}
         {!online && <div className="offline-banner" role="status">You are offline. This web workspace is read-only until the connection returns.</div>}
 
+        {view === 'erp' && (
+          <ErpWorkspace
+            withSession={withSession}
+            online={online}
+            enabledModules={businessConfiguration?.enabledModules ?? []}
+            permissions={currentUser?.context.permissions ?? []}
+            currency={businessConfiguration?.business.currency ?? 'PKR'}
+            timezone={businessConfiguration?.business.timezone ?? 'Asia/Karachi'}
+          />
+        )}
+
         {view === 'dashboard' && (
           <section aria-label="Business overview" className="content-stack">
             <div className="page-head">
@@ -2834,7 +3040,7 @@ function App() {
               </div>
               <div className="page-head-actions">
                 <button className="button button-secondary" onClick={() => void reloadCurrent()}>Refresh</button>
-                {permissions.has('orders:read') && (
+                {permissions.has('orders:write') && moduleEnabled('orders') && (
                   <button className="button button-primary" onClick={() => setView('orders')}><Icon name="plus" /> New {term('order', 'order').toLowerCase()}</button>
                 )}
               </div>
@@ -2855,7 +3061,7 @@ function App() {
                   {widgetEnabled('dueToday') && <MetricCard label="Due today" value={String(dashboard.dueToday)} icon="clock" tone="amber" />}
                   {widgetEnabled('inProgress') && <MetricCard label="In progress" value={String(dashboard.inProgress)} icon="progress" tone="blue" />}
                   {widgetEnabled('overdue') && <MetricCard label="Overdue" value={String(dashboard.overdue)} icon="warning" tone="rose" />}
-                  {widgetEnabled('outstanding') && permissions.has('payments:read') && (
+                  {widgetEnabled('outstanding') && permissions.has('payments:read') && moduleEnabled('payments') && (
                     <MetricCard
                       label="Outstanding"
                       value={money(dashboard.outstanding, businessConfiguration?.business.currency)}
@@ -2863,7 +3069,7 @@ function App() {
                       tone="violet"
                     />
                   )}
-                  {widgetEnabled('collectedToday') && permissions.has('payments:read') && (
+                  {widgetEnabled('collectedToday') && permissions.has('payments:read') && moduleEnabled('payments') && (
                     <MetricCard
                       label="Collected today"
                       value={money(dashboard.collectedToday, businessConfiguration?.business.currency)}
@@ -2900,18 +3106,20 @@ function App() {
                 </div>
 
                 <div className="split-3">
-                  <section className="panel chart-card">
-                    <div className="card-title-row"><div><h3>Collections</h3><p className="muted">Paid versus outstanding</p></div></div>
-                    {collectionSplit.some((segment) => segment.value > 0) ? (
-                      <BarList
-                        items={collectionSplit.map((segment) => ({
-                          ...segment,
-                          note: undefined,
-                        }))}
-                        format={(value) => money(String(value), businessConfiguration?.business.currency)}
-                      />
-                    ) : <EmptyState title="No payments recorded" />}
-                  </section>
+                  {moduleEnabled('payments') && permissions.has('payments:read') && (
+                    <section className="panel chart-card">
+                      <div className="card-title-row"><div><h3>Collections</h3><p className="muted">Paid versus outstanding</p></div></div>
+                      {collectionSplit.some((segment) => segment.value > 0) ? (
+                        <BarList
+                          items={collectionSplit.map((segment) => ({
+                            ...segment,
+                            note: undefined,
+                          }))}
+                          format={(value) => money(String(value), businessConfiguration?.business.currency)}
+                        />
+                      ) : <EmptyState title="No payments recorded" />}
+                    </section>
+                  )}
                   <section className="panel chart-card">
                     <div className="card-title-row"><div><h3>Top {term('items', 'items').toLowerCase()}</h3><p className="muted">By quantity on recent orders</p></div></div>
                     {topGarments.length ? <BarList items={topGarments} /> : <EmptyState title="Nothing stitched yet" />}
@@ -2943,7 +3151,8 @@ function App() {
                               <td>{order.customer.name}</td>
                               <td><StatusPill status={order.currentWorkflowStage?.key ?? order.status} /></td>
                               <td><strong>{money(order.total, businessConfiguration?.business.currency)}</strong>
-                                {Number(order.outstanding) > 0 && <small className="table-note">{money(order.outstanding, businessConfiguration?.business.currency)} due</small>}
+                                {moduleEnabled('payments') && permissions.has('payments:read') && Number(order.outstanding ?? 0) > 0
+                                  && <small className="table-note">{money(order.outstanding, businessConfiguration?.business.currency)} due</small>}
                               </td>
                               <td>{new Date(order.promisedAt).toLocaleDateString('en-PK', { day: 'numeric', month: 'short' })}</td>
                             </tr>
@@ -3048,6 +3257,19 @@ function App() {
                   <label>Code / SKU<input value={catalogSku} onChange={(event) => setCatalogSku(event.target.value)} maxLength={80} /></label>
                   <label>Unit<input value={catalogUnit} onChange={(event) => setCatalogUnit(event.target.value)} maxLength={40} required /></label>
                   <label>Unit price ({businessConfiguration?.business.currency ?? 'PKR'})<input type="number" min="0" step="0.01" value={catalogUnitPrice} onChange={(event) => setCatalogUnitPrice(event.target.value)} /></label>
+                  {businessConfiguration?.enabledModules.includes('inventory') && (
+                    <label className="span-all">Linked stock item / variant
+                      <select value={catalogStockVariantId} onChange={(event) => setCatalogStockVariantId(event.target.value)}>
+                        <option value="">Not linked — do not deduct stock automatically</option>
+                        {catalogInventoryItems.flatMap((stockItem) => stockItem.variants.map((variant) => ({ stockItem, variant }))).map(({ stockItem, variant }) => (
+                          <option key={variant.id} value={variant.id}>
+                            {stockItem.name} / {variant.name}{variant.sku ? ` · ${variant.sku}` : ''}{!stockItem.active || !variant.active ? ' · inactive' : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <small>Orders linked to a stock variant consume the sold quantity from Main store and post weighted-average cost to cost of goods sold.</small>
+                    </label>
+                  )}
                   {catalogFields.filter((field) => isVisibleForItemType(field, catalogTypeKey || businessConfiguration?.itemTypes[0]?.key)).map((field) => (
                     <DynamicFieldControl
                       key={field.id}
@@ -3058,12 +3280,12 @@ function App() {
                   ))}
                 </div>
                 <button className="button button-primary" disabled={working || !online}>{working ? 'Saving…' : editingCatalogItemId ? 'Update catalog item' : 'Save catalog item'}</button>
-                {editingCatalogItemId && <button className="button button-secondary" type="button" onClick={() => { setEditingCatalogItemId(null); setCatalogName(''); setCatalogDescription(''); setCatalogSku(''); setCatalogUnitPrice(''); setCatalogCustomFields({}); }}>Cancel edit</button>}
+                {editingCatalogItemId && <button className="button button-secondary" type="button" onClick={() => { setEditingCatalogItemId(null); setCatalogName(''); setCatalogDescription(''); setCatalogSku(''); setCatalogUnitPrice(''); setCatalogStockVariantId(''); setCatalogCustomFields({}); }}>Cancel edit</button>}
               </form>
             )}
             {loading ? <LoadingState /> : catalogItems.length ? (
               <div className="table-wrap">
-                <table><thead><tr><th>{term('item', 'Item')}</th><th>Type</th><th>Code</th><th>Unit price</th><th>Status</th><th>Action</th></tr></thead>
+                <table><thead><tr><th>{term('item', 'Item')}</th><th>Type</th><th>Code</th><th>Unit price</th><th>Stock tracking</th><th>Status</th><th>Action</th></tr></thead>
                   <tbody>{catalogItems.map((item) => (
                     <tr key={item.id}>
                       <td><strong>{item.name}</strong>{Object.entries(item.customFields).map(([key, value]) => (
@@ -3072,6 +3294,16 @@ function App() {
                       <td>{businessConfiguration?.itemTypes.find((type) => type.key === item.typeKey)?.label ?? item.typeKey}</td>
                       <td>{item.sku ?? '—'}</td>
                       <td>{item.unitPrice ? `${money(item.unitPrice, businessConfiguration?.business.currency)} / ${item.unit}` : `— / ${item.unit}`}</td>
+                      <td>{item.stockVariantId
+                        ? catalogInventoryItems.flatMap((stockItem) => stockItem.variants.map((variant) => ({ stockItem, variant })))
+                          .find(({ variant }) => variant.id === item.stockVariantId)
+                          ? (() => {
+                            const link = catalogInventoryItems.flatMap((stockItem) => stockItem.variants.map((variant) => ({ stockItem, variant })))
+                              .find(({ variant }) => variant.id === item.stockVariantId)!;
+                            return `${link.stockItem.name} / ${link.variant.name}`;
+                          })()
+                          : 'Linked stock variant unavailable'
+                        : 'Not linked'}</td>
                       <td><span className="notification-pill">{item.active ? 'Active' : 'Inactive'}</span></td>
                       <td>{permissions.has('settings:manage') && <><button className="button button-quiet" disabled={working || !online} onClick={() => editCatalogItem(item)}>Edit</button><button className="button button-quiet" disabled={working || !online} onClick={() => void setCatalogItemActive(item, !item.active)}>{item.active ? 'Deactivate' : 'Activate'}</button></>}</td>
                     </tr>
@@ -3181,7 +3413,9 @@ function App() {
                     </div>
                     <div className="order-card-side">
                       <span className="money-total">{money(order.total, businessConfiguration?.business.currency)}</span>
-                      <span className="muted">{money(order.outstanding, businessConfiguration?.business.currency)} outstanding</span>
+                      {moduleEnabled('payments') && permissions.has('payments:read') && (
+                        <span className="muted">{money(order.outstanding, businessConfiguration?.business.currency)} outstanding</span>
+                      )}
                       <div className="row-actions">
                         {permissions.has('orders:transition') && businessConfiguration?.workflow.transitions
                           .filter((transition) => {
@@ -3207,8 +3441,8 @@ function App() {
                               onClick={() => void changeWorkflowStage(order, stage.key)}
                             >{isTransitioningThis ? `Moving to ${stage.label}…` : `Move to ${stage.label}`}</button> : null;
                           })}
-                        {permissions.has('payments:write') && Number(order.outstanding) > 0 && (
-                          <button className="button button-secondary" onClick={() => { setPaymentOrderId(order.id); setPaymentAmount(order.outstanding); }}>Record payment</button>
+                        {permissions.has('payments:write') && moduleEnabled('payments') && Number(order.outstanding ?? 0) > 0 && (
+                          <button className="button button-secondary" onClick={() => { setPaymentOrderId(order.id); setPaymentAmount(order.outstanding ?? ''); }}>Record payment</button>
                         )}
                       </div>
                     </div>

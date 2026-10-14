@@ -19,13 +19,14 @@ export function MoreScreen({ onNavigate }: { onNavigate: Navigate }) {
   const copy = ws.copy;
 
   const items: Array<{ id: NavPage; label: string; hint: string; icon: IconName; tone: Tone; visible: boolean }> = [
-    { id: 'analytics', label: copy.analytics, hint: copy.reportAction, icon: 'chart', tone: 'primary', visible: ws.can('orders:read') },
+    { id: 'analytics', label: copy.analytics, hint: copy.reportAction, icon: 'chart', tone: 'primary', visible: ws.can('orders:read') && ws.moduleEnabled('orders') && ws.moduleEnabled('reports') },
     { id: 'customers', label: ws.term('customers', copy.customers), hint: copy.search, icon: 'customers', tone: 'blue', visible: ws.can('customers:read') && ws.moduleEnabled('customers') },
     { id: 'measurements', label: ws.term('measurements', copy.measurements), hint: copy.latestRevision, icon: 'measurements', tone: 'violet', visible: ws.can('measurements:read') && ws.moduleEnabled('measurements') },
-    { id: 'notifications', label: copy.notifications, hint: copy.notificationHistory, icon: 'notifications', tone: 'mint', visible: ws.can('notifications:read') },
+    { id: 'notifications', label: copy.notifications, hint: copy.notificationHistory, icon: 'notifications', tone: 'mint', visible: ws.can('notifications:read') && ws.moduleEnabled('notifications') },
     { id: 'catalog', label: copy.catalog, hint: copy.catalogHint, icon: 'catalog', tone: 'amber', visible: ws.can('orders:read') && ws.moduleEnabled('catalog') },
+    { id: 'erp', label: 'Operations & finance', hint: 'Inventory, purchasing, cash and accounting', icon: 'building', tone: 'mint', visible: (ws.moduleEnabled('inventory') && ws.can('inventory:read')) || (ws.moduleEnabled('suppliers') && ws.can('suppliers:read')) || (ws.moduleEnabled('purchasing') && ws.can('purchasing:read')) || (ws.moduleEnabled('cashbook') && ws.can('cashbook:read')) || (ws.moduleEnabled('accounting') && ws.can('accounting:read')) },
     { id: 'subscription', label: copy.subscription, hint: copy.subscriptionTitle, icon: 'subscription', tone: 'blue', visible: ws.can('subscriptions:read') },
-    { id: 'business-settings', label: copy.businessSettings, hint: copy.customizeWorkspace, icon: 'settings', tone: 'red', visible: true },
+    { id: 'business-settings', label: copy.businessSettings, hint: copy.customizeWorkspace, icon: 'settings', tone: 'red', visible: ws.can('settings:manage') },
     { id: 'settings', label: copy.settings, hint: copy.appearance, icon: 'palette', tone: 'primary', visible: true },
   ];
 

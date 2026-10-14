@@ -33,11 +33,15 @@ export function BusinessTeamAdmin({ canManage, online, actorPermissions, withSes
       setRoles(roleResult.items);
       setMembers(memberResult.items);
       setPermissions(permissionResult.items);
+      // The API returns system roles first, which means Owner is usually the first
+      // result. Owner cannot be assigned to a new member, so never use it as the
+      // default value for the member form.
+      const assignableRoles = roleResult.items.filter((role) => role.name !== 'Owner');
       setMemberDraft((current) => ({
         ...current,
-        roleId: roleResult.items.some((role) => role.id === current.roleId)
+        roleId: assignableRoles.some((role) => role.id === current.roleId)
           ? current.roleId
-          : roleResult.items[0]?.id ?? '',
+          : assignableRoles[0]?.id ?? '',
       }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to load business team.');
@@ -62,8 +66,10 @@ export function BusinessTeamAdmin({ canManage, online, actorPermissions, withSes
     setWorking(true);
     setError(null);
     try {
-      if (roleId) await withSession((token) => api.updateBusinessRole(token, roleId, { name: roleName, permissions: rolePermissions }));
-      else await withSession((token) => api.createBusinessRole(token, { name: roleName, permissions: rolePermissions }));
+      const input = { name: roleName.trim(), permissions: rolePermissions };
+      if (input.name.length < 2) throw new Error('Role name must be at least 2 characters.');
+      if (roleId) await withSession((token) => api.updateBusinessRole(token, roleId, input));
+      else await withSession((token) => api.createBusinessRole(token, input));
       setRoleId(null);
       setRoleName('');
       setRolePermissions([]);
@@ -101,7 +107,14 @@ export function BusinessTeamAdmin({ canManage, online, actorPermissions, withSes
     setWorking(true);
     setError(null);
     try {
-      await withSession((token) => api.createBusinessStaff(token, memberDraft));
+      if (!roles.some((role) => role.id === memberDraft.roleId && role.name !== 'Owner')) {
+        throw new Error('Choose a role other than Owner for this team member.');
+      }
+      await withSession((token) => api.createBusinessStaff(token, {
+        ...memberDraft,
+        name: memberDraft.name.trim(),
+        email: memberDraft.email.trim(),
+      }));
       setMemberDraft((current) => ({ ...current, name: '', email: '', initialPassword: '' }));
       setNotice('Business team member created.');
       await reload();
@@ -174,7 +187,7 @@ export function BusinessTeamAdmin({ canManage, online, actorPermissions, withSes
                 ))}
               </div>
               <div className="row-actions">
-                <button className="button button-primary" disabled={working || !online}>{working ? 'Saving…' : 'Save role'}</button>
+                <button className="button button-primary" type="submit" disabled={working || !online}>{working ? 'Saving…' : 'Save role'}</button>
                 {roleId && <button className="button button-quiet" type="button" onClick={() => { setRoleId(null); setRoleName(''); setRolePermissions([]); }}>Cancel edit</button>}
               </div>
             </form>
@@ -194,8 +207,11 @@ export function BusinessTeamAdmin({ canManage, online, actorPermissions, withSes
               <label>Name<input value={memberDraft.name} onChange={(event) => setMemberDraft({ ...memberDraft, name: event.target.value })} maxLength={160} required /></label>
               <label>Email<input type="email" value={memberDraft.email} onChange={(event) => setMemberDraft({ ...memberDraft, email: event.target.value })} maxLength={254} required /></label>
               <label>Initial password<input type="password" value={memberDraft.initialPassword} onChange={(event) => setMemberDraft({ ...memberDraft, initialPassword: event.target.value })} minLength={16} maxLength={72} autoComplete="new-password" required /></label>
-              <label>Role<select value={memberDraft.roleId} onChange={(event) => setMemberDraft({ ...memberDraft, roleId: event.target.value })} required>{roles.filter((role) => role.name !== 'Owner').map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label>
-              <button className="button button-primary" disabled={working || !online || !memberDraft.roleId}>{working ? 'Creating…' : 'Create member'}</button>
+              <label>Role<select value={memberDraft.roleId} onChange={(event) => setMemberDraft({ ...memberDraft, roleId: event.target.value })} required>
+                <option value="" disabled>{roles.some((role) => role.name !== 'Owner') ? 'Choose a role' : 'Create a role first'}</option>
+                {roles.filter((role) => role.name !== 'Owner').map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+              </select></label>
+              <button className="button button-primary" type="submit" disabled={working || !online || !roles.some((role) => role.id === memberDraft.roleId && role.name !== 'Owner')}>{working ? 'Creating…' : 'Create member'}</button>
             </form>
           </section>
           <section className="panel form-panel">
@@ -205,7 +221,8 @@ export function BusinessTeamAdmin({ canManage, online, actorPermissions, withSes
                 <div><strong>{member.user.name}</strong><small className="table-note">{member.user.email} · {member.active ? 'Active' : 'Removed — no access'}</small></div>
                 <div className="row-actions">
                   <select aria-label={`Role for ${member.user.name}`} value={member.role.id} disabled={working || !online || member.role.name === 'Owner'} onChange={(event) => void updateMember(member, { roleId: event.target.value })}>
-                    {roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+                    {roles.filter((role) => member.role.name === 'Owner' ? role.id === member.role.id : role.name !== 'Owner')
+                      .map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
                   </select>
                   {member.role.name !== 'Owner' && (member.active
                     ? <button className="button button-danger-quiet" type="button" disabled={working || !online} onClick={() => void removeMember(member)}>Remove from business</button>

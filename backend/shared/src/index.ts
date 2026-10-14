@@ -80,6 +80,7 @@ export const createOrderSchema = z.object({
 export const createPaymentSchema = z.object({
   amount: z.string().regex(/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/).refine((amount) => Number(amount) > 0),
   method: z.enum(['CASH', 'BANK', 'DIGITAL']),
+  financialAccountId: z.string().uuid().optional(),
 });
 
 export const orderQuerySchema = z.object({

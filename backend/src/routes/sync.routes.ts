@@ -12,9 +12,12 @@ import {
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
+import { ensureDefaultAccounts, postJournal } from '../domain/accounting.js';
+import { getOrCreateDefaultLocation, postInventoryMovement } from '../domain/inventory.js';
 import { customFieldValueData, validateCustomFieldValues, withBuiltInOrderItemFields } from '../domain/custom-fields.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { assertSubscriptionAccess, authenticate } from '../middleware/auth.js';
+import { resolveBusinessModuleAccess } from '../business-modules.js';
 import { assertPlanLimit } from '../plan-limits.js';
 import { queueCustomerNotification, queueMeasurementAppended, queueOrderCreated } from '../whatsapp.js';
 
@@ -67,12 +70,20 @@ const changesQuerySchema = z.object({
 type CursorEntry = z.infer<typeof cursorEntrySchema>;
 type SyncCursor = z.infer<typeof cursorSchema>;
 type OperationInput = z.infer<typeof syncOperationSchema>;
+type SyncPayload = z.infer<typeof syncPayloadSchema>;
 type OperationResult = {
   clientOperationId: string;
   status: 'APPLIED' | 'CONFLICT';
   response: Prisma.JsonValue | Record<string, unknown>;
   duplicate?: boolean;
 };
+
+function moduleForSyncPayload(payload: SyncPayload): string {
+  if (payload.action.startsWith('customer.')) return 'customers';
+  if (payload.action === 'measurement.revision') return 'measurements';
+  if (payload.action === 'catalog.create') return 'catalog';
+  return 'orders';
+}
 
 function getBusinessContext(req: express.Request): { businessId: string; actorId: string } {
   if (req.auth?.scope !== 'business' || !req.auth.business) {
@@ -639,9 +650,9 @@ async function applyOperation(
         name: item.itemName,
       },
       update: { active: true },
-      select: { id: true },
+      select: { id: true, stockVariantId: true },
     });
-    return { ...item, itemId: catalogItem.id };
+    return { ...item, itemId: catalogItem.id, stockVariantId: catalogItem.stockVariantId };
   }));
   const business = await tx.business.update({
     where: { id: businessId },
@@ -662,7 +673,7 @@ async function applyOperation(
       total,
       workflowStageId: initialStage.id,
       workflowStageKey: initialStage.key,
-      items: { create: catalogItems.map(({ customFieldValues: _customFieldValues, businessId: _itemBusinessId, ...item }) => item) },
+      items: { create: catalogItems.map(({ customFieldValues: _customFieldValues, businessId: _itemBusinessId, stockVariantId: _stockVariantId, ...item }) => item) },
       workflowHistory: {
         create: {
           toStageId: initialStage.id,
@@ -673,7 +684,7 @@ async function applyOperation(
       },
       statusHistory: { create: { toStatus: 'NEW', changedById: actorId } },
     },
-    select: { id: true, orderNumber: true, version: true, updatedAt: true },
+    select: { id: true, orderNumber: true, version: true, updatedAt: true, createdAt: true },
   });
   const customValues = [
     ...orderFieldValues.map((value) => ({
@@ -688,6 +699,41 @@ async function applyOperation(
     }))),
   ];
   if (customValues.length) await tx.customFieldValue.createMany({ data: customValues });
+  const stockLinkedItems = catalogItems.filter((item) => item.stockVariantId !== null);
+  if (stockLinkedItems.length) {
+    const location = await getOrCreateDefaultLocation(tx, businessId);
+    for (const item of stockLinkedItems) {
+      await postInventoryMovement(tx, {
+        businessId,
+        actorId,
+        variantId: item.stockVariantId!,
+        locationId: location.id,
+        kind: 'CONSUMPTION',
+        quantity: String(item.quantity),
+        sourceType: 'ORDER_SALE',
+        sourceId: order.id,
+        idempotencyKey: `order-sale:${order.id}:item:${item.id}`,
+        note: `Sale ${order.orderNumber}`,
+        occurredAt: order.createdAt,
+      });
+    }
+  }
+  if (!total.isZero()) {
+    const accounts = await ensureDefaultAccounts(tx, businessId);
+    await postJournal(tx, {
+      businessId,
+      actorId,
+      sourceType: 'ORDER_SALE',
+      sourceId: order.id,
+      idempotencyKey: `order-sale:${order.id}`,
+      entryDate: order.createdAt,
+      memo: `Sale ${order.orderNumber}`,
+      lines: [
+        { accountId: accounts.get('ACCOUNTS_RECEIVABLE')!.id, debit: total, credit: 0 },
+        { accountId: accounts.get('SALES_REVENUE')!.id, debit: 0, credit: total },
+      ],
+    });
+  }
   await tx.auditEvent.create({
     data: {
       businessId,
@@ -710,16 +756,8 @@ router.get('/changes', asyncHandler(async (req, res) => {
   const query = changesQuerySchema.parse(req.query);
   const cursor = decodeCursor(query.cursor);
   const permissions = new Set(req.auth?.permissions ?? []);
-  const businessModules = await prisma.business.findUnique({
-    where: { id: businessId },
-    select: {
-      configuration: { select: { enabledModules: true } },
-      template: { select: { enabledModules: true } },
-    },
-  });
-  const enabledModules = businessModules?.configuration?.enabledModules
-    ?? businessModules?.template?.enabledModules
-    ?? [];
+  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId);
+  const enabledModules = moduleAccess.enabledModules;
   const [customerRows, orderRows, measurementRows, catalogItemRows] = await Promise.all([
     permissions.has('customers:read') && enabledModules.includes('customers')
       ? prisma.customer.findMany({
@@ -836,6 +874,25 @@ router.post('/operations', asyncHandler(async (req, res) => {
     }
     return operation;
   });
+  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId);
+  for (const operation of preparedOperations) {
+    const existing = await prisma.syncOperation.findUnique({
+      where: { businessId_clientOperationId: { businessId, clientOperationId: operation.clientOperationId } },
+    });
+    if (existing) {
+      if (stableJson(existing.request) !== stableJson(operation)) {
+        throw new HttpError(409, 'Operation ID was already used for a different request', 'SYNC_OPERATION_ID_REUSED');
+      }
+      // Replaying an already-committed operation returns its receipt even if a
+      // platform admin has since disabled the module; it never performs writes.
+      continue;
+    }
+    const payload = syncPayloadSchema.parse(operation.payload);
+    const module = moduleForSyncPayload(payload);
+    if (!moduleAccess.enabledModules.includes(module)) {
+      throw new HttpError(403, `The ${module} module is disabled for this business`, 'BUSINESS_MODULE_DISABLED');
+    }
+  }
   const writePermissions = new Set<string>();
   for (const operation of preparedOperations) {
     const payload = syncPayloadSchema.parse(operation.payload);
@@ -876,6 +933,11 @@ router.post('/operations', asyncHandler(async (req, res) => {
       }
 
       const payload = syncPayloadSchema.parse(operation.payload);
+      const module = moduleForSyncPayload(payload);
+      const moduleAccess = await resolveBusinessModuleAccess(tx, businessId);
+      if (!moduleAccess.enabledModules.includes(module)) {
+        throw new HttpError(403, `The ${module} module is disabled for this business`, 'BUSINESS_MODULE_DISABLED');
+      }
       if (payload.action === 'customer.create') await assertPlanLimit(tx, businessId, 'customers:write');
       if (payload.action === 'order.create') await assertPlanLimit(tx, businessId, 'orders:write');
       if (payload.action === 'catalog.create') await assertPlanLimit(tx, businessId, 'catalog:write');

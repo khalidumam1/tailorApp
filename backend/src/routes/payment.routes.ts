@@ -8,6 +8,7 @@ import {
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { calculateNetPaid, calculateOutstanding } from '../domain/finance.js';
+import { ensureDefaultAccounts, postJournal, requireBusinessAccount, type SystemAccountKey } from '../domain/accounting.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
@@ -31,16 +32,18 @@ function getIdempotencyKey(req: express.Request): string {
 }
 
 function samePayment(
-  payment: { orderId: string; amount: Prisma.Decimal; method: string; kind: string },
+  payment: { orderId: string; amount: Prisma.Decimal; method: string; kind: string; financialAccountId?: string | null },
   orderId: string,
   amount: Prisma.Decimal,
   method: string,
   kind = 'PAYMENT',
+  financialAccountId?: string,
 ): boolean {
   return payment.orderId === orderId
     && payment.amount.equals(amount)
     && payment.method === method
-    && payment.kind === kind;
+    && payment.kind === kind
+    && (financialAccountId === undefined || payment.financialAccountId === financialAccountId);
 }
 
 function mapFinancialConflict(error: unknown): never {
@@ -152,7 +155,7 @@ router.post('/orders/:orderId', requireBusinessPermission('payments:write'), asy
     where: { businessId_idempotencyKey: { businessId, idempotencyKey: key } },
   });
   if (existing) {
-    if (!samePayment(existing, orderId, amount, input.method)) {
+    if (!samePayment(existing, orderId, amount, input.method, 'PAYMENT', input.financialAccountId)) {
       throw new HttpError(409, 'Idempotency key was already used for a different payment', 'IDEMPOTENCY_CONFLICT');
     }
     res.json({ data: existing, replayed: true });
@@ -163,7 +166,7 @@ router.post('/orders/:orderId', requireBusinessPermission('payments:write'), asy
     const payment = await prisma.$transaction(async (tx) => {
       const order = await tx.order.findFirst({
         where: { id: orderId, businessId, deletedAt: null, status: { not: 'CANCELLED' } },
-        select: { id: true, total: true },
+        select: { id: true, orderNumber: true, total: true },
       });
       if (!order) throw new HttpError(404, 'Active order not found', 'ORDER_NOT_FOUND');
       const currentPaid = await getNetPaid(tx, businessId, orderId);
@@ -171,6 +174,11 @@ router.post('/orders/:orderId', requireBusinessPermission('payments:write'), asy
         throw new HttpError(409, 'Payment exceeds the outstanding order balance', 'PAYMENT_EXCEEDS_BALANCE');
       }
       const receiptNumber = await getReceiptNumber(tx, businessId);
+      const accounts = await ensureDefaultAccounts(tx, businessId);
+      const defaultAccountKey: SystemAccountKey = input.method === 'CASH' ? 'CASH' : input.method === 'BANK' ? 'BANK' : 'DIGITAL';
+      const financialAccount = input.financialAccountId
+        ? await requireBusinessAccount(tx, businessId, input.financialAccountId, { types: ['ASSET'], mustBeCashbook: true })
+        : accounts.get(defaultAccountKey)!;
       const created = await tx.payment.create({
         data: {
           businessId,
@@ -178,9 +186,23 @@ router.post('/orders/:orderId', requireBusinessPermission('payments:write'), asy
           recordedById: actorId,
           amount,
           method: input.method,
+          financialAccountId: financialAccount.id,
           receiptNumber,
           idempotencyKey: key,
         },
+      });
+      await postJournal(tx, {
+        businessId,
+        actorId,
+        sourceType: 'ORDER_PAYMENT',
+        sourceId: created.id,
+        idempotencyKey: `order-payment:${key}`,
+        entryDate: created.createdAt,
+        memo: `Payment ${receiptNumber} for order ${order.orderNumber}`,
+        lines: [
+          { accountId: financialAccount.id, debit: amount, credit: 0 },
+          { accountId: accounts.get('ACCOUNTS_RECEIVABLE')!.id, debit: 0, credit: amount },
+        ],
       });
       await tx.auditEvent.create({
         data: {
@@ -189,7 +211,7 @@ router.post('/orders/:orderId', requireBusinessPermission('payments:write'), asy
           action: 'payment.posted',
           entityType: 'payment',
           entityId: created.id,
-          metadata: { orderId, amount: amount.toFixed(2), method: input.method },
+          metadata: { orderId, amount: amount.toFixed(2), method: input.method, financialAccountId: financialAccount.id },
           requestId: req.requestId,
         },
       });
@@ -230,7 +252,7 @@ router.post('/:paymentId/reversals', requireBusinessPermission('payments:write')
     const reversal = await prisma.$transaction(async (tx) => {
       const original = await tx.payment.findFirst({
         where: { id: paymentId, businessId, kind: 'PAYMENT' },
-        select: { id: true, orderId: true, amount: true, method: true },
+        select: { id: true, orderId: true, amount: true, method: true, financialAccountId: true },
       });
       if (!original) throw new HttpError(404, 'Posted payment not found', 'PAYMENT_NOT_FOUND');
       const previouslyReversed = await tx.payment.aggregate({
@@ -249,6 +271,7 @@ router.post('/:paymentId/reversals', requireBusinessPermission('payments:write')
           recordedById: actorId,
           amount,
           method: original.method,
+          financialAccountId: original.financialAccountId,
           kind: 'REVERSAL',
           correctionOfId: original.id,
           correctionReason: input.reason,
@@ -256,6 +279,27 @@ router.post('/:paymentId/reversals', requireBusinessPermission('payments:write')
           idempotencyKey: key,
         },
       });
+      const originalJournal = await tx.journalEntry.findFirst({
+        where: { businessId, sourceType: 'ORDER_PAYMENT', sourceId: original.id },
+        include: { lines: true },
+      });
+      if (originalJournal) {
+        const reversalLines = originalJournal.lines.map((line) => line.debit.greaterThan(0)
+          ? { accountId: line.accountId, debit: 0, credit: amount }
+          : { accountId: line.accountId, debit: amount, credit: 0 });
+        await postJournal(tx, {
+          businessId,
+          actorId,
+          sourceType: 'ORDER_PAYMENT_REVERSAL',
+          sourceId: created.id,
+          idempotencyKey: `payment-reversal:${key}`,
+          entryDate: created.createdAt,
+          memo: `Payment correction ${receiptNumber}`,
+          reversalOfId: originalJournal.id,
+          allowInactiveAccounts: true,
+          lines: reversalLines,
+        });
+      }
       await tx.auditEvent.create({
         data: {
           businessId,
@@ -263,7 +307,7 @@ router.post('/:paymentId/reversals', requireBusinessPermission('payments:write')
           action: 'payment.reversed',
           entityType: 'payment',
           entityId: created.id,
-          metadata: { correctionOfId: original.id, amount: amount.toFixed(2), reason: input.reason },
+          metadata: { correctionOfId: original.id, amount: amount.toFixed(2), reason: input.reason, financialAccountId: original.financialAccountId },
           requestId: req.requestId,
         },
       });

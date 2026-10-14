@@ -6,6 +6,11 @@ import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { validateNotificationTemplateBody } from '../domain/notification-templates.js';
+import {
+  PLATFORM_ENABLED_MODULES_SETTING_KEY,
+  resolveBusinessModuleAccess,
+  resolvePlatformEnabledModules,
+} from '../business-modules.js';
 
 const router = express.Router();
 const historyQuerySchema = z.object({
@@ -139,6 +144,7 @@ router.get('/configuration', asyncHandler(async (req, res) => {
   });
   if (!business) throw new HttpError(404, 'Business not found', 'BUSINESS_NOT_FOUND');
   if (!business.template) throw new HttpError(409, 'Business has no assigned template', 'BUSINESS_TEMPLATE_MISSING');
+  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId);
 
   const terminology = {
     ...jsonObject(business.template.terminology),
@@ -166,11 +172,11 @@ router.get('/configuration', asyncHandler(async (req, res) => {
         category: business.template.category,
       },
       itemTypes: business.configuration?.itemTypes ?? business.template.itemTypes,
-      availableModules: business.template.enabledModules,
+      availableModules: moduleAccess.platformEnabledModules,
       availablePaymentMethods: business.template.paymentMethods,
       availableDashboardWidgets: business.template.dashboardWidgets,
       terminology,
-      enabledModules: business.configuration?.enabledModules ?? business.template.enabledModules,
+      enabledModules: moduleAccess.enabledModules,
       paymentMethods: business.configuration?.paymentMethods ?? business.template.paymentMethods,
       dashboardWidgets: business.configuration?.dashboardWidgets ?? business.template.dashboardWidgets,
       notificationTemplates: business.configuration?.notificationTemplates ?? {},
@@ -244,10 +250,29 @@ router.put('/configuration', requireBusinessPermission('settings:manage'), async
       if ((business.configuration?.version ?? 0) !== input.version) {
         throw new HttpError(409, 'Configuration changed since it was loaded; reload before saving', 'CONFIGURATION_VERSION_CONFLICT');
       }
-      const templateModules = new Set(template.enabledModules);
-      if (input.enabledModules?.some((module) => !templateModules.has(module))) {
-        throw new HttpError(400, 'Only modules provided by this business template can be enabled', 'INVALID_BUSINESS_MODULE');
+      const platformModuleSetting = await tx.businessSetting.findUnique({
+        where: { businessId_key: { businessId, key: PLATFORM_ENABLED_MODULES_SETTING_KEY } },
+        select: { value: true },
+      });
+      const platformModules = resolvePlatformEnabledModules(
+        template.enabledModules,
+        platformModuleSetting?.value,
+        platformModuleSetting !== null,
+      );
+      const allowedModules = new Set(platformModules);
+      if (input.enabledModules?.some((module) => !allowedModules.has(module))) {
+        throw new HttpError(403, 'A platform administrator has disabled one or more requested modules', 'BUSINESS_MODULE_DISABLED');
       }
+      const templateModules = new Set(template.enabledModules);
+      const storedTenantModules = business.configuration?.enabledModules ?? template.enabledModules;
+      // Preserve a tenant's previous choice while the platform temporarily hides
+      // that module. It becomes visible again only if the platform re-enables it.
+      const nextTenantModules = input.enabledModules === undefined
+        ? storedTenantModules
+        : [...new Set([
+          ...storedTenantModules.filter((module) => templateModules.has(module) && !allowedModules.has(module)),
+          ...input.enabledModules,
+        ])];
       if (input.paymentMethods?.some((method) => !template.paymentMethods.includes(method))) {
         throw new HttpError(400, 'Payment methods must be supported by the assigned business template', 'INVALID_BUSINESS_PAYMENT_METHOD');
       }
@@ -282,7 +307,7 @@ router.put('/configuration', requireBusinessPermission('settings:manage'), async
       };
       const configurationData = {
         terminologyOverrides,
-        enabledModules: input.enabledModules ?? business.configuration?.enabledModules ?? template.enabledModules,
+        enabledModules: nextTenantModules,
         ...(input.itemTypes !== undefined ? { itemTypes: jsonSnapshot(input.itemTypes) } : {}),
         paymentMethods: input.paymentMethods ?? business.configuration?.paymentMethods ?? template.paymentMethods,
         notificationTemplates: input.notificationTemplates ?? business.configuration?.notificationTemplates ?? {},

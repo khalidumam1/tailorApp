@@ -13,7 +13,8 @@ export type NavPage =
   | 'subscription'
   | 'settings'
   | 'business-settings'
-  | 'analytics';
+  | 'analytics'
+  | 'erp';
 
 /** Action to perform once a page opens (e.g. open the order form). */
 export type NavIntent = 'new-order' | 'record-payment';
