@@ -3617,12 +3617,13 @@ function App() {
                     ))}
                   </div>
                   <h3>Item and service types</h3>
-                  <p className="muted">These types control catalog entries, order items, and type-specific custom fields for this business.</p>
+                  <p className="muted">These types control catalog entries, order items, and type-specific custom fields for this business. To rename a type, edit its label; saved type keys cannot be changed. Types used by orders or active catalog items cannot be removed.</p>
                   <div className="content-stack">
                     {businessConfigurationDraft.itemTypes.map((itemType, index) => (
                       <div className="form-grid business-item-type-row" key={`${itemType.key}-${index}`}>
                         <label>Type key<input
                           value={itemType.key}
+                          readOnly={businessConfiguration?.itemTypes.some((item) => item.key === itemType.key)}
                           pattern="[a-z][a-z0-9_-]{0,79}"
                           maxLength={80}
                           onChange={(event) => setBusinessConfigurationDraft({
