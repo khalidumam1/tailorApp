@@ -93,6 +93,55 @@ enum SubscriptionPaymentStatus {
   ADJUSTED
 }
 
+enum StockMovementKind {
+  OPENING
+  RECEIPT
+  CONSUMPTION
+  CUSTOMER_RETURN
+  SUPPLIER_RETURN
+  WASTAGE
+  TRANSFER_IN
+  TRANSFER_OUT
+  ADJUSTMENT
+}
+
+enum LedgerAccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+enum JournalEntryStatus {
+  POSTED
+  REVERSED
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  ORDERED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum SupplierSettlementKind {
+  PAYMENT
+  REFUND
+}
+
+enum CashTransactionKind {
+  RECEIPT
+  EXPENSE
+  TRANSFER
+}
+
+enum ReconciliationStatus {
+  OPEN
+  CLOSED
+}
+
 model BusinessTemplate {
   id                  String                  @id @default(uuid()) @db.Uuid
   key                 String                  @unique @db.VarChar(80)
@@ -130,6 +179,9 @@ model Business {
   currency              String                  @default("PKR") @db.Char(3)
   orderSequence         Int                     @default(0)
   receiptSequence       Int                     @default(0)
+  purchaseSequence      Int                     @default(0)
+  supplierSequence      Int                     @default(0)
+  journalSequence      Int                     @default(0)
   createdAt             DateTime                @default(now()) @db.Timestamptz(3)
   updatedAt             DateTime                @updatedAt @db.Timestamptz(3)
   memberships           Membership[]
@@ -155,6 +207,22 @@ model Business {
   orderWorkflowHistory  OrderWorkflowHistory[]
   workflowStages        WorkflowStage[]
   workflowTransitions   WorkflowTransition[]
+  stockItems            StockItem[]
+  stockVariants          StockVariant[]
+  inventoryLocations    InventoryLocation[]
+  inventoryBalances     InventoryBalance[]
+  inventoryMovements   InventoryMovement[]
+  suppliers             Supplier[]
+  purchaseOrders        PurchaseOrder[]
+  purchaseOrderLines    PurchaseOrderLine[]
+  purchaseReceipts      PurchaseReceipt[]
+  purchaseReceiptLines  PurchaseReceiptLine[]
+  supplierSettlements   SupplierSettlement[]
+  financialAccounts     FinancialAccount[]
+  journalEntries        JournalEntry[]
+  cashTransactions      CashTransaction[]
+  financialOpenings     FinancialOpeningBalance[]
+  bankReconciliations   BankReconciliation[]
 
   @@index([templateId])
 }
@@ -408,6 +476,7 @@ model BusinessItem {
   sku               String?            @db.VarChar(80)
   unit              String             @default("unit") @db.VarChar(40)
   unitPrice         Decimal?           @db.Decimal(12, 2)
+  stockVariantId    String?            @db.Uuid
   sortOrder         Int                @default(0)
   version           Int                @default(1)
   active            Boolean            @default(true)
@@ -416,6 +485,7 @@ model BusinessItem {
   business          Business           @relation(fields: [businessId], references: [id], onDelete: Restrict)
   orderItems        OrderItem[]
   customFieldValues CustomFieldValue[]
+  stockVariant      StockVariant?      @relation(fields: [stockVariantId, businessId], references: [id, businessId], onDelete: Restrict)
 
   @@unique([id, businessId])
   @@unique([businessId, sku])
@@ -506,6 +576,8 @@ model Order {
   promisedAt            DateTime               @db.Timestamptz(3)
   notes                 String?                @db.VarChar(4000)
   total                 Decimal                @db.Decimal(12, 2)
+  idempotencyKey        String?                @db.VarChar(120)
+  idempotencyRequestHash String?               @db.Char(64)
   version               Int                    @default(1)
   deletedAt             DateTime?              @db.Timestamptz(3)
   createdAt             DateTime               @default(now()) @db.Timestamptz(3)
@@ -523,6 +595,7 @@ model Order {
   whatsappNotifications WhatsAppNotification[]
 
   @@unique([businessId, orderNumber])
+  @@unique([businessId, idempotencyKey])
   @@unique([id, businessId])
   @@index([businessId, status, promisedAt])
   @@index([businessId, customerId, createdAt])
@@ -606,10 +679,12 @@ model Payment {
   idempotencyKey        String                 @db.VarChar(100)
   correctionOfId        String?                @db.Uuid
   correctionReason      String?                @db.VarChar(500)
+  financialAccountId    String?                @db.Uuid
   createdAt             DateTime               @default(now()) @db.Timestamptz(3)
   business              Business               @relation(fields: [businessId], references: [id], onDelete: Restrict)
   order                 Order                  @relation(fields: [orderId, businessId], references: [id, businessId], onDelete: Restrict)
   recordedBy            User                   @relation("PaymentRecorder", fields: [recordedById], references: [id], onDelete: Restrict)
+  financialAccount      FinancialAccount?      @relation("PaymentFinancialAccount", fields: [financialAccountId, businessId], references: [id, businessId], onDelete: Restrict)
   correctionOf          Payment?               @relation("PaymentCorrections", fields: [correctionOfId, businessId, orderId], references: [id, businessId, orderId], onDelete: Restrict)
   corrections           Payment[]              @relation("PaymentCorrections")
   whatsappNotifications WhatsAppNotification[]
@@ -809,4 +884,417 @@ model SyncOperation {
 
   @@unique([businessId, clientOperationId])
   @@index([businessId, createdAt])
+}
+
+model StockItem {
+  id             String         @id @default(uuid()) @db.Uuid
+  businessId     String         @db.Uuid
+  kind           String         @db.VarChar(24)
+  name           String         @db.VarChar(160)
+  description    String?        @db.VarChar(1000)
+  baseUnit       String         @db.VarChar(40)
+  reorderPoint   Decimal?       @db.Decimal(20, 6)
+  active         Boolean        @default(true)
+  version        Int            @default(1)
+  idempotencyKey String?        @db.VarChar(120)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
+  business       Business       @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  variants       StockVariant[]
+
+  @@unique([id, businessId])
+  @@unique([businessId, name])
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, active, kind, name])
+}
+
+model StockVariant {
+  id                String              @id @default(uuid()) @db.Uuid
+  businessId        String              @db.Uuid
+  stockItemId       String              @db.Uuid
+  name              String              @db.VarChar(160)
+  sku               String?             @db.VarChar(80)
+  attributes        Json                @default("{}")
+  active            Boolean             @default(true)
+  version           Int                 @default(1)
+  idempotencyKey    String?             @db.VarChar(120)
+  createdAt         DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime            @updatedAt @db.Timestamptz(3)
+  business          Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  stockItem         StockItem           @relation(fields: [stockItemId, businessId], references: [id, businessId], onDelete: Restrict)
+  balances          InventoryBalance[]
+  movements         InventoryMovement[]
+  purchaseOrderLines PurchaseOrderLine[]
+  receiptLines      PurchaseReceiptLine[]
+  businessItems     BusinessItem[]
+
+  @@unique([id, businessId])
+  @@unique([businessId, sku])
+  @@unique([businessId, stockItemId, name])
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, stockItemId, active])
+}
+
+model InventoryLocation {
+  id         String              @id @default(uuid()) @db.Uuid
+  businessId String              @db.Uuid
+  code       String              @db.VarChar(40)
+  name       String              @db.VarChar(120)
+  isDefault  Boolean             @default(false)
+  active     Boolean             @default(true)
+  createdAt  DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime            @updatedAt @db.Timestamptz(3)
+  business   Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  balances   InventoryBalance[]
+  movements  InventoryMovement[]
+  receiptLines PurchaseReceiptLine[]
+
+  @@unique([id, businessId])
+  @@unique([businessId, code])
+  @@index([businessId, active, name])
+}
+
+model InventoryBalance {
+  businessId      String           @db.Uuid
+  variantId       String           @db.Uuid
+  locationId      String           @db.Uuid
+  quantity        Decimal          @default(0) @db.Decimal(20, 6)
+  averageUnitCost Decimal          @default(0) @db.Decimal(14, 4)
+  lastMovementId  String?          @db.Uuid
+  updatedAt       DateTime         @updatedAt @db.Timestamptz(3)
+  business        Business         @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  variant         StockVariant     @relation(fields: [variantId, businessId], references: [id, businessId], onDelete: Restrict)
+  location        InventoryLocation @relation(fields: [locationId, businessId], references: [id, businessId], onDelete: Restrict)
+
+  @@id([businessId, variantId, locationId])
+  @@index([businessId, locationId, quantity])
+}
+
+model InventoryMovement {
+  id                  String               @id @default(uuid()) @db.Uuid
+  businessId          String               @db.Uuid
+  variantId           String               @db.Uuid
+  locationId          String               @db.Uuid
+  kind                StockMovementKind
+  quantity            Decimal              @db.Decimal(20, 6)
+  unitCost            Decimal              @db.Decimal(14, 4)
+  totalCost           Decimal              @db.Decimal(14, 2)
+  balanceBefore       Decimal              @db.Decimal(20, 6)
+  balanceAfter        Decimal              @db.Decimal(20, 6)
+  averageCostBefore   Decimal              @db.Decimal(14, 4)
+  averageCostAfter    Decimal              @db.Decimal(14, 4)
+  sourceType          String               @db.VarChar(40)
+  sourceId            String               @db.VarChar(100)
+  idempotencyKey      String               @db.VarChar(120)
+  note                String?              @db.VarChar(500)
+  actorId             String               @db.Uuid
+  reversalOfId        String?              @db.Uuid
+  occurredAt          DateTime             @default(now()) @db.Timestamptz(3)
+  createdAt           DateTime             @default(now()) @db.Timestamptz(3)
+  business            Business             @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  variant             StockVariant         @relation(fields: [variantId, businessId], references: [id, businessId], onDelete: Restrict)
+  location            InventoryLocation    @relation(fields: [locationId, businessId], references: [id, businessId], onDelete: Restrict)
+  reversalOf          InventoryMovement?   @relation("InventoryMovementReversal", fields: [reversalOfId, businessId], references: [id, businessId], onDelete: Restrict)
+  reversals           InventoryMovement[]  @relation("InventoryMovementReversal")
+
+  @@unique([id, businessId])
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, variantId, locationId, occurredAt])
+  @@index([businessId, sourceType, sourceId])
+}
+
+model Supplier {
+  id            String              @id @default(uuid()) @db.Uuid
+  businessId    String              @db.Uuid
+  code          String              @db.VarChar(40)
+  name          String              @db.VarChar(160)
+  contactName   String?             @db.VarChar(160)
+  phone         String?             @db.VarChar(32)
+  email         String?             @db.VarChar(254)
+  address       String?             @db.VarChar(1000)
+  notes         String?             @db.VarChar(2000)
+  active        Boolean             @default(true)
+  version       Int                 @default(1)
+  idempotencyKey String?            @db.VarChar(120)
+  createdAt     DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime            @updatedAt @db.Timestamptz(3)
+  business      Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  purchaseOrders PurchaseOrder[]
+  settlements   SupplierSettlement[]
+
+  @@unique([id, businessId])
+  @@unique([businessId, code])
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, active, name])
+}
+
+model PurchaseOrder {
+  id                  String              @id @default(uuid()) @db.Uuid
+  businessId          String              @db.Uuid
+  supplierId          String              @db.Uuid
+  orderNumber         String              @db.VarChar(40)
+  status              PurchaseOrderStatus @default(DRAFT)
+  orderedAt           DateTime            @default(now()) @db.Timestamptz(3)
+  dueAt               DateTime?           @db.Timestamptz(3)
+  subtotal            Decimal             @db.Decimal(14, 2)
+  taxAmount           Decimal             @default(0) @db.Decimal(14, 2)
+  total               Decimal             @db.Decimal(14, 2)
+  notes               String?             @db.VarChar(2000)
+  idempotencyKey      String              @db.VarChar(120)
+  version             Int                 @default(1)
+  createdById         String              @db.Uuid
+  createdAt           DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime            @updatedAt @db.Timestamptz(3)
+  business            Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  supplier            Supplier            @relation(fields: [supplierId, businessId], references: [id, businessId], onDelete: Restrict)
+  lines               PurchaseOrderLine[]
+  receipts            PurchaseReceipt[]
+  settlements         SupplierSettlement[]
+
+  @@unique([id, businessId])
+  @@unique([businessId, orderNumber])
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, status, orderedAt])
+  @@index([businessId, supplierId, orderedAt])
+}
+
+model PurchaseOrderLine {
+  id             String              @id @default(uuid()) @db.Uuid
+  businessId     String              @db.Uuid
+  purchaseOrderId String             @db.Uuid
+  variantId      String              @db.Uuid
+  description    String              @db.VarChar(240)
+  orderedQuantity Decimal            @db.Decimal(20, 6)
+  receivedQuantity Decimal           @default(0) @db.Decimal(20, 6)
+  unitCost       Decimal             @db.Decimal(14, 4)
+  lineTotal      Decimal             @db.Decimal(14, 2)
+  createdAt      DateTime            @default(now()) @db.Timestamptz(3)
+  business       Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  purchaseOrder  PurchaseOrder       @relation(fields: [purchaseOrderId, businessId], references: [id, businessId], onDelete: Restrict)
+  variant        StockVariant        @relation(fields: [variantId, businessId], references: [id, businessId], onDelete: Restrict)
+  receiptLines   PurchaseReceiptLine[]
+
+  @@unique([id, businessId])
+  @@index([businessId, purchaseOrderId])
+}
+
+model PurchaseReceipt {
+  id               String                @id @default(uuid()) @db.Uuid
+  businessId       String                @db.Uuid
+  purchaseOrderId  String                @db.Uuid
+  receiptNumber    String                @db.VarChar(40)
+  invoiceReference String?               @db.VarChar(120)
+  receivedAt       DateTime              @default(now()) @db.Timestamptz(3)
+  total            Decimal               @db.Decimal(14, 2)
+  idempotencyKey   String                @db.VarChar(120)
+  actorId          String                @db.Uuid
+  createdAt        DateTime              @default(now()) @db.Timestamptz(3)
+  business         Business              @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  purchaseOrder    PurchaseOrder         @relation(fields: [purchaseOrderId, businessId], references: [id, businessId], onDelete: Restrict)
+  lines            PurchaseReceiptLine[]
+
+  @@unique([id, businessId])
+  @@unique([businessId, receiptNumber])
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, receivedAt])
+}
+
+model PurchaseReceiptLine {
+  id                  String             @id @default(uuid()) @db.Uuid
+  businessId          String             @db.Uuid
+  receiptId           String             @db.Uuid
+  purchaseOrderLineId String             @db.Uuid
+  variantId           String             @db.Uuid
+  locationId          String             @db.Uuid
+  quantity            Decimal            @db.Decimal(20, 6)
+  unitCost            Decimal            @db.Decimal(14, 4)
+  totalCost           Decimal            @db.Decimal(14, 2)
+  business            Business           @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  receipt             PurchaseReceipt    @relation(fields: [receiptId, businessId], references: [id, businessId], onDelete: Restrict)
+  purchaseOrderLine   PurchaseOrderLine  @relation(fields: [purchaseOrderLineId, businessId], references: [id, businessId], onDelete: Restrict)
+  variant             StockVariant       @relation(fields: [variantId, businessId], references: [id, businessId], onDelete: Restrict)
+  location            InventoryLocation  @relation(fields: [locationId, businessId], references: [id, businessId], onDelete: Restrict)
+
+  @@unique([id, businessId])
+  @@index([businessId, receiptId])
+}
+
+model SupplierSettlement {
+  id                 String                @id @default(uuid()) @db.Uuid
+  businessId         String                @db.Uuid
+  supplierId         String                @db.Uuid
+  purchaseOrderId    String?               @db.Uuid
+  financialAccountId String                @db.Uuid
+  kind               SupplierSettlementKind
+  amount             Decimal               @db.Decimal(14, 2)
+  reference          String?               @db.VarChar(120)
+  note               String?               @db.VarChar(500)
+  idempotencyKey     String                @db.VarChar(120)
+  occurredAt         DateTime              @default(now()) @db.Timestamptz(3)
+  actorId            String                @db.Uuid
+  createdAt          DateTime              @default(now()) @db.Timestamptz(3)
+  business           Business              @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  supplier           Supplier              @relation(fields: [supplierId, businessId], references: [id, businessId], onDelete: Restrict)
+  purchaseOrder      PurchaseOrder?        @relation(fields: [purchaseOrderId, businessId], references: [id, businessId], onDelete: Restrict)
+  financialAccount   FinancialAccount      @relation(fields: [financialAccountId, businessId], references: [id, businessId], onDelete: Restrict)
+
+  @@unique([id, businessId])
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, supplierId, occurredAt])
+}
+
+model FinancialAccount {
+  id                  String               @id @default(uuid()) @db.Uuid
+  businessId          String               @db.Uuid
+  code                String               @db.VarChar(40)
+  name                String               @db.VarChar(160)
+  type                LedgerAccountType
+  systemKey           String?              @db.VarChar(40)
+  description         String?              @db.VarChar(500)
+  active              Boolean              @default(true)
+  isSystem            Boolean              @default(false)
+  version             Int                  @default(1)
+  cashbookEnabled     Boolean              @default(false)
+  parentId            String?              @db.Uuid
+  createdAt           DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime             @updatedAt @db.Timestamptz(3)
+  business            Business             @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  parent              FinancialAccount?    @relation("FinancialAccountTree", fields: [parentId, businessId], references: [id, businessId], onDelete: Restrict)
+  children            FinancialAccount[]   @relation("FinancialAccountTree")
+  payments            Payment[]            @relation("PaymentFinancialAccount")
+  supplierSettlements SupplierSettlement[]
+  journalLines        JournalLine[]
+  cashTransactions    CashTransaction[]    @relation("CashTransactionAccount")
+  contraTransactions  CashTransaction[]    @relation("CashTransactionContraAccount")
+  openings            FinancialOpeningBalance[]
+  reconciliations     BankReconciliation[]
+
+  @@unique([id, businessId])
+  @@unique([businessId, code])
+  @@unique([businessId, systemKey])
+  @@index([businessId, type, active, code])
+}
+
+model JournalEntry {
+  id             String             @id @default(uuid()) @db.Uuid
+  businessId     String             @db.Uuid
+  entryNumber    String             @db.VarChar(40)
+  entryDate      DateTime           @db.Timestamptz(3)
+  memo           String             @db.VarChar(500)
+  sourceType     String             @db.VarChar(40)
+  sourceId       String             @db.VarChar(120)
+  idempotencyKey String             @db.VarChar(160)
+  status         JournalEntryStatus @default(POSTED)
+  reversalOfId   String?            @db.Uuid
+  actorId        String             @db.Uuid
+  createdAt      DateTime           @default(now()) @db.Timestamptz(3)
+  business       Business           @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  reversalOf     JournalEntry?      @relation("JournalReversals", fields: [reversalOfId, businessId], references: [id, businessId], onDelete: Restrict)
+  reversals      JournalEntry[]     @relation("JournalReversals")
+  lines          JournalLine[]
+  cashTransaction CashTransaction?
+  openingBalance FinancialOpeningBalance?
+
+  @@unique([id, businessId])
+  @@unique([businessId, entryNumber])
+  @@unique([businessId, idempotencyKey])
+  @@unique([businessId, sourceType, sourceId])
+  @@index([businessId, entryDate, entryNumber])
+}
+
+model JournalLine {
+  id             String          @id @default(uuid()) @db.Uuid
+  businessId     String          @db.Uuid
+  journalEntryId String          @db.Uuid
+  accountId      String          @db.Uuid
+  debit          Decimal         @default(0) @db.Decimal(14, 2)
+  credit         Decimal         @default(0) @db.Decimal(14, 2)
+  memo           String?         @db.VarChar(300)
+  journalEntry   JournalEntry    @relation(fields: [journalEntryId, businessId], references: [id, businessId], onDelete: Restrict)
+  account        FinancialAccount @relation(fields: [accountId, businessId], references: [id, businessId], onDelete: Restrict)
+  reconciliationMatches BankReconciliationMatch[]
+
+  @@unique([id, businessId])
+  @@index([businessId, accountId, journalEntryId])
+}
+
+model CashTransaction {
+  id                 String              @id @default(uuid()) @db.Uuid
+  businessId         String              @db.Uuid
+  kind               CashTransactionKind
+  financialAccountId String              @db.Uuid
+  contraAccountId    String              @db.Uuid
+  amount             Decimal             @db.Decimal(14, 2)
+  occurredAt         DateTime            @default(now()) @db.Timestamptz(3)
+  reference          String?             @db.VarChar(120)
+  memo               String              @db.VarChar(500)
+  idempotencyKey     String              @db.VarChar(120)
+  actorId            String              @db.Uuid
+  journalEntryId     String              @db.Uuid
+  createdAt          DateTime            @default(now()) @db.Timestamptz(3)
+  business           Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  financialAccount   FinancialAccount    @relation("CashTransactionAccount", fields: [financialAccountId, businessId], references: [id, businessId], onDelete: Restrict)
+  contraAccount      FinancialAccount    @relation("CashTransactionContraAccount", fields: [contraAccountId, businessId], references: [id, businessId], onDelete: Restrict)
+  journalEntry       JournalEntry        @relation(fields: [journalEntryId, businessId], references: [id, businessId], onDelete: Restrict)
+
+  @@unique([id, businessId])
+  @@unique([businessId, idempotencyKey])
+  @@unique([businessId, journalEntryId])
+  @@index([businessId, financialAccountId, occurredAt])
+}
+
+model FinancialOpeningBalance {
+  id                 String            @id @default(uuid()) @db.Uuid
+  businessId         String            @db.Uuid
+  accountId          String            @db.Uuid
+  amount             Decimal           @db.Decimal(14, 2)
+  asOf               DateTime          @db.Timestamptz(3)
+  idempotencyKey     String            @db.VarChar(120)
+  actorId            String            @db.Uuid
+  journalEntryId     String            @db.Uuid
+  createdAt          DateTime          @default(now()) @db.Timestamptz(3)
+  business           Business          @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  account            FinancialAccount  @relation(fields: [accountId, businessId], references: [id, businessId], onDelete: Restrict)
+  journalEntry       JournalEntry      @relation(fields: [journalEntryId, businessId], references: [id, businessId], onDelete: Restrict)
+
+  @@unique([businessId, accountId])
+  @@unique([businessId, idempotencyKey])
+  @@unique([businessId, journalEntryId])
+}
+
+model BankReconciliation {
+  id              String               @id @default(uuid()) @db.Uuid
+  businessId      String               @db.Uuid
+  accountId       String               @db.Uuid
+  statementStart  DateTime             @db.Timestamptz(3)
+  statementEnd    DateTime             @db.Timestamptz(3)
+  openingBalance  Decimal              @db.Decimal(14, 2)
+  closingBalance  Decimal              @db.Decimal(14, 2)
+  status          ReconciliationStatus @default(OPEN)
+  idempotencyKey  String?              @db.VarChar(120)
+  actorId         String               @db.Uuid
+  closedAt        DateTime?            @db.Timestamptz(3)
+  createdAt       DateTime             @default(now()) @db.Timestamptz(3)
+  business        Business             @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  account         FinancialAccount     @relation(fields: [accountId, businessId], references: [id, businessId], onDelete: Restrict)
+  matches         BankReconciliationMatch[]
+
+  @@unique([id, businessId])
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, accountId, statementEnd])
+}
+
+model BankReconciliationMatch {
+  id                String              @id @default(uuid()) @db.Uuid
+  businessId        String              @db.Uuid
+  reconciliationId  String              @db.Uuid
+  journalLineId     String              @db.Uuid
+  matchedById       String              @db.Uuid
+  matchedAt         DateTime            @default(now()) @db.Timestamptz(3)
+  reconciliation   BankReconciliation @relation(fields: [reconciliationId, businessId], references: [id, businessId], onDelete: Restrict)
+  journalLine       JournalLine        @relation(fields: [journalLineId, businessId], references: [id, businessId], onDelete: Restrict)
+
+  @@unique([businessId, reconciliationId, journalLineId])
+  @@unique([businessId, journalLineId])
+  @@index([businessId, reconciliationId])
 }

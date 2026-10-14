@@ -1,16 +1,16 @@
 /**
  * Business settings — the shop-level configuration the owner or a manager can
  * change from the phone: business name and logo, enabled modules, payment
- * methods, dashboard widgets, item types, and team invitations. Each section
+ * methods, dashboard widgets, item types, and team roles and members. Each section
  * saves through the business configuration API, which checks the version so
  * a stale copy cannot overwrite newer changes.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 import { useAppStyles } from '../theme/useAppStyles';
 import { useAppTheme } from '../theme/palette';
 import { ActionButton, Field, StatusPill } from '../theme/primitives';
-import { useWorkspace, type BusinessRole } from '../hooks/useWorkspace';
+import { useWorkspace, type BusinessMember, type BusinessPermission, type BusinessRole } from '../hooks/useWorkspace';
 import { itemTypeKeyFrom, sameList } from '../data/format';
 
 type ToggleProps = { value: boolean; onToggle: (next: boolean) => void; disabled?: boolean };
@@ -54,7 +54,14 @@ export function BusinessSettingsScreen() {
   const [invitePassword, setInvitePassword] = useState('');
   const [inviteRoleId, setInviteRoleId] = useState('');
   const [roles, setRoles] = useState<BusinessRole[]>([]);
-  const [rolesError, setRolesError] = useState('');
+  const [members, setMembers] = useState<BusinessMember[]>([]);
+  const [businessPermissions, setBusinessPermissions] = useState<BusinessPermission[]>([]);
+  const [teamLoading, setTeamLoading] = useState(false);
+  const [teamError, setTeamError] = useState('');
+  const [teamNotice, setTeamNotice] = useState('');
+  const [roleEditorOpen, setRoleEditorOpen] = useState(false);
+  const [roleName, setRoleName] = useState('');
+  const [rolePermissions, setRolePermissions] = useState<string[]>([]);
 
   // Reset drafts whenever a fresh configuration is loaded or saved.
   useEffect(() => {
@@ -66,21 +73,32 @@ export function BusinessSettingsScreen() {
     // Keyed on the version: a background refresh with the same version keeps drafts.
   }, [config?.version, config?.business.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Roles are needed only for the invite form.
+  const reloadTeam = useCallback(async () => {
+    if (!canInvite || offline) return;
+    setTeamLoading(true);
+    setTeamError('');
+    try {
+      const [nextRoles, nextMembers, nextPermissions] = await Promise.all([
+        ws.fetchRoles(),
+        ws.fetchBusinessStaff(),
+        ws.fetchBusinessPermissions(),
+      ]);
+      setRoles(nextRoles);
+      setMembers(nextMembers);
+      setBusinessPermissions(nextPermissions);
+      setInviteRoleId((current) => nextRoles.some((role) => role.id === current)
+        ? current
+        : nextRoles[0]?.id ?? '');
+    } catch (failure) {
+      setTeamError(failure instanceof Error ? failure.message : copy.error);
+    } finally {
+      setTeamLoading(false);
+    }
+  }, [canInvite, copy.error, offline, ws.fetchBusinessPermissions, ws.fetchBusinessStaff, ws.fetchRoles]);
+
   useEffect(() => {
-    if (!inviteOpen || !canInvite || offline) return;
-    let active = true;
-    setRolesError('');
-    ws.fetchRoles()
-      .then((items) => {
-        if (!active) return;
-        setRoles(items);
-        setInviteRoleId((current) => current || items[0]?.id || '');
-      })
-      .catch((error: unknown) => { if (active) setRolesError(error instanceof Error ? error.message : copy.error); });
-    return () => { active = false; };
-    // ws.fetchRoles is stable per session; re-run only when the form opens or connectivity changes.
-  }, [inviteOpen, canInvite, offline]);
+    if (canInvite && !offline) void reloadTeam();
+  }, [canInvite, offline, reloadTeam]);
 
   const toggle = (list: string[], setList: (next: string[]) => void, value: string) => {
     setList(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
@@ -107,24 +125,51 @@ export function BusinessSettingsScreen() {
     if (ok) setNewTypeLabel('');
   };
 
+  const createRole = async () => {
+    const name = roleName.trim();
+    if (name.length < 2) {
+      setTeamError(copy.roleNameTooShort);
+      return;
+    }
+    setTeamError('');
+    setTeamNotice('');
+    try {
+      const createdRole = await ws.createBusinessRole({ name, permissions: rolePermissions });
+      setRoleName('');
+      setRolePermissions([]);
+      setRoleEditorOpen(false);
+      setInviteRoleId(createdRole.id);
+      setTeamNotice(copy.roleCreated);
+      await reloadTeam();
+    } catch (failure) {
+      setTeamError(failure instanceof Error ? failure.message : copy.error);
+    }
+  };
+
   const sendInvite = async () => {
-    const ok = await ws.inviteStaffMember({
-      name: inviteName.trim(),
-      email: inviteEmail.trim(),
-      initialPassword: invitePassword,
-      roleId: inviteRoleId,
-    });
-    if (ok) {
+    setTeamError('');
+    setTeamNotice('');
+    try {
+      await ws.inviteStaffMember({
+        name: inviteName.trim(),
+        email: inviteEmail.trim(),
+        initialPassword: invitePassword,
+        roleId: inviteRoleId,
+      });
       setInviteName('');
       setInviteEmail('');
       setInvitePassword('');
       setInviteOpen(false);
-      Alert.alert(copy.sendInvite, copy.inviteCreated);
+      setTeamNotice(copy.inviteCreated);
+      await reloadTeam();
+      Alert.alert(copy.createMember, copy.inviteCreated);
+    } catch (failure) {
+      setTeamError(failure instanceof Error ? failure.message : copy.error);
     }
   };
 
-  const inviteReady = inviteName.trim().length > 0 && inviteEmail.includes('@')
-    && invitePassword.length >= 16 && Boolean(inviteRoleId);
+  const inviteReady = inviteName.trim().length > 0 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inviteEmail.trim())
+    && invitePassword.length >= 16 && roles.some((role) => role.id === inviteRoleId);
 
   return (
     <>
@@ -303,7 +348,19 @@ export function BusinessSettingsScreen() {
 
       {/* Team */}
       <View style={[styles.card, styles.cardAccentAmber]}>
-        <Text style={styles.sectionTitle}>{copy.team}</Text>
+        <View style={styles.pageHeadingRow}>
+          <Text style={styles.sectionTitle}>{copy.team}</Text>
+          {canInvite ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={offline || teamLoading}
+              onPress={() => void reloadTeam()}
+              style={({ pressed }) => [styles.teamRole, (offline || teamLoading) && styles.disabled, pressed && styles.pressed]}
+            >
+              <Text style={styles.teamRoleText}>{teamLoading ? copy.loading : copy.refreshTeam}</Text>
+            </Pressable>
+          ) : null}
+        </View>
         <View style={styles.teamRow}>
           <View style={styles.avatar}><Text style={styles.avatarText}>{(ws.session?.user.name ?? 'Y').slice(0, 1).toUpperCase()}</Text></View>
           <View style={styles.teamMain}>
@@ -314,24 +371,85 @@ export function BusinessSettingsScreen() {
         </View>
         {canInvite ? (
           <>
+            {teamError ? <Text accessibilityRole="alert" style={styles.errorText}>{teamError}</Text> : null}
+            {teamNotice ? <Text accessibilityLiveRegion="polite" style={[styles.listMeta, { color: palette.success }]}>{teamNotice}</Text> : null}
+            {teamLoading ? <Text style={styles.listMeta}>{copy.loadingTeam}</Text> : null}
+
             <Pressable
               accessibilityRole="button"
-              accessibilityState={{ expanded: inviteOpen }}
+              accessibilityState={{ expanded: roleEditorOpen, disabled: offline || ws.saving }}
               android_ripple={{ color: palette.primarySoft }}
-              onPress={() => setInviteOpen((open) => !open)}
-              style={({ pressed }) => [styles.teamRow, { borderBottomWidth: 0 }, pressed && styles.pressed]}
+              disabled={offline || ws.saving}
+              onPress={() => { setRoleEditorOpen((open) => !open); setTeamError(''); }}
+              style={({ pressed }) => [styles.teamRow, pressed && styles.pressed]}
             >
               <View style={[styles.avatar, { backgroundColor: palette.surfaceMuted }]}><Text style={styles.avatarText}>+</Text></View>
               <View style={styles.teamMain}>
-                <Text style={styles.teamName}>{copy.sendInvite}</Text>
+                <Text style={styles.teamName}>{copy.createRole}</Text>
                 <Text style={styles.teamMeta}>{copy.role} · {copy.permissions}</Text>
+              </View>
+            </Pressable>
+            {roleEditorOpen ? (
+              <View style={{ marginTop: 8 }}>
+                <Field label={copy.roleName} value={roleName} onChangeText={setRoleName} maxLength={80} />
+                <Text style={styles.fieldLabel}>{copy.permissions}</Text>
+                <Text style={styles.toggleHint}>{copy.rolePermissionHint}</Text>
+                {businessPermissions.map((permission) => {
+                  const checked = rolePermissions.includes(permission.key);
+                  const allowed = ws.can(permission.key);
+                  return (
+                    <View key={permission.key} style={styles.toggleRow}>
+                      <Text style={styles.toggleLabel}>{permission.description}</Text>
+                      <Toggle
+                        value={checked}
+                        disabled={!allowed}
+                        onToggle={(next) => setRolePermissions((current) => next
+                          ? [...new Set([...current, permission.key])]
+                          : current.filter((key) => key !== permission.key))}
+                      />
+                    </View>
+                  );
+                })}
+                <ActionButton
+                  title={copy.createRole}
+                  loading={ws.saving}
+                  loadingTitle={copy.loading}
+                  disabled={roleName.trim().length < 2 || roleName.trim().length > 80 || offline || ws.saving || teamLoading}
+                  onPress={() => void createRole()}
+                />
+              </View>
+            ) : null}
+
+            <Text style={styles.fieldLabel}>{copy.rolesLabel}</Text>
+            {roles.length ? roles.map((role) => (
+              <View key={role.id} style={styles.teamRow}>
+                <View style={[styles.avatar, { backgroundColor: palette.surfaceMuted }]}><Text style={styles.avatarText}>{role.name.slice(0, 1).toUpperCase()}</Text></View>
+                <View style={styles.teamMain}>
+                  <Text style={styles.teamName}>{role.name}</Text>
+                  <Text style={styles.teamMeta}>{role.memberCount} · {role.permissions.length} {copy.permissions.toLowerCase()}</Text>
+                </View>
+              </View>
+            )) : !teamLoading ? <Text style={styles.listMeta}>{copy.noRoles}</Text> : null}
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: inviteOpen, disabled: offline || ws.saving }}
+              android_ripple={{ color: palette.primarySoft }}
+              disabled={offline || ws.saving}
+              onPress={() => { setInviteOpen((open) => !open); setTeamError(''); }}
+              style={({ pressed }) => [styles.teamRow, pressed && styles.pressed]}
+            >
+              <View style={[styles.avatar, { backgroundColor: palette.surfaceMuted }]}><Text style={styles.avatarText}>+</Text></View>
+              <View style={styles.teamMain}>
+                <Text style={styles.teamName}>{copy.createMember}</Text>
+                <Text style={styles.teamMeta}>{copy.role} · {copy.temporaryPassword}</Text>
               </View>
             </Pressable>
             {inviteOpen ? (
               <View style={{ marginTop: 8 }}>
-                <Field label={copy.inviteName} value={inviteName} onChangeText={setInviteName} />
-                <Field label={copy.email} value={inviteEmail} onChangeText={setInviteEmail} keyboardType="email-address" />
-                <Field label={copy.temporaryPassword} value={invitePassword} onChangeText={setInvitePassword} secureTextEntry />
+                <Field label={copy.inviteName} value={inviteName} onChangeText={setInviteName} maxLength={160} />
+                <Field label={copy.email} value={inviteEmail} onChangeText={setInviteEmail} keyboardType="email-address" maxLength={254} />
+                <Field label={copy.temporaryPassword} value={invitePassword} onChangeText={setInvitePassword} secureTextEntry maxLength={72} />
                 <Text style={styles.fieldLabel}>{copy.role}</Text>
                 <View style={styles.chipWrap}>
                   {roles.map((role) => {
@@ -350,17 +468,30 @@ export function BusinessSettingsScreen() {
                     );
                   })}
                 </View>
-                {rolesError ? <Text accessibilityRole="alert" style={styles.errorText}>{rolesError}</Text> : null}
-                {roles.length === 0 && !rolesError ? <Text style={styles.listMeta}>{copy.noRoles}</Text> : null}
+                {roles.length === 0 && !teamLoading ? <Text style={styles.listMeta}>{copy.noRoles}</Text> : null}
                 <ActionButton
-                  title={copy.sendInvite}
+                  title={copy.createMember}
                   loading={ws.saving}
                   loadingTitle={copy.loading}
-                  disabled={!inviteReady || offline || ws.saving}
+                  disabled={!inviteReady || offline || ws.saving || teamLoading}
                   onPress={() => void sendInvite()}
                 />
               </View>
             ) : null}
+
+            <Text style={styles.fieldLabel}>{copy.teamMembers}</Text>
+            {members.filter((member) => member.role.name !== 'Owner').length ? members
+              .filter((member) => member.role.name !== 'Owner')
+              .map((member) => (
+                <View key={member.id} style={styles.teamRow}>
+                  <View style={[styles.avatar, { backgroundColor: palette.surfaceMuted }]}><Text style={styles.avatarText}>{member.user.name.slice(0, 1).toUpperCase()}</Text></View>
+                  <View style={styles.teamMain}>
+                    <Text style={styles.teamName}>{member.user.name}</Text>
+                    <Text style={styles.teamMeta}>{member.user.email} · {member.role.name} · {member.active ? copy.activeMember : copy.removedMember}</Text>
+                  </View>
+                  <StatusPill tone={member.active ? 'mint' : 'muted'}>{member.active ? copy.activeMember : copy.removedMember}</StatusPill>
+                </View>
+              )) : !teamLoading ? <Text style={styles.listMeta}>{copy.noTeamMembers}</Text> : null}
           </>
         ) : null}
       </View>

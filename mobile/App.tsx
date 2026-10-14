@@ -6,7 +6,7 @@
  * floating tab bar. Every other page is pushed onto a back stack and opened
  * with a back control (or the Android back button).
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, BackHandler, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -36,6 +36,7 @@ import { SubscriptionScreen } from './src/screens/SubscriptionScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { BusinessSettingsScreen } from './src/screens/BusinessSettingsScreen';
 import { AnalyticsScreen } from './src/screens/AnalyticsScreen';
+import { ErpScreen } from './src/screens/ErpScreen';
 import { ActionButton } from './src/theme/primitives';
 
 const TAB_PAGES: TabKey[] = ['home', 'orders', 'payments', 'activity', 'more'];
@@ -56,18 +57,40 @@ function AppShell() {
   const ws = useWorkspace();
   const styles = useAppStyles();
   const { themeMode, palette } = useAppTheme();
+  const pageAccess = useMemo(() => {
+    const permissions = new Set(ws.session?.permissions ?? []);
+    const modules = new Set(ws.businessConfiguration?.enabledModules ?? []);
+    const access = new Set<NavPage>(['home', 'more', 'settings']);
+    if (permissions.has('settings:manage')) access.add('business-settings');
+    if (permissions.has('orders:read') && modules.has('orders')) access.add('orders');
+    if (permissions.has('payments:read') && modules.has('payments')) access.add('payments');
+    if (permissions.has('customers:read') && modules.has('customers')) access.add('customers');
+    if (permissions.has('orders:read') && modules.has('catalog')) access.add('catalog');
+    if (permissions.has('measurements:read') && modules.has('measurements')) access.add('measurements');
+    if (permissions.has('notifications:read') && modules.has('notifications')) access.add('notifications');
+    if (permissions.has('subscriptions:read')) access.add('subscription');
+    if (permissions.has('orders:read') && modules.has('orders') && modules.has('reports')) access.add('analytics');
+    if ((permissions.has('inventory:read') && modules.has('inventory'))
+      || (permissions.has('suppliers:read') && modules.has('suppliers'))
+      || (permissions.has('purchasing:read') && modules.has('purchasing'))
+      || (permissions.has('cashbook:read') && modules.has('cashbook'))
+      || (permissions.has('accounting:read') && modules.has('accounting'))) access.add('erp');
+    if (access.has('analytics') || access.has('notifications') || access.has('measurements')) access.add('activity');
+    return access;
+  }, [ws.businessConfiguration?.enabledModules, ws.session?.permissions]);
   // stack[0] is always a root tab; deeper entries are pushed pages.
   const [stack, setStack] = useState<NavPage[]>(['home']);
   const [intent, setIntent] = useState<NavIntent | null>(null);
 
   const navigate = useCallback<Navigate>((target, nextIntent) => {
+    if (!pageAccess.has(target)) return;
     setIntent(nextIntent ?? null);
     setStack((current) => {
       if ((TAB_PAGES as NavPage[]).includes(target)) return [target];
       if (current[current.length - 1] === target) return current;
       return [...current, target];
     });
-  }, []);
+  }, [pageAccess]);
 
   const goBack = useCallback(() => {
     setStack((current) => (current.length > 1 ? current.slice(0, -1) : current));
@@ -89,6 +112,11 @@ function AppShell() {
   // Clear per-page errors whenever the page changes.
   const page = stack[stack.length - 1];
   useEffect(() => { ws.setError(''); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const root = stack[0] ?? 'home';
+    if (!pageAccess.has(root)) setStack(['home']);
+    else if (!pageAccess.has(page)) setStack([root]);
+  }, [pageAccess, page, stack]);
 
   if (ws.booting) {
     return (
@@ -119,9 +147,9 @@ function AppShell() {
 
   const tabs: TabDescriptor[] = [
     { key: 'home', label: ws.copy.home, icon: 'home' },
-    { key: 'orders', label: ws.term('orders', ws.copy.orders), icon: 'orders' },
-    { key: 'payments', label: ws.copy.paymentsTab, icon: 'wallet' },
-    { key: 'activity', label: ws.copy.activityTab, icon: 'chart' },
+    ...(pageAccess.has('orders') ? [{ key: 'orders' as const, label: ws.term('orders', ws.copy.orders), icon: 'orders' as const }] : []),
+    ...(pageAccess.has('payments') ? [{ key: 'payments' as const, label: ws.copy.paymentsTab, icon: 'wallet' as const }] : []),
+    ...(pageAccess.has('activity') ? [{ key: 'activity' as const, label: ws.copy.activityTab, icon: 'chart' as const }] : []),
     { key: 'more', label: ws.copy.moreTab, icon: 'menu' },
   ];
 
@@ -165,6 +193,9 @@ function AppShell() {
       break;
     case 'analytics':
       content = <AnalyticsScreen />;
+      break;
+    case 'erp':
+      content = <ErpScreen />;
       break;
     default:
       content = null;

@@ -1675,3 +1675,171 @@ tbody td strong { display: block; color: var(--ink-900); font-size: .8125rem; fo
   .row-actions { justify-content: flex-start; }
   .auth-card { padding: 22px; }
 }
+
+/* --------------------------------------------------------------------------
+   shadcn-admin visual system
+   --------------------------------------------------------------------------
+   The business and platform consoles share shadcn-admin's neutral zinc/slate
+   surfaces, compact controls, 10px card radius, Inter/Manrope typography,
+   restrained borders and high-contrast primary actions. Configured business
+   colors remain available for uploaded brand marks, not for core controls.
+*/
+:root {
+  --brand-900: #09090b;
+  --brand-800: #18181b;
+  --brand-700: #27272a;
+  --brand-600: #18181b;
+  --brand-500: #27272a;
+  --brand-400: #52525b;
+  --brand-300: #a1a1aa;
+  --brand-100: #e4e4e7;
+  --brand-50: #f4f4f5;
+  --brand-foreground: #fafafa;
+
+  --ink-900: #09090b;
+  --ink-800: #18181b;
+  --ink-700: #3f3f46;
+  --ink-600: #52525b;
+  --ink-500: #71717a;
+  --ink-400: #a1a1aa;
+  --ink-300: #d4d4d8;
+  --canvas: #ffffff;
+  --surface: #ffffff;
+  --surface-sunken: #f4f4f5;
+  --surface-raised: #ffffff;
+  --line: #e4e4e7;
+  --line-strong: #d4d4d8;
+  --line-soft: #f0f0f2;
+
+  --info-fg: #1d4ed8;
+  --info-bg: #eff6ff;
+  --info-line: #dbeafe;
+  --warn-fg: #a16207;
+  --warn-bg: #fefce8;
+  --warn-line: #fde68a;
+  --ok-fg: #15803d;
+  --ok-bg: #f0fdf4;
+  --ok-line: #bbf7d0;
+  --bad-fg: #b91c1c;
+  --bad-bg: #fef2f2;
+  --bad-line: #fecaca;
+
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: Manrope, var(--font-ui);
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 10px;
+  --r-xl: 14px;
+  --r-2xl: 18px;
+  --shadow-xs: 0 1px 2px rgb(9 9 11 / 5%);
+  --shadow-sm: 0 1px 3px rgb(9 9 11 / 7%);
+  --shadow-md: 0 4px 12px rgb(9 9 11 / 9%);
+  --shadow-lg: 0 12px 28px rgb(9 9 11 / 12%);
+  --shadow-xl: 0 24px 48px rgb(9 9 11 / 18%);
+  --ring: 0 0 0 3px rgb(113 113 122 / 24%);
+  --shell-sidebar: 256px;
+  --shell-gutter: 24px;
+  --topbar-height: 60px;
+}
+
+:root[data-theme="dark"] {
+  --brand-900: #fafafa;
+  --brand-800: #f4f4f5;
+  --brand-700: #e4e4e7;
+  --brand-600: #e4e4e7;
+  --brand-500: #d4d4d8;
+  --brand-400: #a1a1aa;
+  --brand-300: #71717a;
+  --brand-100: #3f3f46;
+  --brand-50: #27272a;
+  --brand-foreground: #18181b;
+
+  --ink-900: #fafafa;
+  --ink-800: #f4f4f5;
+  --ink-700: #d4d4d8;
+  --ink-600: #a1a1aa;
+  --ink-500: #a1a1aa;
+  --ink-400: #71717a;
+  --ink-300: #52525b;
+  --canvas: #09090b;
+  --surface: #0c0c0f;
+  --surface-sunken: #18181b;
+  --surface-raised: #18181b;
+  --line: rgb(244 244 245 / 10%);
+  --line-strong: rgb(244 244 245 / 16%);
+  --line-soft: rgb(244 244 245 / 7%);
+
+  --info-fg: #93c5fd;
+  --info-bg: #172554;
+  --info-line: #1e3a8a;
+  --warn-fg: #fde047;
+  --warn-bg: #29220b;
+  --warn-line: #57420f;
+  --ok-fg: #86efac;
+  --ok-bg: #052e16;
+  --ok-line: #14532d;
+  --bad-fg: #fca5a5;
+  --bad-bg: #450a0a;
+  --bad-line: #7f1d1d;
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 24%);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 30%);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 34%);
+  --shadow-lg: 0 12px 28px rgb(0 0 0 / 40%);
+  --shadow-xl: 0 24px 48px rgb(0 0 0 / 50%);
+  --ring: 0 0 0 3px rgb(161 161 170 / 35%);
+}
+
+h1, h2, h3, h4, .brand-lockup strong { font-family: var(--font-display); }
+.button-primary { color: var(--brand-foreground); background: var(--brand-600); border-color: var(--brand-600); }
+.button-primary:hover:not(:disabled) { background: var(--brand-700); border-color: var(--brand-700); }
+.nav-item.active { color: var(--brand-800); background: var(--brand-50); }
+.nav-item.active::before, .platform-nav-item.is-active::after { background-color: var(--brand-600); }
+.nav-item.active .nav-icon, .platform-nav-item.is-active .platform-nav-icon { color: var(--brand-600); }
+.platform-nav-item.is-active::after { background: var(--brand-600); }
+input:focus, select:focus, textarea:focus { border-color: var(--brand-400); box-shadow: var(--ring); }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--brand-600); }
+.progress-fill { background: var(--brand-600); }
+.auth-support a:hover { color: var(--brand-700); }
+.template-json-editor:focus { border-color: var(--brand-400); }
+
+/* ERP page: dense, scan-friendly layouts that use the shared admin primitives. */
+.erp-workspace { gap: 16px; }
+.erp-module-tabs { width: max-content; max-width: 100%; overflow-x: auto; gap: 3px; }
+.erp-module-tabs button { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.erp-module-tabs svg { width: 15px; height: 15px; }
+.erp-two-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 16px; }
+.erp-alert-panel { border-color: var(--warn-line); background: color-mix(in srgb, var(--warn-bg) 45%, var(--surface)); }
+.erp-alert-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.erp-alert-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; padding-bottom: 9px; border-bottom: 1px solid var(--line); }
+.erp-alert-list li:last-child { padding-bottom: 0; border-bottom: 0; }
+.erp-alert-list strong { color: var(--ink-800); font-weight: 600; }
+.erp-alert-list span { color: var(--ink-500); }
+.erp-report-total { display: flex; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line-soft); color: var(--ink-600); }
+.erp-report-total strong { color: var(--ink-800); font-variant-numeric: tabular-nums; }
+.erp-report-total.is-total { margin-top: 2px; padding-top: 13px; color: var(--ink-900); font-weight: 650; }
+.erp-report-total.is-total strong { color: var(--ink-900); }
+.erp-report-list { display: grid; gap: 8px; margin-top: 18px; }
+.erp-report-list h4 { margin: 8px 0 0; color: var(--ink-500); font-size: .6875rem; letter-spacing: .07em; text-transform: uppercase; }
+.erp-report-list > div { display: flex; justify-content: space-between; gap: 12px; color: var(--ink-600); }
+.erp-report-list > div strong { color: var(--ink-800); font-variant-numeric: tabular-nums; }
+.erp-total-row td { border-top: 1px solid var(--line-strong); font-weight: 700; }
+.erp-reconciliation-list { display: grid; gap: 6px; max-height: 290px; overflow: auto; margin-bottom: 14px; }
+.erp-reconciliation { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--ink-700); text-align: left; }
+.erp-reconciliation strong { color: var(--ink-900); }
+.erp-reconciliation span:nth-child(2) { color: var(--ink-500); font-size: .75rem; }
+.erp-reconciliation.is-active { border-color: var(--brand-400); background: var(--brand-50); }
+.erp-date-filter { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.erp-date-filter input { min-width: 150px; }
+.erp-checkbox { display: flex !important; align-items: center; gap: 8px !important; }
+.erp-checkbox input { width: 16px; min-height: 16px; }
+
+@media (max-width: 980px) {
+  .erp-two-column { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .erp-module-tabs { width: 100%; }
+  .erp-date-filter { width: 100%; justify-content: space-between; }
+  .erp-date-filter input { flex: 1; }
+}

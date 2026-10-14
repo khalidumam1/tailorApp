@@ -37,7 +37,7 @@ router.get('/templates', requireBusinessPermission('measurements:read'), asyncHa
   res.json({ data: { items: templates } });
 }));
 
-router.post('/templates', requireBusinessPermission('settings:manage'), asyncHandler(async (req, res) => {
+router.post('/templates', requireBusinessPermission('settings:manage', undefined, 'measurements'), asyncHandler(async (req, res) => {
   const { businessId, actorId } = getContext(req);
   const input = createGarmentTemplateSchema.parse(req.body);
   if (!uniqueTemplateKeys(input.fields)) {

@@ -74,6 +74,7 @@ export function DashboardScreen({ onNavigate }: { onNavigate: Navigate }) {
       {ws.error ? <Text accessibilityRole="alert" style={styles.errorBanner}>{ws.error}</Text> : null}
 
       {/* Hero balance card */}
+      {ws.can('payments:read') && ws.moduleEnabled('payments') ? (
       <View style={styles.heroCard}>
         <Text style={styles.heroLabel}>{copy.totalBalance}</Text>
         <Text style={styles.heroSubLabel}>{copy.balanceSubtitle}</Text>
@@ -92,15 +93,16 @@ export function DashboardScreen({ onNavigate }: { onNavigate: Navigate }) {
           </Text>
         </View>
       </View>
+      ) : null}
 
       {/* Quick action row */}
       <View style={styles.quickRow}>
         {([
-          { icon: 'plus' as IconName, label: copy.newOrderAction, disabled: !ws.can('orders:write'), onPress: () => onNavigate('orders', 'new-order') },
-          { icon: 'wallet' as IconName, label: copy.recordPaymentAction, disabled: !ws.can('payments:write'), onPress: () => onNavigate('payments', 'record-payment') },
-          { icon: 'send' as IconName, label: copy.sendMessageAction, disabled: !ws.can('customers:read'), onPress: () => onNavigate('customers') },
-          { icon: 'chart' as IconName, label: copy.reportAction, disabled: false, onPress: () => onNavigate('analytics') },
-        ]).map((q) => (
+          { icon: 'plus' as IconName, label: copy.newOrderAction, visible: ws.moduleEnabled('orders') && ws.can('orders:write'), disabled: !ws.can('orders:write'), onPress: () => onNavigate('orders', 'new-order') },
+          { icon: 'wallet' as IconName, label: copy.recordPaymentAction, visible: ws.moduleEnabled('payments') && ws.can('payments:write'), disabled: !ws.can('payments:write'), onPress: () => onNavigate('payments', 'record-payment') },
+          { icon: 'send' as IconName, label: copy.sendMessageAction, visible: ws.moduleEnabled('customers') && ws.can('customers:read'), disabled: !ws.can('customers:read'), onPress: () => onNavigate('customers') },
+          { icon: 'chart' as IconName, label: copy.reportAction, visible: ws.moduleEnabled('orders') && ws.moduleEnabled('reports') && ws.can('orders:read'), disabled: false, onPress: () => onNavigate('analytics') },
+        ]).filter((q) => q.visible).map((q) => (
           <Pressable
             key={q.label}
             accessibilityRole="button"
@@ -122,7 +124,9 @@ export function DashboardScreen({ onNavigate }: { onNavigate: Navigate }) {
       {/* Metric cards */}
       <View style={styles.chipWrap}>
         {ws.businessConfiguration?.dashboardWidgets
-          .filter((key) => ws.can('orders:read') || key === 'newOrders')
+          .filter((key) => ws.can('orders:read') && ws.moduleEnabled('orders')
+            && (!['outstanding', 'collectedToday'].includes(key)
+              || (ws.can('payments:read') && ws.moduleEnabled('payments'))))
           .map((key) => {
             const map: Record<string, [string, string]> = {
               newOrders: [newOrdersCount, copy.ordersToday],
@@ -159,7 +163,9 @@ export function DashboardScreen({ onNavigate }: { onNavigate: Navigate }) {
         </View>
       ) : null}
 
-      {/* Order value mini-chart */}
+      {/* Order value mini-chart and recent feed */}
+      {ws.can('orders:read') && ws.moduleEnabled('orders') ? (
+      <>
       <View style={styles.chartCard}>
         <View style={styles.chartHeader}>
           <View>
@@ -207,6 +213,8 @@ export function DashboardScreen({ onNavigate }: { onNavigate: Navigate }) {
           );
         })
       )}
+      </>
+      ) : null}
 
       {/* Sync up-to-date pill */}
       <View style={[styles.syncCard, { marginTop: 12 }]}>

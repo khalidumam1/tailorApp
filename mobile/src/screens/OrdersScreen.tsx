@@ -172,7 +172,7 @@ export function OrdersScreen({
                         );
                       }) : null}
 
-                      {ws.can('payments:write') && !paymentOpen ? (
+                      {ws.can('payments:write') && ws.moduleEnabled('payments') && !paymentOpen ? (
                         <Pressable
                           accessibilityRole="button"
                           accessibilityState={{ disabled: ws.online !== true || !synced, busy: ws.openingPaymentOrderId === order.id }}
@@ -192,7 +192,7 @@ export function OrdersScreen({
                         </Pressable>
                       ) : null}
 
-                      {paymentOpen && ws.can('payments:write') ? <PaymentForm /> : null}
+                      {paymentOpen && ws.can('payments:write') && ws.moduleEnabled('payments') ? <PaymentForm /> : null}
                     </View>
                   );
                 })

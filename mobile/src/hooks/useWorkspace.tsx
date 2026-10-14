@@ -107,7 +107,21 @@ export type WhatsAppNotification = {
 };
 
 type ShopOption = { id: string; name: string };
-export type BusinessRole = { id: string; name: string; isSystem: boolean; memberCount: number };
+export type BusinessRole = {
+  id: string;
+  name: string;
+  isSystem: boolean;
+  permissions: string[];
+  memberCount: number;
+};
+export type BusinessPermission = { key: string; description: string };
+export type BusinessMember = {
+  id: string;
+  active: boolean;
+  createdAt: string;
+  user: { id: string; name: string; email: string; active: boolean };
+  role: { id: string; name: string };
+};
 type SyncState = Awaited<ReturnType<typeof loadSyncState>>;
 type SubscriptionPlan = { id: string; name: string; monthlyPrice: string; yearlyPrice: string };
 type SubscriptionBilling = {
@@ -288,6 +302,7 @@ export type WorkspaceContextValue = {
   stageLabel: (key: string) => string;
 
   // Actions
+  erpRequest: <T = unknown>(route: string, options?: { method?: string; body?: unknown; idempotencyKey?: string }) => Promise<T>;
   handleSignIn: (businessId?: string) => Promise<void>;
   selectShop: (shop: ShopOption) => Promise<void>;
   handleSignOut: () => Promise<void>;
@@ -307,7 +322,10 @@ export type WorkspaceContextValue = {
   cancelOrderPayment: () => void;
   saveBusinessConfiguration: (patch: Record<string, unknown>) => Promise<boolean>;
   fetchRoles: () => Promise<BusinessRole[]>;
-  inviteStaffMember: (input: { name: string; email: string; initialPassword: string; roleId: string }) => Promise<boolean>;
+  fetchBusinessPermissions: () => Promise<BusinessPermission[]>;
+  fetchBusinessStaff: () => Promise<BusinessMember[]>;
+  createBusinessRole: (input: { name: string; permissions: string[] }) => Promise<BusinessRole>;
+  inviteStaffMember: (input: { name: string; email: string; initialPassword: string; roleId: string }) => Promise<BusinessMember>;
 
   // Auth-only
   email: string;
@@ -537,6 +555,21 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     });
   }, [copy.error]);
 
+  const erpRequest = useCallback(async <T,>(
+    route: string,
+    options: { method?: string; body?: unknown; idempotencyKey?: string } = {},
+  ): Promise<T> => {
+    const activeSession = sessionRef.current;
+    if (!activeSession) throw new Error('Please sign in again.');
+    if (!route.startsWith('/')) throw new Error('ERP API routes must be absolute versioned paths.');
+    const response = await apiRequest<{ data: T }>(activeSession, `/api/v1${route}`, {
+      method: options.method,
+      body: options.body,
+      headers: options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : undefined,
+    }, updateSession);
+    return response.data;
+  }, [updateSession]);
+
   const resetWorkspaceData = useCallback(() => {
     workspaceGeneration.current += 1;
     setBusinessConfiguration(null);
@@ -748,7 +781,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (!isCurrentWorkspace(generation, businessId)) return;
       await refreshLocal(businessId);
       if (!isCurrentWorkspace(generation, businessId)) return;
-      if (session.permissions.includes('orders:read')) {
+      if (session.permissions.includes('orders:read')
+        && businessConfiguration?.enabledModules.includes('orders') === true) {
         const result = await apiRequest<{ data: Record<string, unknown> }>(
           session,
           '/api/v1/reports/dashboard',
@@ -1350,19 +1384,49 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return (response.data?.items ?? []).filter((role) => role.name !== 'Owner');
   }, [copy.settingsOnline, online, session, updateSession]);
 
-  const inviteStaffMember = useCallback(async (input: { name: string; email: string; initialPassword: string; roleId: string }): Promise<boolean> => {
-    if (!session || online !== true) {
-      setError(copy.settingsOnline);
-      return false;
-    }
+  const fetchBusinessPermissions = useCallback(async (): Promise<BusinessPermission[]> => {
+    if (!session || online !== true) throw new Error(copy.settingsOnline);
+    const response = await apiRequest<{ data?: { items?: BusinessPermission[] } }>(session, '/api/v1/business/permissions', {}, updateSession);
+    return response.data?.items ?? [];
+  }, [copy.settingsOnline, online, session, updateSession]);
+
+  const fetchBusinessStaff = useCallback(async (): Promise<BusinessMember[]> => {
+    if (!session || online !== true) throw new Error(copy.settingsOnline);
+    const response = await apiRequest<{ data?: { items?: BusinessMember[] } }>(session, '/api/v1/business/staff', {}, updateSession);
+    return response.data?.items ?? [];
+  }, [copy.settingsOnline, online, session, updateSession]);
+
+  const createBusinessRole = useCallback(async (input: { name: string; permissions: string[] }): Promise<BusinessRole> => {
+    if (!session || online !== true) throw new Error(copy.settingsOnline);
     setSaving(true);
     setError('');
     try {
-      await apiRequest(session, '/api/v1/business/staff', { method: 'POST', body: input }, updateSession);
-      return true;
-    } catch (inviteFailure) {
-      setError(inviteFailure instanceof Error ? inviteFailure.message : copy.error);
-      return false;
+      const response = await apiRequest<{ data?: BusinessRole }>(session, '/api/v1/business/roles', {
+        method: 'POST',
+        body: { name: input.name.trim(), permissions: [...new Set(input.permissions)] },
+      }, updateSession);
+      if (!response.data) throw new Error(copy.error);
+      return response.data;
+    } finally {
+      setSaving(false);
+    }
+  }, [copy.error, copy.settingsOnline, online, session, updateSession]);
+
+  const inviteStaffMember = useCallback(async (input: { name: string; email: string; initialPassword: string; roleId: string }): Promise<BusinessMember> => {
+    if (!session || online !== true) throw new Error(copy.settingsOnline);
+    setSaving(true);
+    setError('');
+    try {
+      const response = await apiRequest<{ data?: BusinessMember }>(session, '/api/v1/business/staff', {
+        method: 'POST',
+        body: {
+          ...input,
+          name: input.name.trim(),
+          email: input.email.trim().toLowerCase(),
+        },
+      }, updateSession);
+      if (!response.data) throw new Error(copy.error);
+      return response.data;
     } finally {
       setSaving(false);
     }
@@ -1529,6 +1593,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     customerFields,
     catalogFields,
     stageLabel,
+    erpRequest,
     handleSignIn,
     selectShop,
     handleSignOut,
@@ -1548,6 +1613,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     cancelOrderPayment,
     saveBusinessConfiguration,
     fetchRoles,
+    fetchBusinessPermissions,
+    fetchBusinessStaff,
+    createBusinessRole,
     inviteStaffMember,
     email,
     setEmail,
@@ -1571,11 +1639,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     subscriptionCycle, subscriptionPayment, membership, can, term, moduleEnabled,
     paymentMethodOptions, paymentMethodLabel, selectedCatalogTypeKey, visibleCatalogFields,
     selectedTemplate, currentItemType, orderItemFieldDefinitions, orderItemFields, orderFields,
-    customerFields, catalogFields, stageLabel, handleSignIn, selectShop, handleSignOut,
+    customerFields, catalogFields, stageLabel, erpRequest, handleSignIn, selectShop, handleSignOut,
     changeLanguage, submitSubscriptionPayment, saveCustomer, saveOrder, saveMeasurements,
     saveCatalogItem, toggleCatalogItem, transitionOrder, openOrderPayment, recordPayment,
     runSync, refreshNotificationHistory, refreshSubscriptionBilling, email, password,
-    authBusy, shopChoices, cancelOrderPayment, saveBusinessConfiguration, fetchRoles, inviteStaffMember,
+    authBusy, shopChoices, cancelOrderPayment, saveBusinessConfiguration, fetchRoles,
+    fetchBusinessPermissions, fetchBusinessStaff, createBusinessRole, inviteStaffMember,
   ]);
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

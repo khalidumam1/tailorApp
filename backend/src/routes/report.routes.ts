@@ -6,6 +6,7 @@ import { calculateNetPaid } from '../domain/finance.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
+import { resolveBusinessModuleAccess } from '../business-modules.js';
 
 const router = express.Router();
 const rangeSchema = z.object({
@@ -50,8 +51,13 @@ router.use(authenticate);
 
 router.get('/dashboard', requireBusinessPermission('orders:read'), asyncHandler(async (req, res) => {
   const businessId = getBusinessId(req);
+  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId);
+  if (!moduleAccess.enabledModules.includes('orders')) {
+    throw new HttpError(403, 'The orders module is disabled for this business', 'BUSINESS_MODULE_DISABLED');
+  }
   const { start, end } = karachiDayRange();
-  const canReadPayments = req.auth?.permissions.includes('payments:read') === true;
+  const canReadPayments = req.auth?.permissions.includes('payments:read') === true
+    && moduleAccess.enabledModules.includes('payments');
 
   const [
     newOrders,
@@ -112,6 +118,10 @@ router.get('/dashboard', requireBusinessPermission('orders:read'), asyncHandler(
 
 router.get('/summary', requireBusinessPermission('reports:read'), asyncHandler(async (req, res) => {
   const businessId = getBusinessId(req);
+  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId);
+  if (!moduleAccess.enabledModules.includes('orders') || !moduleAccess.enabledModules.includes('payments')) {
+    throw new HttpError(403, 'This report requires the orders and payments modules to be enabled', 'BUSINESS_MODULE_DISABLED');
+  }
   const { from, to } = rangeSchema.parse(req.query);
   const start = new Date(from);
   const end = new Date(to);

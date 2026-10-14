@@ -1,5 +1,5 @@
 import { Prisma, type CustomFieldDefinition, type OrderStatus } from '@prisma/client';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import express from 'express';
 import {
   createAlterationSchema,
@@ -12,6 +12,8 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { calculateNetPaid, calculateOutstanding } from '../domain/finance.js';
+import { ensureDefaultAccounts, postJournal } from '../domain/accounting.js';
+import { getOrCreateDefaultLocation, postInventoryMovement } from '../domain/inventory.js';
 import { customFieldValueData, validateCustomFieldValues, withBuiltInOrderItemFields } from '../domain/custom-fields.js';
 import {
   businessRoleKey,
@@ -23,6 +25,7 @@ import {
 } from '../domain/orders.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
+import { resolveBusinessModuleAccess } from '../business-modules.js';
 import { assertPlanLimit } from '../plan-limits.js';
 import { queueOrderCreated, queueOrderReady, queueOrderStatusChanged } from '../whatsapp.js';
 
@@ -32,6 +35,40 @@ const itemTypesSchema = z.array(z.object({
   key: z.string(),
   label: z.string(),
 }).strict());
+const idempotencyKeySchema = z.string().uuid();
+const orderCreateInclude = {
+  customer: { select: { id: true, name: true, phone: true } },
+  items: true,
+  currentWorkflowStage: true,
+  workflowHistory: { orderBy: { createdAt: 'asc' } },
+} as const;
+
+function idempotencyKey(req: express.Request): string {
+  const parsed = idempotencyKeySchema.safeParse(req.header('Idempotency-Key'));
+  if (!parsed.success) throw new HttpError(400, 'A UUID Idempotency-Key header is required', 'IDEMPOTENCY_KEY_REQUIRED');
+  return parsed.data;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+function orderRequestHash(value: unknown): string {
+  return createHash('sha256').update(stableJson(value)).digest('hex');
+}
+
+function assertSameOrderRequest(existing: { idempotencyRequestHash: string | null }, requestHash: string): void {
+  if (existing.idempotencyRequestHash !== requestHash) {
+    throw new HttpError(409, 'Idempotency key was already used for a different order request', 'IDEMPOTENCY_CONFLICT');
+  }
+}
 
 const ORDER_TRANSACTION_OPTIONS = {
   isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -81,6 +118,89 @@ function mapOrderWriteError(error: unknown): never {
   throw error;
 }
 
+async function reverseOrderSale(
+  tx: Prisma.TransactionClient,
+  businessId: string,
+  actorId: string,
+  orderId: string,
+  orderNumber: string,
+  requestId: string,
+  reason?: string,
+): Promise<void> {
+  const paymentTotals = await tx.payment.groupBy({
+    by: ['kind'], where: { businessId, orderId }, _sum: { amount: true },
+  });
+  const netPaid = calculateNetPaid(paymentTotals.map((row) => ({
+    kind: row.kind, amount: row._sum.amount ?? new Prisma.Decimal(0),
+  })));
+  if (netPaid.greaterThan(0)) {
+    throw new HttpError(409, 'Reverse or refund recorded payments before cancelling this order', 'ORDER_HAS_UNREFUNDED_PAYMENTS');
+  }
+  const inventoryMovements = await tx.inventoryMovement.findMany({
+    where: { businessId, sourceType: 'ORDER_SALE', sourceId: orderId, kind: 'CONSUMPTION' },
+  });
+  const returnedAt = new Date();
+  for (const movement of inventoryMovements) {
+    const returnKey = `order-cancel:${orderId}:movement:${movement.id}`;
+    const previousReturn = await tx.inventoryMovement.findFirst({
+      where: { businessId, OR: [{ reversalOfId: movement.id }, { idempotencyKey: returnKey }] },
+      select: { id: true },
+    });
+    if (previousReturn) continue;
+    await postInventoryMovement(tx, {
+      businessId,
+      actorId,
+      variantId: movement.variantId,
+      locationId: movement.locationId,
+      kind: 'CUSTOMER_RETURN',
+      quantity: movement.quantity.abs().toFixed(6),
+      unitCost: movement.unitCost.toFixed(4),
+      sourceType: 'ORDER_CANCELLATION',
+      sourceId: orderId,
+      idempotencyKey: returnKey,
+      note: `Cancelled order ${orderNumber}${reason ? `: ${reason}` : ''}`.slice(0, 500),
+      occurredAt: returnedAt,
+      allowInactiveVariant: true,
+    });
+  }
+
+  const invoice = await tx.journalEntry.findFirst({
+    where: { businessId, sourceType: 'ORDER_SALE', sourceId: orderId },
+    include: { lines: true },
+  });
+  if (!invoice) return;
+  const existingReversal = await tx.journalEntry.findFirst({ where: { businessId, reversalOfId: invoice.id } });
+  if (existingReversal) return;
+  const reversal = await postJournal(tx, {
+    businessId,
+    actorId,
+    sourceType: 'ORDER_SALE_REVERSAL',
+    sourceId: invoice.id,
+    idempotencyKey: `order-sale-reversal:${orderId}`,
+    entryDate: returnedAt,
+    memo: `Cancelled order ${orderNumber}${reason ? `: ${reason}` : ''}`.slice(0, 500),
+    reversalOfId: invoice.id,
+    lines: invoice.lines.map((line) => ({
+      accountId: line.accountId,
+      debit: line.credit,
+      credit: line.debit,
+      memo: line.memo ?? undefined,
+    })),
+  });
+  await tx.journalEntry.update({ where: { id: invoice.id, businessId }, data: { status: 'REVERSED' } });
+  await tx.auditEvent.create({
+    data: {
+      businessId,
+      actorId,
+      action: 'accounting.order_sale_reversed',
+      entityType: 'journal_entry',
+      entityId: reversal.id,
+      metadata: { orderId, orderNumber, reversalOfId: invoice.id, reason: reason ?? null },
+      requestId,
+    },
+  });
+}
+
 function fieldValuesMap(values: Array<{
   fieldDefinition: { key: string };
   valueText: string | null;
@@ -103,6 +223,9 @@ router.use(authenticate);
 
 router.get('/', requireBusinessPermission('orders:read'), asyncHandler(async (req, res) => {
   const { businessId } = getContext(req);
+  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId);
+  const canReadPayments = req.auth?.permissions.includes('payments:read') === true
+    && moduleAccess.enabledModules.includes('payments');
   const query = orderQuerySchema.parse(req.query);
   if (query.cursor) {
     const cursorExists = await prisma.order.findFirst({
@@ -146,7 +269,7 @@ router.get('/', requireBusinessPermission('orders:read'), asyncHandler(async (re
   });
   const hasMore = orders.length > query.limit;
   const page = hasMore ? orders.slice(0, query.limit) : orders;
-  const paymentTotals = page.length ? await prisma.payment.groupBy({
+  const paymentTotals = canReadPayments && page.length ? await prisma.payment.groupBy({
     by: ['orderId', 'kind'],
     where: { businessId, orderId: { in: page.map((order) => order.id) } },
     _sum: { amount: true },
@@ -164,8 +287,10 @@ router.get('/', requireBusinessPermission('orders:read'), asyncHandler(async (re
         ...item,
         customFields: fieldValuesMap(item.customFieldValues),
       })),
-      paid: paid.toFixed(2),
-      outstanding: calculateOutstanding(order.total, payments).toFixed(2),
+      ...(canReadPayments ? {
+        paid: paid.toFixed(2),
+        outstanding: calculateOutstanding(order.total, payments).toFixed(2),
+      } : {}),
     };
   });
   res.json({ data: { items, nextCursor: hasMore ? page.at(-1)?.id ?? null : null } });
@@ -174,6 +299,17 @@ router.get('/', requireBusinessPermission('orders:read'), asyncHandler(async (re
 router.post('/', requireBusinessPermission('orders:write'), asyncHandler(async (req, res) => {
   const { businessId, actorId } = getContext(req);
   const input = createOrderSchema.parse(req.body);
+  const key = idempotencyKey(req);
+  const requestHash = orderRequestHash(input);
+  const replay = await prisma.order.findUnique({
+    where: { businessId_idempotencyKey: { businessId, idempotencyKey: key } },
+    include: orderCreateInclude,
+  });
+  if (replay) {
+    assertSameOrderRequest(replay, requestHash);
+    res.status(200).json({ data: replay, replayed: true });
+    return;
+  }
   const customer = await prisma.customer.findFirst({
     where: { id: input.customerId, businessId, deletedAt: null },
     select: { id: true },
@@ -272,7 +408,15 @@ router.post('/', requireBusinessPermission('orders:write'), asyncHandler(async (
   }
 
   try {
-    const order = await runSerializableOrderTransaction(async (tx) => {
+    const result = await runSerializableOrderTransaction(async (tx) => {
+      const existingReplay = await tx.order.findUnique({
+        where: { businessId_idempotencyKey: { businessId, idempotencyKey: key } },
+        include: orderCreateInclude,
+      });
+      if (existingReplay) {
+        assertSameOrderRequest(existingReplay, requestHash);
+        return { order: existingReplay, replayed: true };
+      }
       await assertPlanLimit(tx, businessId, 'orders:write');
       const catalogItems = await Promise.all(items.map(async (item) => {
         const catalogItem = await tx.businessItem.upsert({
@@ -289,9 +433,9 @@ router.post('/', requireBusinessPermission('orders:write'), asyncHandler(async (
             name: item.itemName,
           },
           update: { active: true },
-          select: { id: true },
+          select: { id: true, stockVariantId: true },
         });
-        return { ...item, itemId: catalogItem.id };
+        return { ...item, itemId: catalogItem.id, stockVariantId: catalogItem.stockVariantId };
       }));
       const business = await tx.business.update({
         where: { id: businessId },
@@ -306,12 +450,14 @@ router.post('/', requireBusinessPermission('orders:write'), asyncHandler(async (
           customerId: input.customerId,
           createdById: actorId,
           orderNumber,
+          idempotencyKey: key,
+          idempotencyRequestHash: requestHash,
           promisedAt: new Date(input.promisedAt),
           notes: input.notes,
           total,
           workflowStageId: initialStage.id,
           workflowStageKey: initialStage.key,
-          items: { create: catalogItems.map(({ customFieldValues: _customFieldValues, businessId: _itemBusinessId, ...item }) => item) },
+          items: { create: catalogItems.map(({ customFieldValues: _customFieldValues, businessId: _itemBusinessId, stockVariantId: _stockVariantId, ...item }) => item) },
           workflowHistory: {
             create: {
               fromStageKey: null,
@@ -323,12 +469,7 @@ router.post('/', requireBusinessPermission('orders:write'), asyncHandler(async (
           },
           statusHistory: { create: { fromStatus: null, toStatus: 'NEW', changedById: actorId } },
         },
-        include: {
-          customer: { select: { id: true, name: true, phone: true } },
-          items: true,
-          currentWorkflowStage: true,
-          workflowHistory: { orderBy: { createdAt: 'asc' } },
-        },
+        include: orderCreateInclude,
       });
       const customValues = [
         ...orderFieldValues.map((value) => ({
@@ -343,6 +484,41 @@ router.post('/', requireBusinessPermission('orders:write'), asyncHandler(async (
         }))),
       ];
       if (customValues.length) await tx.customFieldValue.createMany({ data: customValues });
+      const stockLinkedItems = catalogItems.filter((item) => item.stockVariantId !== null);
+      if (stockLinkedItems.length) {
+        const location = await getOrCreateDefaultLocation(tx, businessId);
+        for (const item of stockLinkedItems) {
+          await postInventoryMovement(tx, {
+            businessId,
+            actorId,
+            variantId: item.stockVariantId!,
+            locationId: location.id,
+            kind: 'CONSUMPTION',
+            quantity: String(item.quantity),
+            sourceType: 'ORDER_SALE',
+            sourceId: created.id,
+            idempotencyKey: `order-sale:${created.id}:item:${item.id}`,
+            note: `Sale ${created.orderNumber}`,
+            occurredAt: created.createdAt,
+          });
+        }
+      }
+      if (!total.isZero()) {
+        const accounts = await ensureDefaultAccounts(tx, businessId);
+        await postJournal(tx, {
+          businessId,
+          actorId,
+          sourceType: 'ORDER_SALE',
+          sourceId: created.id,
+          idempotencyKey: `order-sale:${created.id}`,
+          entryDate: created.createdAt,
+          memo: `Sale ${created.orderNumber}`,
+          lines: [
+            { accountId: accounts.get('ACCOUNTS_RECEIVABLE')!.id, debit: total, credit: 0 },
+            { accountId: accounts.get('SALES_REVENUE')!.id, debit: 0, credit: total },
+          ],
+        });
+      }
       await tx.auditEvent.create({
         data: {
           businessId,
@@ -354,15 +530,28 @@ router.post('/', requireBusinessPermission('orders:write'), asyncHandler(async (
           requestId: req.requestId,
         },
       });
-      return created;
+      return { order: created, replayed: false };
     });
-    try {
-      await queueOrderCreated(prisma, order.id);
-    } catch (notificationError) {
-      req.log.warn({ err: notificationError, orderId: order.id }, 'Failed to queue WhatsApp notification for created order');
+    if (!result.replayed) {
+      try {
+        await queueOrderCreated(prisma, result.order.id);
+      } catch (notificationError) {
+        req.log.warn({ err: notificationError, orderId: result.order.id }, 'Failed to queue WhatsApp notification for created order');
+      }
     }
-    res.status(201).json({ data: order });
+    res.status(result.replayed ? 200 : 201).json({ data: result.order, replayed: result.replayed });
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      const concurrentReplay = await prisma.order.findUnique({
+        where: { businessId_idempotencyKey: { businessId, idempotencyKey: key } },
+        include: orderCreateInclude,
+      });
+      if (concurrentReplay) {
+        assertSameOrderRequest(concurrentReplay, requestHash);
+        res.status(200).json({ data: concurrentReplay, replayed: true });
+        return;
+      }
+    }
     mapOrderWriteError(error);
   }
 }));
@@ -450,6 +639,9 @@ router.post('/:orderId/workflow', requireBusinessPermission('orders:transition')
           note: input.note,
         },
       });
+      if (nextStatus === 'CANCELLED' && order.status !== 'CANCELLED') {
+        await reverseOrderSale(tx, businessId, actorId, order.id, order.orderNumber, req.requestId, input.note);
+      }
       if (nextStatus !== order.status) {
         await tx.orderStatusHistory.create({
           data: {
@@ -577,6 +769,9 @@ router.post('/:orderId/status', requireBusinessPermission('orders:transition'), 
       });
       if (!result.count) throw new HttpError(409, 'Order changed concurrently; refresh and retry', 'VERSION_CONFLICT');
       const next = await tx.order.findFirstOrThrow({ where: { id: order.id, businessId } });
+      if (input.toStatus === 'CANCELLED' && order.status !== 'CANCELLED') {
+        await reverseOrderSale(tx, businessId, actorId, order.id, order.orderNumber, req.requestId, input.note);
+      }
       await tx.orderStatusHistory.create({
         data: {
           orderId: order.id,
@@ -671,6 +866,9 @@ router.post('/:orderId/alterations', requireBusinessPermission('orders:write'), 
 router.get('/:orderId', requireBusinessPermission('orders:read'), asyncHandler(async (req, res) => {
   const { businessId } = getContext(req);
   const orderId = idSchema.parse(req.params.orderId);
+  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId);
+  const canReadPayments = req.auth?.permissions.includes('payments:read') === true
+    && moduleAccess.enabledModules.includes('payments');
   const order = await prisma.order.findFirst({
     where: { id: orderId, businessId, deletedAt: null },
     include: {
@@ -680,17 +878,25 @@ router.get('/:orderId', requireBusinessPermission('orders:read'), asyncHandler(a
       statusHistory: { orderBy: { createdAt: 'asc' } },
       workflowHistory: { orderBy: { createdAt: 'asc' } },
       alterations: { orderBy: { createdAt: 'desc' } },
-      payments: { orderBy: { createdAt: 'asc' } },
       customFieldValues: { include: { fieldDefinition: true } },
     },
   });
   if (!order) throw new HttpError(404, 'Order not found', 'ORDER_NOT_FOUND');
-  const totalPaid = calculateNetPaid(order.payments);
+  if (!canReadPayments) {
+    res.json({ data: order });
+    return;
+  }
+  const payments = await prisma.payment.findMany({
+    where: { businessId, orderId },
+    orderBy: { createdAt: 'asc' },
+  });
+  const totalPaid = calculateNetPaid(payments);
   res.json({
     data: {
       ...order,
+      payments,
       paid: totalPaid.toFixed(2),
-      outstanding: calculateOutstanding(order.total, order.payments).toFixed(2),
+      outstanding: calculateOutstanding(order.total, payments).toFixed(2),
     },
   });
 }));

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { env } from '../config.js';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
+import { assertBusinessModuleEnabled, moduleForBusinessPermission } from '../business-modules.js';
 import { asyncHandler } from './async-handler.js';
 
 const accessClaimsSchema = z.discriminatedUnion('scope', [
@@ -103,7 +104,11 @@ export const authenticate: RequestHandler = asyncHandler(async (req, _res, next)
   next();
 });
 
-export function requireBusinessPermission(permission: string, planFeature?: string): RequestHandler {
+export function requireBusinessPermission(
+  permission: string,
+  planFeature?: string,
+  explicitModule?: string,
+): RequestHandler {
   const handler: RequestHandler = asyncHandler(async (req, _res, next) => {
     if (req.auth?.scope !== 'business' || !req.auth.business) {
       next(new HttpError(403, 'Business membership is required', 'BUSINESS_ACCESS_DENIED'));
@@ -115,6 +120,8 @@ export function requireBusinessPermission(permission: string, planFeature?: stri
     }
     const paidMutation = !permission.startsWith('subscriptions:')
       && (permission.endsWith(':write') || permission.endsWith(':manage') || permission === 'orders:transition');
+    const module = moduleForBusinessPermission(permission, explicitModule);
+    if (module) await assertBusinessModuleEnabled(req.auth.business.id, module);
     await assertSubscriptionAccess(req.auth.business.id, permission, paidMutation, planFeature);
     next();
   });
@@ -154,7 +161,12 @@ export async function assertSubscriptionAccess(
         : permission?.startsWith('payments:') ? 'payments'
           : permission?.startsWith('notifications:') ? 'notifications'
             : permission === 'staff:manage' ? 'staff'
-              : permission === 'reports:read' ? 'reports' : undefined);
+              : permission === 'reports:read' ? 'reports'
+                : permission?.startsWith('inventory:') ? 'inventory'
+                  : permission?.startsWith('suppliers:') ? 'suppliers'
+                    : permission?.startsWith('purchasing:') ? 'purchasing'
+                      : permission?.startsWith('cashbook:') ? 'cashbook'
+                        : permission?.startsWith('accounting:') ? 'accounting' : undefined);
   const features = entitlement.plan.features;
   if (feature && typeof features === 'object' && features !== null && !Array.isArray(features)
     && feature in features && features[feature] === false) {

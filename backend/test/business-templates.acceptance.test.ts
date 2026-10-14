@@ -113,12 +113,14 @@ async function apiRequest(
   authorization?: string,
   method = 'GET',
   body?: unknown,
+  extraHeaders: Record<string, string> = {},
 ): Promise<Response> {
   return fetch(`${baseUrl}${path}`, {
     method,
     headers: {
       ...(authorization ? { authorization: `Bearer ${authorization}` } : {}),
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...extraHeaders,
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
@@ -481,7 +483,7 @@ test('all five business templates work through scoped configuration, catalog, or
     const orderItemFields = fieldsFor(effectiveConfiguration.fields, 'orders', ['item', 'order-item']);
     const initialStage = effectiveConfiguration.workflow.stages.find(({ isInitial }) => isInitial);
     assert.ok(initialStage, `${template.key} defines an initial stage`);
-    const orderResponse = await apiRequest('/api/v1/orders', ownerToken, 'POST', {
+    const orderInput = {
       customerId: customer.id,
       promisedAt: new Date(Date.now() + 7 * 86_400_000).toISOString(),
       customFields: customFieldInput(orderFields),
@@ -492,6 +494,10 @@ test('all five business templates work through scoped configuration, catalog, or
         unitPrice: '25000.00',
         customFields: customFieldInput(orderItemFields),
       }],
+    };
+    const orderIdempotencyKey = randomUUID();
+    const orderResponse = await apiRequest('/api/v1/orders', ownerToken, 'POST', orderInput, {
+      'Idempotency-Key': orderIdempotencyKey,
     });
     assert.equal(
       orderResponse.status,
@@ -509,6 +515,22 @@ test('all five business templates work through scoped configuration, catalog, or
     assert.equal(createdOrder.workflowStageKey, initialStage.key);
     assert.equal(createdOrder.items[0]?.itemTypeKey, itemType.key);
     assert.equal(createdOrder.items[0]?.itemId, catalogItem.id);
+    const orderReplayResponse = await apiRequest('/api/v1/orders', ownerToken, 'POST', orderInput, {
+      'Idempotency-Key': orderIdempotencyKey,
+    });
+    assert.equal(orderReplayResponse.status, 200, 'retrying order creation with the same key does not create a second sale');
+    const replayedOrder = await responseData<{ id: string }>(orderReplayResponse);
+    assert.equal(replayedOrder.id, createdOrder.id);
+    const saleJournal = await prisma.journalEntry.findFirst({
+      where: { businessId: business.id, sourceType: 'ORDER_SALE', sourceId: createdOrder.id },
+      include: { lines: { include: { account: { select: { systemKey: true } } } } },
+    });
+    assert.ok(saleJournal, 'orders post an accounts-receivable sale journal');
+    assert.equal(saleJournal.lines.find((line) => line.account.systemKey === 'ACCOUNTS_RECEIVABLE')?.debit.toFixed(2), '25000.00');
+    assert.equal(saleJournal.lines.find((line) => line.account.systemKey === 'SALES_REVENUE')?.credit.toFixed(2), '25000.00');
+    assert.equal(await prisma.journalEntry.count({
+      where: { businessId: business.id, sourceType: 'ORDER_SALE', sourceId: createdOrder.id },
+    }), 1, 'the unpaid order is posted once without cash receipt');
     if (index === 0) firstOrderId = createdOrder.id;
     if (index === 1 && firstOrderId) {
       const crossTenantRead = await apiRequest(`/api/v1/orders/${firstOrderId}`, ownerToken);

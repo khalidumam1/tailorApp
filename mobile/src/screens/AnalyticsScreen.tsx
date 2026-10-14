@@ -29,7 +29,7 @@ export function AnalyticsScreen() {
   const copy = ws.copy;
   const [range, setRange] = useState<(typeof RANGES)[number]['key']>('8W');
   const [collectedThisMonth, setCollectedThisMonth] = useState<number | null>(null);
-  const canReadPayments = ws.can('payments:read');
+  const canReadPayments = ws.can('payments:read') && ws.moduleEnabled('payments');
 
   // Collections come from the recorded payment ledger (online only).
   useEffect(() => {
@@ -119,6 +119,7 @@ export function AnalyticsScreen() {
       </View>
 
       {/* Collections this month (ledger) against outstanding (server total) */}
+      {canReadPayments ? (
       <View style={styles.chartCard}>
         <View style={styles.chartHeader}>
           <View>
@@ -138,6 +139,7 @@ export function AnalyticsScreen() {
           />
         ) : null}
       </View>
+      ) : null}
 
       {/* Top items */}
       <View style={styles.chartCard}>

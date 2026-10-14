@@ -4,6 +4,7 @@ import PDFDocument from 'pdfkit';
 import { normalizePakistanPhone, toE164Phone } from '@tailor/shared';
 import { env } from './config.js';
 import { prisma } from './db.js';
+import { resolveBusinessModuleAccess } from './business-modules.js';
 import type { Logger } from 'pino';
 import {
   isNotificationTemplate,
@@ -68,7 +69,10 @@ async function queueNotification(
     ? configuration.notificationTemplates
     : {};
   const configured = Object.hasOwn(templates, input.kind) ? templates[input.kind] : undefined;
-  let notSentReason: string | null = null;
+  const moduleAccess = await resolveBusinessModuleAccess(tx, input.businessId);
+  let notSentReason: string | null = moduleAccess.enabledModules.includes('notifications')
+    ? null
+    : 'Notifications module is disabled for this business';
   let templateName = templateFor(input.kind);
   let payload: NotificationPayload = input.payload;
   let recipientPolicy: 'CUSTOMER' | 'BUSINESS_CONTACT' = input.customer ? 'CUSTOMER' : 'BUSINESS_CONTACT';

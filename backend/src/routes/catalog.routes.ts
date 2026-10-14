@@ -6,6 +6,7 @@ import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { assertPlanLimit } from '../plan-limits.js';
+import { resolveBusinessModuleAccess } from '../business-modules.js';
 import { customFieldValueData, validateCustomFieldValues } from '../domain/custom-fields.js';
 
 const router = express.Router();
@@ -19,6 +20,7 @@ const itemInputSchema = z.object({
   sku: z.string().trim().max(80).nullable().optional(),
   unit: z.string().trim().min(1).max(40).default('unit'),
   unitPrice: priceSchema.nullable().optional(),
+  stockVariantId: itemIdSchema.nullable().optional(),
   sortOrder: z.number().int().min(0).max(100000).default(0),
   customFields: z.record(z.string(), z.unknown()).default({}),
 }).strict();
@@ -30,6 +32,7 @@ const itemUpdateSchema = z.object({
   sku: z.string().trim().max(80).nullable().optional(),
   unit: z.string().trim().min(1).max(40).optional(),
   unitPrice: priceSchema.nullable().optional(),
+  stockVariantId: itemIdSchema.nullable().optional(),
   sortOrder: z.number().int().min(0).max(100000).optional(),
   active: z.boolean().optional(),
   customFields: z.record(z.string(), z.unknown()).optional(),
@@ -47,6 +50,23 @@ function businessIdFrom(req: express.Request): string {
     throw new HttpError(403, 'Business membership is required', 'BUSINESS_ACCESS_DENIED');
   }
   return req.auth.business.id;
+}
+
+async function validateStockVariantLink(
+  tx: Prisma.TransactionClient,
+  businessId: string,
+  stockVariantId: string | null | undefined,
+): Promise<void> {
+  if (!stockVariantId) return;
+  const moduleAccess = await resolveBusinessModuleAccess(tx, businessId);
+  if (!moduleAccess.enabledModules.includes('inventory')) {
+    throw new HttpError(403, 'Enable the Inventory module before linking catalog items to stock', 'BUSINESS_MODULE_DISABLED');
+  }
+  const variant = await tx.stockVariant.findFirst({
+    where: { id: stockVariantId, businessId, active: true, stockItem: { active: true } },
+    select: { id: true },
+  });
+  if (!variant) throw new HttpError(400, 'Choose an active stock variant belonging to this business', 'INVALID_STOCK_VARIANT');
 }
 
 function itemTypeKeys(value: Prisma.JsonValue): Set<string> {
@@ -127,7 +147,7 @@ function mapUniqueError(error: unknown): never {
 
 router.use(authenticate);
 
-router.get('/', requireBusinessPermission('orders:read', 'catalog'), asyncHandler(async (req, res) => {
+router.get('/', requireBusinessPermission('orders:read', 'catalog', 'catalog'), asyncHandler(async (req, res) => {
   const businessId = businessIdFrom(req);
   const query = listQuerySchema.parse(req.query);
   await itemFieldDefinitions(prisma, businessId);
@@ -160,7 +180,7 @@ router.get('/', requireBusinessPermission('orders:read', 'catalog'), asyncHandle
   res.json({ data: { items, nextCursor: hasMore ? items.at(-1)?.id ?? null : null } });
 }));
 
-router.post('/', requireBusinessPermission('settings:manage', 'catalog'), asyncHandler(async (req, res) => {
+router.post('/', requireBusinessPermission('settings:manage', 'catalog', 'catalog'), asyncHandler(async (req, res) => {
   const businessId = businessIdFrom(req);
   const input = itemInputSchema.parse(req.body);
   try {
@@ -168,6 +188,7 @@ router.post('/', requireBusinessPermission('settings:manage', 'catalog'), asyncH
       await assertPlanLimit(tx, businessId, 'catalog:write');
       const { fields, itemTypes } = await itemFieldDefinitions(tx, businessId);
       assertItemType(itemTypes, input.typeKey);
+      await validateStockVariantLink(tx, businessId, input.stockVariantId);
       const customValues = validateCustomFieldValues(fields, input.customFields, { itemTypeKey: input.typeKey });
       const item = await tx.businessItem.create({
         data: {
@@ -178,6 +199,7 @@ router.post('/', requireBusinessPermission('settings:manage', 'catalog'), asyncH
           sku: input.sku,
           unit: input.unit,
           unitPrice: input.unitPrice ? new Prisma.Decimal(input.unitPrice) : null,
+          stockVariantId: input.stockVariantId ?? null,
           sortOrder: input.sortOrder,
         },
       });
@@ -213,7 +235,7 @@ router.post('/', requireBusinessPermission('settings:manage', 'catalog'), asyncH
   }
 }));
 
-router.patch('/:itemId', requireBusinessPermission('settings:manage', 'catalog'), asyncHandler(async (req, res) => {
+router.patch('/:itemId', requireBusinessPermission('settings:manage', 'catalog', 'catalog'), asyncHandler(async (req, res) => {
   const businessId = businessIdFrom(req);
   const itemId = itemIdSchema.parse(req.params.itemId);
   const input = itemUpdateSchema.parse(req.body);
@@ -231,6 +253,9 @@ router.patch('/:itemId', requireBusinessPermission('settings:manage', 'catalog')
       const { fields, itemTypes } = await itemFieldDefinitions(tx, businessId);
       const typeKey = input.typeKey ?? existing.typeKey;
       assertItemType(itemTypes, typeKey);
+      if (input.stockVariantId !== undefined && input.stockVariantId !== existing.stockVariantId) {
+        await validateStockVariantLink(tx, businessId, input.stockVariantId);
+      }
       const activeFieldKeys = new Set(fields.map((field) => field.key));
       const values = input.customFields === undefined
         ? undefined
@@ -249,6 +274,7 @@ router.patch('/:itemId', requireBusinessPermission('settings:manage', 'catalog')
         ...(input.sku !== undefined ? { sku: input.sku } : {}),
         ...(input.unit !== undefined ? { unit: input.unit } : {}),
         ...(input.unitPrice !== undefined ? { unitPrice: input.unitPrice === null ? null : new Prisma.Decimal(input.unitPrice) } : {}),
+        ...(input.stockVariantId !== undefined ? { stockVariantId: input.stockVariantId } : {}),
         ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
         ...(input.active !== undefined ? { active: input.active } : {}),
         version: { increment: 1 },

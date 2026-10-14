@@ -20,6 +20,12 @@ export function ActivityScreen() {
   const ws = useWorkspace();
   const copy = ws.copy;
   const [tab, setTab] = useState<SubTab>('analytics');
+  const tabs = [
+    { key: 'analytics' as const, label: copy.analytics, visible: ws.can('orders:read') && ws.moduleEnabled('orders') && ws.moduleEnabled('reports') },
+    { key: 'whatsapp' as const, label: copy.notifications, visible: ws.can('notifications:read') && ws.moduleEnabled('notifications') },
+    { key: 'measurements' as const, label: ws.term('measurements', copy.measurements), visible: ws.can('measurements:read') && ws.moduleEnabled('measurements') },
+  ].filter((item) => item.visible);
+  const activeTab = tabs.some((item) => item.key === tab) ? tab : tabs[0]?.key;
 
   return (
     <>
@@ -30,11 +36,7 @@ export function ActivityScreen() {
         </View>
       </View>
       <View style={styles.chipWrap}>
-        {([
-          { key: 'analytics' as const, label: copy.analytics },
-          { key: 'whatsapp' as const, label: copy.notifications },
-          { key: 'measurements' as const, label: copy.measurements },
-        ]).map((t) => {
+        {tabs.map((t) => {
           const active = tab === t.key;
           return (
             <Pressable
@@ -52,9 +54,9 @@ export function ActivityScreen() {
       </View>
       {/* The inner screens include their own page headings; that is the
           intended visual when a single activity sub-tab is in focus. */}
-      {tab === 'analytics' ? <AnalyticsScreen /> : null}
-      {tab === 'whatsapp' ? <NotificationsScreen /> : null}
-      {tab === 'measurements' ? <MeasurementsScreen /> : null}
+      {activeTab === 'analytics' ? <AnalyticsScreen /> : null}
+      {activeTab === 'whatsapp' ? <NotificationsScreen /> : null}
+      {activeTab === 'measurements' ? <MeasurementsScreen /> : null}
     </>
   );
 }

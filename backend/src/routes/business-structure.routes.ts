@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
+import { resolveBusinessModuleAccess } from '../business-modules.js';
 import { businessRoleKey } from '../domain/orders.js';
 
 const router = express.Router();
@@ -218,7 +219,7 @@ router.put('/configuration/structure', authenticate, requireBusinessPermission('
         throw new HttpError(409, 'Business configuration or template changed; reload before saving', 'CONFIGURATION_VERSION_CONFLICT');
       }
 
-      const effectiveModules = business.configuration?.enabledModules ?? business.template.enabledModules;
+      const effectiveModules = (await resolveBusinessModuleAccess(tx, businessId)).enabledModules;
       const templateModules = new Set(business.template.enabledModules);
       const itemTypeValue = business.configuration?.itemTypes ?? business.template.itemTypes;
       const itemTypeKeys = new Set(Array.isArray(itemTypeValue)

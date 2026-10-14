@@ -36,8 +36,8 @@ export function PaymentsScreen({
   const [segment, setSegment] = useState<Segment>('all');
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  const canRecord = ws.can('payments:write');
-  const canReadLedger = ws.can('payments:read');
+  const canRecord = ws.can('payments:write') && ws.moduleEnabled('payments');
+  const canReadLedger = ws.can('payments:read') && ws.moduleEnabled('payments');
 
   useEffect(() => {
     if (intent === 'record-payment') {

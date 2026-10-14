@@ -9,6 +9,11 @@ import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requirePlatformPermission } from '../middleware/auth.js';
 import { businessPermissions, platformPermissions } from '../permissions.js';
 import { APPLICATION_BRANDING_SETTING_KEY, loadApplicationBranding } from '../application-branding.js';
+import {
+  PLATFORM_ENABLED_MODULES_SETTING_KEY,
+  resolveBusinessModuleAccess,
+  resolvePlatformEnabledModules,
+} from '../business-modules.js';
 
 const router = express.Router();
 const businessSchema = z.object({
@@ -32,6 +37,13 @@ const staffPermissionsSchema = z.object({
   active: z.boolean().optional(),
 });
 const statusSchema = z.object({ status: z.enum(['ACTIVE', 'SUSPENDED', 'PENDING']) });
+const businessModulesSchema = z.object({
+  enabledModules: z.array(z.string().trim().regex(/^[a-z][a-z0-9_-]{0,79}$/)).max(40),
+}).strict().superRefine((input, context) => {
+  if (new Set(input.enabledModules).size !== input.enabledModules.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['enabledModules'], message: 'enabledModules must not contain duplicates' });
+  }
+});
 const memberAccessSchema = z.object({
   active: z.boolean(),
   reason: z.string().trim().min(5).max(1000).optional(),
@@ -269,6 +281,122 @@ router.get('/businesses', requirePlatformPermission('platform:businesses:read'),
     activeMemberships: activeCountByBusiness.get(business.id) ?? 0,
   }));
   res.json({ data: { items, nextCursor: hasMore ? page.at(-1)?.id ?? null : null } });
+}));
+
+router.get('/businesses/:businessId/modules', requirePlatformPermission('platform:businesses:read'), asyncHandler(async (req, res) => {
+  const businessId = idSchema.parse(req.params.businessId);
+  const [business, access] = await Promise.all([
+    prisma.business.findUnique({
+      where: { id: businessId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        template: { select: { key: true, name: true } },
+      },
+    }),
+    resolveBusinessModuleAccess(prisma, businessId),
+  ]);
+  if (!business) throw new HttpError(404, 'Business not found', 'BUSINESS_NOT_FOUND');
+  res.json({ data: {
+    business,
+    availableModules: access.templateModules,
+    enabledModules: access.platformEnabledModules,
+  } });
+}));
+
+router.put('/businesses/:businessId/modules', requirePlatformPermission('platform:businesses:manage'), asyncHandler(async (req, res) => {
+  const actorId = getActorId(req);
+  const businessId = idSchema.parse(req.params.businessId);
+  const input = businessModulesSchema.parse(req.body);
+  const result = await prisma.$transaction(async (tx) => {
+    const business = await tx.business.findUnique({
+      where: { id: businessId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        template: { select: {
+          key: true,
+          name: true,
+          enabledModules: true,
+          paymentMethods: true,
+          dashboardWidgets: true,
+        } },
+      },
+    });
+    if (!business) throw new HttpError(404, 'Business not found', 'BUSINESS_NOT_FOUND');
+    if (!business.template) throw new HttpError(409, 'Business has no assigned template', 'BUSINESS_TEMPLATE_MISSING');
+
+    const availableModules = business.template.enabledModules;
+    const requested = new Set(input.enabledModules);
+    const unsupported = input.enabledModules.find((module) => !availableModules.includes(module));
+    if (unsupported) {
+      throw new HttpError(400, `Module "${unsupported}" is not supported by this business template`, 'INVALID_BUSINESS_MODULE');
+    }
+    const enabledModules = availableModules.filter((module) => requested.has(module));
+    const currentSetting = await tx.businessSetting.findUnique({
+      where: { businessId_key: { businessId, key: PLATFORM_ENABLED_MODULES_SETTING_KEY } },
+      select: { value: true },
+    });
+    const previousEnabledModules = resolvePlatformEnabledModules(
+      availableModules,
+      currentSetting?.value,
+      currentSetting !== null,
+    );
+    const unchanged = previousEnabledModules.length === enabledModules.length
+      && previousEnabledModules.every((module, index) => module === enabledModules[index]);
+
+    if (!unchanged) {
+      await tx.businessSetting.upsert({
+        where: { businessId_key: { businessId, key: PLATFORM_ENABLED_MODULES_SETTING_KEY } },
+        create: {
+          businessId,
+          key: PLATFORM_ENABLED_MODULES_SETTING_KEY,
+          value: enabledModules,
+        },
+        update: { value: enabledModules },
+      });
+      // Invalidate client-side business configuration caches without changing
+      // the tenant's saved module selection or any operational records.
+      await tx.businessConfiguration.upsert({
+        where: { businessId },
+        create: {
+          businessId,
+          enabledModules: business.template.enabledModules,
+          paymentMethods: business.template.paymentMethods,
+          dashboardWidgets: business.template.dashboardWidgets,
+        },
+        update: { version: { increment: 1 } },
+      });
+      await writePlatformAudit(
+        tx,
+        actorId,
+        'platform.business_modules_updated',
+        'business_module_access',
+        businessId,
+        req.requestId,
+        {
+          templateKey: business.template.key,
+          enabledModules,
+          disabledModules: availableModules.filter((module) => !requested.has(module)),
+          previouslyEnabledModules: previousEnabledModules,
+        },
+      );
+    }
+    return {
+      business: {
+        id: business.id,
+        name: business.name,
+        slug: business.slug,
+        template: { key: business.template.key, name: business.template.name },
+      },
+      availableModules,
+      enabledModules,
+      unchanged,
+    };
+  });
+  res.json({ data: result });
 }));
 
 router.post('/businesses', requirePlatformPermission('platform:businesses:manage'), asyncHandler(async (req, res) => {

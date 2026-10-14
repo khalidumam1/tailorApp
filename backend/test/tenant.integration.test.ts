@@ -603,6 +603,132 @@ test('platform role alone is insufficient; an explicit platform permission is re
   assert.ok(result.data.items.some((business) => business.id === businessAId));
 });
 
+test('platform module overrides are audited, cache-versioned and enforced for business APIs', { skip: !enabled }, async () => {
+  const platformToken = process.env.TENANT_TEST_SUPER_ADMIN_TOKEN;
+  if (!platformToken) throw new Error('Platform super-admin test token was not initialized');
+  const managePermission = await prisma.permission.upsert({
+    where: { key: 'platform:businesses:manage' },
+    update: {},
+    create: { key: 'platform:businesses:manage', description: 'Manage businesses in module entitlement test' },
+  });
+  const priorReadGrant = await prisma.platformPermissionGrant.findUnique({
+    where: { userId_permissionId: { userId: platformSuperAdminId, permissionId: platformReadPermissionId } },
+    select: { id: true },
+  });
+  const priorManageGrant = await prisma.platformPermissionGrant.findUnique({
+    where: { userId_permissionId: { userId: platformSuperAdminId, permissionId: managePermission.id } },
+    select: { id: true },
+  });
+  await prisma.platformPermissionGrant.createMany({
+    data: [platformReadPermissionId, managePermission.id].map((permissionId) => ({
+      userId: platformSuperAdminId,
+      permissionId,
+    })),
+    skipDuplicates: true,
+  });
+
+  const originalConfiguration = await prisma.businessConfiguration.findUniqueOrThrow({
+    where: { businessId: businessAId },
+    select: { enabledModules: true, version: true },
+  });
+  const originalModuleSetting = await prisma.businessSetting.findUnique({
+    where: { businessId_key: { businessId: businessAId, key: 'platform_enabled_modules' } },
+    select: { value: true },
+  });
+  const modulesUrl = `${baseUrl}/api/v1/platform/businesses/${businessAId}/modules`;
+  const platformHeaders = { authorization: `Bearer ${platformToken}`, 'content-type': 'application/json' };
+
+  try {
+    const initialResponse = await fetch(modulesUrl, { headers: { authorization: `Bearer ${platformToken}` } });
+    assert.equal(initialResponse.status, 200);
+    const initial = (await initialResponse.json() as { data: { availableModules: string[]; enabledModules: string[] } }).data;
+    assert.ok(initial.availableModules.includes('customers'));
+    assert.ok(initial.enabledModules.includes('customers'));
+
+    const withoutCustomers = initial.enabledModules.filter((module) => module !== 'customers');
+    const disableResponse = await fetch(modulesUrl, {
+      method: 'PUT',
+      headers: platformHeaders,
+      body: JSON.stringify({ enabledModules: withoutCustomers }),
+    });
+    assert.equal(disableResponse.status, 200);
+
+    const configResponse = await fetch(`${baseUrl}/api/v1/business/configuration`, { headers: { authorization: authHeader } });
+    assert.equal(configResponse.status, 200);
+    const configuration = (await configResponse.json() as { data: { version: number; availableModules: string[]; enabledModules: string[] } }).data;
+    assert.ok(configuration.version > originalConfiguration.version);
+    assert.equal(configuration.availableModules.includes('customers'), false);
+    assert.equal(configuration.enabledModules.includes('customers'), false);
+
+    const deniedCustomers = await fetch(`${baseUrl}/api/v1/customers`, { headers: { authorization: authHeader } });
+    assert.equal(deniedCustomers.status, 403);
+
+    const tenantReenable = await fetch(`${baseUrl}/api/v1/business/configuration`, {
+      method: 'PUT',
+      headers: { authorization: authHeader, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        version: configuration.version,
+        enabledModules: initial.availableModules,
+        publish: false,
+      }),
+    });
+    assert.equal(tenantReenable.status, 403);
+
+    const audit = await prisma.auditEvent.findFirst({
+      where: {
+        action: 'platform.business_modules_updated',
+        entityType: 'business_module_access',
+        entityId: businessAId,
+      },
+      select: { id: true },
+    });
+    assert.ok(audit);
+
+    const enableResponse = await fetch(modulesUrl, {
+      method: 'PUT',
+      headers: platformHeaders,
+      body: JSON.stringify({ enabledModules: initial.availableModules }),
+    });
+    assert.equal(enableResponse.status, 200);
+    const restoredCustomers = await fetch(`${baseUrl}/api/v1/customers`, { headers: { authorization: authHeader } });
+    assert.equal(restoredCustomers.status, 200);
+  } finally {
+    if (originalModuleSetting) {
+      await prisma.businessSetting.upsert({
+        where: { businessId_key: { businessId: businessAId, key: 'platform_enabled_modules' } },
+        create: { businessId: businessAId, key: 'platform_enabled_modules', value: originalModuleSetting.value as Prisma.InputJsonValue },
+        update: { value: originalModuleSetting.value as Prisma.InputJsonValue },
+      });
+    } else {
+      await prisma.businessSetting.deleteMany({
+        where: { businessId: businessAId, key: 'platform_enabled_modules' },
+      });
+    }
+    await prisma.businessConfiguration.update({
+      where: { businessId: businessAId },
+      data: { enabledModules: originalConfiguration.enabledModules, version: originalConfiguration.version },
+    });
+    await prisma.auditEvent.deleteMany({
+      where: {
+        businessId: null,
+        action: 'platform.business_modules_updated',
+        entityType: 'business_module_access',
+        entityId: businessAId,
+      },
+    });
+    if (!priorReadGrant) {
+      await prisma.platformPermissionGrant.deleteMany({
+        where: { userId: platformSuperAdminId, permissionId: platformReadPermissionId },
+      });
+    }
+    if (!priorManageGrant) {
+      await prisma.platformPermissionGrant.deleteMany({
+        where: { userId: platformSuperAdminId, permissionId: managePermission.id },
+      });
+    }
+  }
+});
+
 test('platform staff creation commits the account, explicit grants and audit event together', { skip: !enabled }, async () => {
   const token = process.env.TENANT_TEST_PLATFORM_TOKEN;
   if (!token) throw new Error('Platform staff test token was not initialized');
