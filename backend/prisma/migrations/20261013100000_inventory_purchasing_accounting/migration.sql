@@ -121,10 +121,12 @@ CREATE TABLE "InventoryMovement" (
   CONSTRAINT "InventoryMovement_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "InventoryMovement_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT "InventoryMovement_variantId_businessId_fkey" FOREIGN KEY ("variantId", "businessId") REFERENCES "StockVariant"("id", "businessId") ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT "InventoryMovement_locationId_businessId_fkey" FOREIGN KEY ("locationId", "businessId") REFERENCES "InventoryLocation"("id", "businessId") ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT "InventoryMovement_reversalOfId_businessId_fkey" FOREIGN KEY ("reversalOfId", "businessId") REFERENCES "InventoryMovement"("id", "businessId") ON DELETE RESTRICT ON UPDATE CASCADE
+  CONSTRAINT "InventoryMovement_locationId_businessId_fkey" FOREIGN KEY ("locationId", "businessId") REFERENCES "InventoryLocation"("id", "businessId") ON DELETE RESTRICT ON UPDATE CASCADE
 );
 CREATE UNIQUE INDEX "InventoryMovement_id_businessId_key" ON "InventoryMovement"("id", "businessId");
+ALTER TABLE "InventoryMovement"
+  ADD CONSTRAINT "InventoryMovement_reversalOfId_businessId_fkey"
+  FOREIGN KEY ("reversalOfId", "businessId") REFERENCES "InventoryMovement"("id", "businessId") ON DELETE RESTRICT ON UPDATE CASCADE;
 CREATE UNIQUE INDEX "InventoryMovement_businessId_idempotencyKey_key" ON "InventoryMovement"("businessId", "idempotencyKey");
 CREATE INDEX "InventoryMovement_businessId_variantId_locationId_occurredAt_idx" ON "InventoryMovement"("businessId", "variantId", "locationId", "occurredAt");
 CREATE INDEX "InventoryMovement_businessId_sourceType_sourceId_idx" ON "InventoryMovement"("businessId", "sourceType", "sourceId");
@@ -254,10 +256,12 @@ CREATE TABLE "FinancialAccount" (
   "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMPTZ(3) NOT NULL,
   CONSTRAINT "FinancialAccount_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "FinancialAccount_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT "FinancialAccount_parentId_businessId_fkey" FOREIGN KEY ("parentId", "businessId") REFERENCES "FinancialAccount"("id", "businessId") ON DELETE RESTRICT ON UPDATE CASCADE
+  CONSTRAINT "FinancialAccount_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
 CREATE UNIQUE INDEX "FinancialAccount_id_businessId_key" ON "FinancialAccount"("id", "businessId");
+ALTER TABLE "FinancialAccount"
+  ADD CONSTRAINT "FinancialAccount_parentId_businessId_fkey"
+  FOREIGN KEY ("parentId", "businessId") REFERENCES "FinancialAccount"("id", "businessId") ON DELETE RESTRICT ON UPDATE CASCADE;
 CREATE UNIQUE INDEX "FinancialAccount_businessId_code_key" ON "FinancialAccount"("businessId", "code");
 CREATE UNIQUE INDEX "FinancialAccount_businessId_systemKey_key" ON "FinancialAccount"("businessId", "systemKey");
 CREATE INDEX "FinancialAccount_businessId_type_active_code_idx" ON "FinancialAccount"("businessId", "type", "active", "code");
@@ -276,10 +280,12 @@ CREATE TABLE "JournalEntry" (
   "actorId" UUID NOT NULL,
   "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "JournalEntry_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "JournalEntry_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT "JournalEntry_reversalOfId_businessId_fkey" FOREIGN KEY ("reversalOfId", "businessId") REFERENCES "JournalEntry"("id", "businessId") ON DELETE RESTRICT ON UPDATE CASCADE
+  CONSTRAINT "JournalEntry_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
 CREATE UNIQUE INDEX "JournalEntry_id_businessId_key" ON "JournalEntry"("id", "businessId");
+ALTER TABLE "JournalEntry"
+  ADD CONSTRAINT "JournalEntry_reversalOfId_businessId_fkey"
+  FOREIGN KEY ("reversalOfId", "businessId") REFERENCES "JournalEntry"("id", "businessId") ON DELETE RESTRICT ON UPDATE CASCADE;
 CREATE UNIQUE INDEX "JournalEntry_businessId_entryNumber_key" ON "JournalEntry"("businessId", "entryNumber");
 CREATE UNIQUE INDEX "JournalEntry_businessId_idempotencyKey_key" ON "JournalEntry"("businessId", "idempotencyKey");
 CREATE UNIQUE INDEX "JournalEntry_businessId_sourceType_sourceId_key" ON "JournalEntry"("businessId", "sourceType", "sourceId");
