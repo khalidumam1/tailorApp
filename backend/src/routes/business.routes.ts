@@ -3,6 +3,7 @@ import express from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
+import { removedItemTypeKeys } from '../domain/item-types.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { validateNotificationTemplateBody } from '../domain/notification-templates.js';
@@ -283,15 +284,17 @@ router.put('/configuration', requireBusinessPermission('settings:manage'), async
       if (input.terminologyOverrides && Object.keys(input.terminologyOverrides).some((key) => !knownTerminology.has(key))) {
         throw new HttpError(400, 'Terminology overrides must use keys from the assigned business template', 'INVALID_BUSINESS_TERMINOLOGY');
       }
-      if (input.itemTypes) {
-        const nextTypeKeys = input.itemTypes.map((item) => item.key);
+      const removedTypeKeys = input.itemTypes
+        ? removedItemTypeKeys(business.configuration?.itemTypes ?? template.itemTypes, input.itemTypes)
+        : [];
+      if (removedTypeKeys.length > 0) {
         const [usedOrderItem, usedCatalogItem] = await Promise.all([
           tx.orderItem.findFirst({
-            where: { businessId, itemTypeKey: { notIn: nextTypeKeys } },
+            where: { businessId, itemTypeKey: { in: removedTypeKeys } },
             select: { itemTypeKey: true },
           }),
           tx.businessItem.findFirst({
-            where: { businessId, active: true, typeKey: { notIn: nextTypeKeys } },
+            where: { businessId, active: true, typeKey: { in: removedTypeKeys } },
             select: { typeKey: true },
           }),
         ]);
