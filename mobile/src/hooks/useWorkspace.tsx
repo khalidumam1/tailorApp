@@ -315,7 +315,9 @@ export type WorkspaceContextValue = {
   saveCatalogItem: () => Promise<void>;
   toggleCatalogItem: (item: LocalCatalogItem) => Promise<void>;
   transitionOrder: (order: LocalOrder, targetStageKey?: string) => Promise<void>;
+  sendWhatsAppMessage: (recipientPhone: string, message: string, orderId?: string | null) => Promise<void>;
   openOrderPayment: (order: LocalOrder) => Promise<void>;
+
   recordPayment: () => Promise<void>;
   runSync: () => Promise<void>;
   refreshNotificationHistory: () => Promise<void>;
@@ -1299,21 +1301,27 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
          body: { recipientPhone, message, orderId },
        }, updateSession);
        
-       if (response.data) {
+       const sent = response.data;
+       if (sent) {
          // Add the sent notification to the history
-         setNotificationHistory(prev => [{
-           id: response.data.id,
-           customerId: null, // Would need to be fetched or passed in
+         setNotificationHistory((prev) => [{
+           id: sent.id,
+           customerId: null,
            orderId: orderId ?? null,
            paymentId: null,
-           recipientName: null, // Would need to be fetched or passed in
-           kind: 'order_status', // Default kind, could be customized
-           status: response.data.status,
-           recipientPhone: response.data.recipientPhone,
-           lastError: response.data.lastError,
-           ...response.data
-         }]);
+           recipientName: null,
+           kind: 'order_status',
+           status: sent.status,
+           recipientPhone: sent.recipientPhone,
+           lastError: sent.lastError,
+           sentAt: null,
+           deliveredAt: null,
+           readAt: null,
+           failedAt: null,
+           createdAt: sent.createdAt,
+         }, ...prev]);
        }
+
      } catch (whatsappError) {
        setError(whatsappError instanceof Error ? whatsappError.message : copy.error);
      } finally {
@@ -1713,7 +1721,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     selectedTemplate, currentItemType, orderItemFieldDefinitions, orderItemFields, orderFields,
     customerFields, catalogFields, stageLabel, erpRequest, handleSignIn, selectShop, handleSignOut,
     changeLanguage, submitSubscriptionPayment, saveCustomer, saveOrder, saveMeasurements,
-    saveCatalogItem, toggleCatalogItem, transitionOrder, openOrderPayment, recordPayment,
+    saveCatalogItem, toggleCatalogItem, transitionOrder, sendWhatsAppMessage, openOrderPayment, recordPayment,
+
     runSync, refreshNotificationHistory, refreshSubscriptionBilling, email, password,
     authBusy, shopChoices, cancelOrderPayment, saveBusinessConfiguration, fetchRoles,
     fetchBusinessPermissions, fetchBusinessStaff, createBusinessRole, inviteStaffMember,

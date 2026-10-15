@@ -4,6 +4,8 @@
  * presses send there. Nothing is sent silently from the device.
  */
 import { normalizePhone } from './phone';
+export { normalizePhone };
+
 
 /** WhatsApp chat URL for a stored phone number, or null when there is no usable number. */
 export function whatsappUrl(phone: string | null | undefined, text?: string): string | null {

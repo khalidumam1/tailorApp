@@ -9,8 +9,10 @@ import { useAppStyles } from '../theme/useAppStyles';
 import { useAppTheme } from '../theme/palette';
 import { Icon } from '../Icons';
 import { ActionButton, EmptyState } from '../theme/primitives';
-import { useWorkspace, resolveMobileWorkflowStage, sendWhatsAppMessage } from '../hooks/useWorkspace';
+import { useWorkspace, resolveMobileWorkflowStage } from '../hooks/useWorkspace';
 import { computeDashboardSummary } from '../data/analytics';
+import { normalizePhone } from '../data/messaging';
+
 import { AreaChart } from '../components/AreaChart';
 import { OrderForm } from '../components/OrderForm';
 import { PaymentForm } from '../components/PaymentForm';
@@ -207,8 +209,9 @@ export function OrdersScreen({
                                if (normalizedPhone) {
                                  const stageLabel = resolveMobileWorkflowStage(stages, order)?.label ?? order.status;
                                  const message = `Order ${order.id} is now ${stageLabel}.`;
-                                 sendWhatsAppMessage(normalizedPhone, message, order.id);
+                                 void ws.sendWhatsAppMessage(normalizedPhone, message, order.id);
                                }
+
                              }
                            }}
                            style={({ pressed }) => [
