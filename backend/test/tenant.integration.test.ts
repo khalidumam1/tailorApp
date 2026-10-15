@@ -300,12 +300,17 @@ after(async () => {
     return;
   }
   await closeServer?.();
+  await prisma.journalLine.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
+  await prisma.journalEntry.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.subscriptionEvent.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.subscriptionPayment.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.subscription.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   if (subscriptionPlanId) await prisma.subscriptionPlan.delete({ where: { id: subscriptionPlanId } });
   await prisma.whatsAppNotification.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.payment.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
+  await prisma.financialAccount.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
+  await prisma.customFieldValue.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
+  await prisma.customFieldDefinition.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.orderWorkflowHistory.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.orderStatusHistory.deleteMany({ where: { order: { businessId: { in: [businessAId, businessBId] } } } });
   await prisma.alterationTask.deleteMany({ where: { order: { businessId: { in: [businessAId, businessBId] } } } });
@@ -315,9 +320,10 @@ after(async () => {
   await prisma.customer.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.syncOperation.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.membership.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
-  await prisma.rolePermissionGrant.deleteMany({ where: { roleId: { in: [roleAId, roleBId] } } });
-  await prisma.role.deleteMany({ where: { id: { in: [roleAId, roleBId] } } });
+  await prisma.rolePermissionGrant.deleteMany({ where: { role: { businessId: { in: [businessAId, businessBId] } } } });
+  await prisma.role.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.user.deleteMany({ where: { id: { in: [userAId, userBId] } } });
+
   if (assignedOwnerId) await prisma.user.delete({ where: { id: assignedOwnerId } });
   if (createdPlatformStaffId) {
     await prisma.auditEvent.deleteMany({

@@ -11,8 +11,9 @@
     "build": "npm run build:shared && npm run db:generate && tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "npm run build:shared && npm run db:generate && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.seed.json",
-    "test": "npm run db:generate && tsx --test test/*.test.ts",
+    "test": "npm run db:generate && tsx --test --test-concurrency=1 test/*.test.ts",
     "test:db": "tsx scripts/test-db.ts",
+
     "test:acceptance:templates": "tsx --test test/business-templates.acceptance.test.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",

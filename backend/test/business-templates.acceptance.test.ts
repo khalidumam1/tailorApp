@@ -154,11 +154,16 @@ after(async () => {
   await closeServer?.();
   if (createdBusinessIds.length) {
     await prisma.$transaction(async (tx) => {
+      await tx.journalLine.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
+      await tx.journalEntry.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
       await tx.subscriptionEvent.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
       await tx.subscriptionPayment.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
       await tx.subscription.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
       await tx.whatsAppNotification.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
+      await tx.payment.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
+      await tx.financialAccount.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
       await tx.customFieldValue.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
+      await tx.customFieldDefinition.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
       await tx.syncOperation.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
       await tx.orderWorkflowHistory.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
       await tx.orderStatusHistory.deleteMany({ where: { order: { businessId: { in: createdBusinessIds } } } });
@@ -167,8 +172,11 @@ after(async () => {
       await tx.auditEvent.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
       await tx.businessItem.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
       await tx.customer.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
+      await tx.membership.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
+      await tx.rolePermissionGrant.deleteMany({ where: { role: { businessId: { in: createdBusinessIds } } } });
+      await tx.role.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
       await tx.business.deleteMany({ where: { id: { in: createdBusinessIds } } });
-    });
+    }, { maxWait: 20_000, timeout: 30_000 });
   }
   if (createdUserIds.length) {
     await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
@@ -178,6 +186,7 @@ after(async () => {
   }
   await prisma.$disconnect();
 });
+
 
 test('all five business templates work through scoped configuration, catalog, order, and workflow APIs', {
   skip: !enabled,
