@@ -619,12 +619,13 @@ test('platform module overrides are audited, cache-versioned and enforced for bu
   });
   const priorReadGrant = await prisma.platformPermissionGrant.findUnique({
     where: { userId_permissionId: { userId: platformSuperAdminId, permissionId: platformReadPermissionId } },
-    select: { id: true },
+    select: { userId: true, permissionId: true },
   });
   const priorManageGrant = await prisma.platformPermissionGrant.findUnique({
     where: { userId_permissionId: { userId: platformSuperAdminId, permissionId: managePermission.id } },
-    select: { id: true },
+    select: { userId: true, permissionId: true },
   });
+
   await prisma.platformPermissionGrant.createMany({
     data: [platformReadPermissionId, managePermission.id].map((permissionId) => ({
       userId: platformSuperAdminId,
@@ -1203,9 +1204,10 @@ test('subscription expiry reminders use configured business contact, idempotency
     if (existingBillingSetting) {
       await prisma.platformSetting.update({
         where: { key: 'billing' },
-        data: { value: existingBillingSetting.value },
+        data: { value: existingBillingSetting.value as Prisma.InputJsonValue },
       });
     } else {
+
       await prisma.platformSetting.deleteMany({ where: { key: 'billing' } });
     }
   }
