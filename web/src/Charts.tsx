@@ -10,7 +10,7 @@ import { useId } from 'react';
 
 export type SparkPoint = { label: string; value: number };
 
-const PALETTE = ['var(--configured-primary)', '#4389c1', '#d39a38', '#816bd1', '#d55c59', '#20979b'];
+const PALETTE = ['var(--brand-700)', '#4389c1', '#d39a38', '#816bd1', '#d55c59', '#20979b'];
 
 export function paletteColor(index: number): string {
   return PALETTE[index % PALETTE.length];
@@ -35,7 +35,7 @@ function smoothPath(points: Array<{ x: number; y: number }>, tension = 0.28): st
 }
 
 /** Compact inline trend line used inside KPI cards. */
-export function Sparkline({ points, color = 'var(--configured-primary)', height = 34 }: { points: number[]; color?: string; height?: number }) {
+export function Sparkline({ points, color = 'var(--brand-700)', height = 34 }: { points: number[]; color?: string; height?: number }) {
   const gradientId = `spark-${useId().replaceAll(':', '')}`;
   if (points.length < 2) return null;
   const width = 100;
@@ -67,7 +67,7 @@ export function Sparkline({ points, color = 'var(--configured-primary)', height 
 export function AreaChart({
   data,
   height = 220,
-  color = 'var(--configured-primary)',
+  color = 'var(--brand-700)',
   format = (value: number) => String(Math.round(value)),
 }: {
   data: SparkPoint[];
@@ -227,7 +227,7 @@ export function DonutChart({
 export function ColumnChart({
   data,
   height = 200,
-  color = 'var(--configured-primary)',
+  color = 'var(--brand-700)',
 }: {
   data: SparkPoint[];
   height?: number;
