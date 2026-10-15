@@ -701,12 +701,13 @@ function App() {
     const root = document.documentElement;
     root.dataset.theme = themeMode;
     root.style.setProperty('--configured-primary', applicationBranding.primaryColor);
+    root.style.setProperty('--configured-primary-foreground', accessibleTextColor(applicationBranding.primaryColor));
     root.style.setProperty('--configured-accent', applicationBranding.accentColor);
     document.title = `${applicationBranding.brandName} · ${currentUser?.context.scope === 'platform' ? 'Platform console' : currentUser ? 'Business workspace' : 'Sign in'}`;
     const description = document.querySelector<HTMLMetaElement>('meta[name="description"]');
     if (description) description.content = applicationBranding.description || 'Manage your business in one clear workspace.';
     const themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-    if (themeColor) themeColor.content = themeMode === 'dark' ? '#09090b' : '#ffffff';
+    if (themeColor) themeColor.content = themeMode === 'dark' ? '#101714' : '#f4f7f5';
     let favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (!favicon) {
       favicon = document.createElement('link');
@@ -3141,23 +3142,46 @@ function App() {
 
         {view === 'dashboard' && (
           <section aria-label="Business overview" className="content-stack">
-            <div className="page-head">
-              <div>
-                <p className="muted">
-                  Orders, collections and workload at a glance. Figures use the shop's Asia/Karachi business day.
-                </p>
+            <section className="dashboard-hero" aria-labelledby="dashboard-welcome-title">
+              <div className="dashboard-hero-topline">
+                <span className={`dashboard-live ${online ? 'is-live' : 'is-offline'}`}>
+                  <span aria-hidden="true" />{online ? 'Online' : 'Offline'}
+                </span>
+                {dashboard?.asOf && <span className="dashboard-hero-date">
+                  {new Intl.DateTimeFormat('en-PK', {
+                    weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+                    timeZone: businessConfiguration?.business.timezone ?? 'Asia/Karachi',
+                  }).format(new Date(dashboard.asOf))}
+                </span>}
               </div>
-              <div className="page-head-actions">
-                <button className="button button-secondary" onClick={() => void reloadCurrent()}>Refresh</button>
-                {permissions.has('orders:write') && moduleEnabled('orders') && (
-                  <button className="button button-primary" onClick={() => setView('orders')}><Icon name="plus" /> New {term('order', 'order').toLowerCase()}</button>
-                )}
+              <div className="dashboard-hero-main">
+                <div className="dashboard-hero-copy">
+                  <h2 id="dashboard-welcome-title">Welcome back, {currentUser?.user.name.trim().split(/\s+/)[0] ?? 'there'}</h2>
+                  <p>
+                    {businessConfiguration?.business.name ?? 'Your workspace'} · Orders, collections and workload at a glance.
+                    {dashboard && dashboard.overdue > 0
+                      ? ` ${dashboard.overdue} ${dashboard.overdue === 1 ? term('order', 'order').toLowerCase() : term('orders', 'orders').toLowerCase()} need${dashboard.overdue === 1 ? 's' : ''} attention.`
+                      : dashboard ? ` No overdue ${term('orders', 'orders').toLowerCase()} right now.` : ''}
+                  </p>
+                </div>
+                <div className="dashboard-hero-actions">
+                  <button className="button button-secondary" onClick={() => void reloadCurrent()}><Icon name="progress" /> Refresh</button>
+                  {permissions.has('orders:write') && moduleEnabled('orders') && (
+                    <button className="button button-primary" onClick={() => setView('orders')}><Icon name="plus" /> New {term('order', 'order').toLowerCase()}</button>
+                  )}
+                </div>
               </div>
-            </div>
+              {dashboard && <div className="dashboard-hero-stats" aria-label="Today's business summary">
+                {widgetEnabled('newOrders') && <div className="dashboard-hero-stat"><span>New {term('orders', 'orders').toLowerCase()}</span><strong>{dashboard.newOrders}</strong></div>}
+                {widgetEnabled('dueToday') && <div className="dashboard-hero-stat"><span>Due today</span><strong>{dashboard.dueToday}</strong></div>}
+                {widgetEnabled('inProgress') && <div className="dashboard-hero-stat"><span>In progress</span><strong>{dashboard.inProgress}</strong></div>}
+                {widgetEnabled('collectedToday') && permissions.has('payments:read') && moduleEnabled('payments') && <div className="dashboard-hero-stat"><span>Collected today</span><strong>{money(dashboard.collectedToday, businessConfiguration?.business.currency)}</strong></div>}
+              </div>}
+            </section>
 
             {loading && !dashboard ? <LoadingState /> : dashboard ? (
               <>
-                <div className="metric-grid">
+                <div className="metric-grid dashboard-metric-grid">
                   {widgetEnabled('newOrders') && (
                     <MetricCard
                       label={`New ${term('orders', 'orders').toLowerCase()} today`}

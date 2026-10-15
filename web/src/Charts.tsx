@@ -1,3 +1,5 @@
+import { useId } from 'react';
+
 /**
  * Lightweight SVG chart primitives.
  *
@@ -8,7 +10,7 @@
 
 export type SparkPoint = { label: string; value: number };
 
-const PALETTE = ['#4f46e5', '#0891b2', '#059669', '#d97706', '#7c3aed', '#db2777'];
+const PALETTE = ['var(--configured-primary)', '#4389c1', '#d39a38', '#816bd1', '#d55c59', '#20979b'];
 
 export function paletteColor(index: number): string {
   return PALETTE[index % PALETTE.length];
@@ -33,7 +35,8 @@ function smoothPath(points: Array<{ x: number; y: number }>, tension = 0.28): st
 }
 
 /** Compact inline trend line used inside KPI cards. */
-export function Sparkline({ points, color = '#4f46e5', height = 34 }: { points: number[]; color?: string; height?: number }) {
+export function Sparkline({ points, color = 'var(--configured-primary)', height = 34 }: { points: number[]; color?: string; height?: number }) {
+  const gradientId = `spark-${useId().replaceAll(':', '')}`;
   if (points.length < 2) return null;
   const width = 100;
   const max = Math.max(...points);
@@ -45,7 +48,7 @@ export function Sparkline({ points, color = '#4f46e5', height = 34 }: { points: 
   }));
   const line = smoothPath(coordinates);
   const area = `${line} L${width},${height} L0,${height} Z`;
-  const gradientId = `spark-${color.replace('#', '')}-${points.length}-${Math.round(max)}`;
+
   return (
     <svg className="metric-spark" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="presentation" focusable="false">
       <defs>
@@ -64,7 +67,7 @@ export function Sparkline({ points, color = '#4f46e5', height = 34 }: { points: 
 export function AreaChart({
   data,
   height = 220,
-  color = '#4f46e5',
+  color = 'var(--configured-primary)',
   format = (value: number) => String(Math.round(value)),
 }: {
   data: SparkPoint[];
@@ -72,6 +75,7 @@ export function AreaChart({
   color?: string;
   format?: (value: number) => string;
 }) {
+  const gradientId = `area-${useId().replaceAll(':', '')}`;
   if (data.length === 0) return null;
   const width = 640;
   const padding = { top: 16, right: 8, bottom: 26, left: 8 };
@@ -85,7 +89,7 @@ export function AreaChart({
   }));
   const line = smoothPath(coordinates);
   const area = `${line} L${coordinates[coordinates.length - 1].x},${height - padding.bottom} L${padding.left},${height - padding.bottom} Z`;
-  const gradientId = `area-${color.replace('#', '')}`;
+
   return (
     <svg className="chart-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Trend chart" focusable="false">
       <defs>
@@ -223,7 +227,7 @@ export function DonutChart({
 export function ColumnChart({
   data,
   height = 200,
-  color = '#4f46e5',
+  color = 'var(--configured-primary)',
 }: {
   data: SparkPoint[];
   height?: number;
