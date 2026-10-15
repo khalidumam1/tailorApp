@@ -41,9 +41,17 @@ jobs:
       - run: npm run db:generate
       - run: npm run db:migrate
       - run: npm run typecheck
-      - run: npm test
+      - name: Run tests
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test-output.log || {
+            SUMMARY=$(grep -E "not ok|error:|Error:|AssertionError|failureType" -A 10 test-output.log | tail -n 50 | tr '\n' ' ')
+            echo "::error title=Test Failure::${SUMMARY}"
+            exit 1
+          }
       - run: npm run build
       - run: npm audit --workspace @tailor/api --workspace @tailor/web --workspace @tailor/shared
+
 
 
 
