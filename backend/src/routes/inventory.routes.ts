@@ -270,8 +270,8 @@ router.post('/items', requireBusinessPermission('inventory:write'), asyncHandler
           baseUnit: input.baseUnit,
           reorderPoint: input.reorderPoint ? new Prisma.Decimal(input.reorderPoint) : null,
           idempotencyKey: key,
+          // businessId is inherited from the parent via the composite StockItem relation.
           variants: { create: {
-            businessId,
             name: input.variant.name,
             sku: input.variant.sku,
             attributes: input.variant.attributes as Prisma.InputJsonValue,

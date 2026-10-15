@@ -165,6 +165,16 @@ const erpAccountSchema = z.object({
   version: z.number().int().optional(),
   balance: z.string().optional(),
 });
+// Setup endpoints return the compact fields selected by ensureDefaultAccounts; the
+// full account endpoints return `erpAccountSchema`.
+const accountSetupResultSchema = z.object({
+  accounts: z.array(z.object({
+    id: z.string().uuid(),
+    type: erpAccountSchema.shape.type,
+    active: z.boolean(),
+    systemKey: z.string().nullable(),
+  })),
+});
 const accountingJournalSchema = z.object({
   id: z.string().uuid(),
   entryNumber: z.string(),
@@ -188,7 +198,6 @@ const inventoryVariantSchema = z.object({
   sku: z.string().nullable(),
   active: z.boolean(),
   balances: z.array(z.object({
-    id: z.string().uuid(),
     quantity: z.string(),
     averageUnitCost: z.string(),
     location: z.object({ id: z.string().uuid(), code: z.string(), name: z.string() }),
@@ -1094,7 +1103,7 @@ export const api = {
     return request(`/purchases/${purchaseOrderId}/settlements`, z.unknown(), { token, method: 'POST', body: input, idempotencyKey });
   },
   cashbookSetup(token: string) {
-    return request('/cashbook/setup', z.object({ accounts: z.array(erpAccountSchema) }), { token, method: 'POST' });
+    return request('/cashbook/setup', accountSetupResultSchema, { token, method: 'POST' });
   },
   cashbookAccounts(token: string) {
     return request('/cashbook/accounts', z.object({ items: z.array(erpAccountSchema), setupRequired: z.boolean() }), { token });
@@ -1149,7 +1158,7 @@ export const api = {
     return request(`/cashbook/reconciliations/${reconciliationId}/close`, z.unknown(), { token, method: 'POST' });
   },
   accountingSetup(token: string) {
-    return request('/accounting/setup', z.object({ accounts: z.array(erpAccountSchema) }), { token, method: 'POST' });
+    return request('/accounting/setup', accountSetupResultSchema, { token, method: 'POST' });
   },
   accountingAccounts(token: string) {
     return request('/accounting/accounts', z.object({ items: z.array(erpAccountSchema), setupRequired: z.boolean() }), { token });
