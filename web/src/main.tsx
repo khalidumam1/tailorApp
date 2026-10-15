@@ -3,13 +3,23 @@ import { StrictMode } from 'react';
 import ReactDOM from 'react-dom/client';
 import {
   accessibleTextColor,
+  BRAND_LOGO_PRESETS,
+  BRAND_LOGO_SHAPES,
+  buildConfigurableLogoUrl,
+  configurableLogoDataUri,
   createCustomerSchema,
   createMeasurementRevisionSchema,
   createOrderSchema,
   createPaymentSchema,
   DEFAULT_APPLICATION_BRANDING,
+  parseConfigurableLogoUrl,
+  renderConfigurableLogoSvg,
+  sanitizeLogoMonogram,
   type ApplicationBranding,
+  type LogoShapeKey,
+  type LogoStyleKey,
 } from '@tailor/shared';
+
 import {
   api,
   ApiError,
@@ -253,6 +263,274 @@ function messageFor(error: unknown): string {
   }
   return error instanceof Error ? error.message : 'Something went wrong. Please try again.';
 }
+
+function BrandLogoMark({
+  logoUrl,
+  name,
+  primaryColor,
+  accentColor,
+  defaultStyle = 'shears',
+}: {
+  logoUrl: string | null | undefined;
+  name: string;
+  primaryColor: string;
+  accentColor: string;
+  defaultStyle?: LogoStyleKey;
+}) {
+  const parsed = useMemo(
+    () => parseConfigurableLogoUrl(logoUrl, {
+      style: defaultStyle,
+      primaryColor,
+      accentColor,
+      fallbackName: name,
+    }),
+    [accentColor, defaultStyle, logoUrl, name, primaryColor],
+  );
+  const svgMarkup = useMemo(
+    () => renderConfigurableLogoSvg(parsed, name),
+    [ name, parsed ],
+  );
+  const trimmedUrl = (logoUrl ?? '').trim();
+
+  return (
+    <>
+      <span
+        className="brand-mark-vector"
+        aria-hidden="true"
+        dangerouslySetInnerHTML={{ __html: svgMarkup }}
+      />
+      <span className="brand-mark-fallback sr-only">{parsed.monogram}</span>
+      {trimmedUrl && !parsed.isConfigurablePreset && (
+        <img
+          key={trimmedUrl}
+          src={trimmedUrl}
+          alt=""
+          referrerPolicy="no-referrer"
+          onError={(event) => {
+            event.currentTarget.style.display = 'none';
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function ConfigurableLogoDesigner({
+  title,
+  subtitle,
+  name,
+  logoUrl,
+  primaryColor,
+  accentColor,
+  defaultStyle = 'shears',
+  allowColorOverride = false,
+  onChangeLogoUrl,
+  onSyncFavicon,
+}: {
+  title: string;
+  subtitle: string;
+  name: string;
+  logoUrl: string;
+  primaryColor: string;
+  accentColor: string;
+  defaultStyle?: LogoStyleKey;
+  allowColorOverride?: boolean;
+  onChangeLogoUrl: (nextUrl: string) => void;
+  onSyncFavicon?: (nextFaviconUrl: string) => void;
+}) {
+  const parsed = useMemo(
+    () => parseConfigurableLogoUrl(logoUrl, {
+      style: defaultStyle,
+      primaryColor,
+      accentColor,
+      fallbackName: name,
+    }),
+    [accentColor, defaultStyle, logoUrl, name, primaryColor],
+  );
+  const effectivePrimary = allowColorOverride ? parsed.primaryColor : primaryColor;
+  const effectiveAccent = allowColorOverride ? parsed.accentColor : accentColor;
+
+  const updatePreset = (patch: Partial<{
+    style: LogoStyleKey;
+    shape: LogoShapeKey;
+    monogram: string;
+    primaryColor: string;
+    accentColor: string;
+    showStitchRing: boolean;
+  }>) => {
+    const nextUrl = buildConfigurableLogoUrl({
+      style: patch.style ?? parsed.style,
+      shape: patch.shape ?? parsed.shape,
+      monogram: patch.monogram ?? parsed.monogram,
+      primaryColor: patch.primaryColor ?? effectivePrimary,
+      accentColor: patch.accentColor ?? effectiveAccent,
+      showStitchRing: patch.showStitchRing ?? parsed.showStitchRing,
+    });
+    onChangeLogoUrl(nextUrl);
+  };
+
+  const downloadSvg = () => {
+    const svg = renderConfigurableLogoSvg({
+      ...parsed,
+      primaryColor: effectivePrimary,
+      accentColor: effectiveAccent,
+    }, name);
+    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    const slug = (name || 'tailor-logo').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'tailor-logo';
+    link.download = `${slug}-${parsed.style}.svg`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+  };
+
+  return (
+    <div className="logo-designer span-all" aria-label={title}>
+      <div className="logo-designer-header">
+        <div>
+          <p className="eyebrow">Configurable brand mark</p>
+          <h3>{title}</h3>
+          <p className="muted">{subtitle}</p>
+        </div>
+        <div className="logo-designer-actions">
+          <button
+            type="button"
+            className="button button-secondary button-sm"
+            onClick={downloadSvg}
+          >
+            Download SVG
+          </button>
+          {onSyncFavicon && (
+            <button
+              type="button"
+              className="button button-secondary button-sm"
+              onClick={() => {
+                const nextUrl = buildConfigurableLogoUrl({
+                  ...parsed,
+                  primaryColor: effectivePrimary,
+                  accentColor: effectiveAccent,
+                });
+                onChangeLogoUrl(nextUrl);
+                onSyncFavicon(nextUrl);
+              }}
+            >
+              Use as favicon
+            </button>
+          )}
+          {logoUrl && (
+            <button
+              type="button"
+              className="button button-ghost button-sm"
+              onClick={() => onChangeLogoUrl('')}
+            >
+              Reset default
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="logo-preset-grid" role="radiogroup" aria-label="Logo emblem style">
+        {BRAND_LOGO_PRESETS.map((preset) => {
+          const isSelected = parsed.isConfigurablePreset && parsed.style === preset.key;
+          const previewSvg = renderConfigurableLogoSvg({
+            style: preset.key,
+            shape: parsed.shape,
+            monogram: parsed.monogram,
+            primaryColor: effectivePrimary,
+            accentColor: effectiveAccent,
+            showStitchRing: parsed.showStitchRing,
+          }, name);
+          return (
+            <button
+              key={preset.key}
+              type="button"
+              role="radio"
+              aria-checked={isSelected}
+              className={isSelected ? 'logo-preset-card is-selected' : 'logo-preset-card'}
+              onClick={() => updatePreset({ style: preset.key })}
+            >
+              <span
+                className="logo-preset-thumb"
+                aria-hidden="true"
+                dangerouslySetInnerHTML={{ __html: previewSvg }}
+              />
+              <span className="logo-preset-meta">
+                <strong>{preset.label}</strong>
+                <small>{preset.description}</small>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="logo-designer-controls">
+        <div className="logo-shape-group" role="group" aria-label="Badge shape">
+          <span className="logo-control-label">Badge shape</span>
+          <div className="logo-shape-pills">
+            {BRAND_LOGO_SHAPES.map((shapeOption) => {
+              const active = parsed.isConfigurablePreset && parsed.shape === shapeOption.key;
+              return (
+                <button
+                  key={shapeOption.key}
+                  type="button"
+                  className={active ? 'logo-shape-pill is-active' : 'logo-shape-pill'}
+                  onClick={() => updatePreset({ shape: shapeOption.key })}
+                >
+                  {shapeOption.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <label className="logo-monogram-field">
+          Monogram initials
+          <input
+            type="text"
+            maxLength={3}
+            value={parsed.monogram}
+            placeholder={sanitizeLogoMonogram('', name)}
+            onChange={(event) => updatePreset({ monogram: event.target.value })}
+          />
+        </label>
+
+        {allowColorOverride && (
+          <>
+            <label className="logo-color-field">
+              Badge primary
+              <input
+                type="color"
+                value={effectivePrimary}
+                onChange={(event) => updatePreset({ primaryColor: event.target.value })}
+              />
+            </label>
+            <label className="logo-color-field">
+              Badge accent
+              <input
+                type="color"
+                value={effectiveAccent}
+                onChange={(event) => updatePreset({ accentColor: event.target.value })}
+              />
+            </label>
+          </>
+        )}
+
+        <label className="checkbox-row logo-stitch-toggle">
+          <input
+            type="checkbox"
+            checked={parsed.showStitchRing}
+            onChange={(event) => updatePreset({ showStitchRing: event.target.checked })}
+          />
+          Tailor stitch border
+        </label>
+      </div>
+    </div>
+  );
+}
+
 
 function App() {
   const [session, setSession] = useState<Session | null>(() => initialStoredSession?.session ?? null);
@@ -715,9 +993,19 @@ function App() {
       favicon.rel = 'icon';
       document.head.append(favicon);
     }
-    favicon.href = applicationBranding.faviconUrl || '/favicon.svg';
+    const faviconSource = applicationBranding.faviconUrl || applicationBranding.logoUrl;
+    const parsedFavicon = parseConfigurableLogoUrl(faviconSource, {
+      style: 'shears',
+      primaryColor: applicationBranding.primaryColor,
+      accentColor: applicationBranding.accentColor,
+      fallbackName: applicationBranding.brandName,
+    });
+    favicon.href = parsedFavicon.isConfigurablePreset
+      ? configurableLogoDataUri(parsedFavicon, applicationBranding.brandName)
+      : (applicationBranding.faviconUrl || '/favicon.svg');
     favicon.referrerPolicy = 'no-referrer';
   }, [applicationBranding, currentUser?.context.scope, themeMode]);
+
 
   useEffect(() => {
     setBusinessLogoFailed(false);
@@ -2185,9 +2473,14 @@ function App() {
         {themeToggleButton}
         <section className="auth-brand">
           <span className="brand-mark" aria-hidden="true" style={{ width: 44, height: 44, borderRadius: 12 }}>
-            <span className="brand-mark-fallback">{applicationBranding.brandName.trim().charAt(0).toUpperCase() || 'A'}</span>
-            {applicationBranding.logoUrl && <img key={applicationBranding.logoUrl} src={applicationBranding.logoUrl} alt="" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.style.display = 'none'; }} />}
+            <BrandLogoMark
+              logoUrl={applicationBranding.logoUrl}
+              name={applicationBranding.brandName}
+              primaryColor={applicationBranding.primaryColor}
+              accentColor={applicationBranding.accentColor}
+            />
           </span>
+
           <p className="eyebrow" style={{ marginTop: 18 }}>{applicationBranding.tagline || 'Made for the workroom'}</p>
           <h1>{applicationBranding.loginTitle || 'Welcome back'}</h1>
           <p>{applicationBranding.description || 'Keep your business moving with one clear workspace.'}</p>
@@ -2318,9 +2611,14 @@ function App() {
         <header className="platform-header">
           <div className="platform-brand" aria-label={`${applicationBranding.brandName} platform`}>
             <span className="platform-brand-mark" aria-hidden="true">
-              <span className="brand-mark-fallback">{applicationBranding.brandName.trim().charAt(0).toUpperCase() || 'A'}</span>
-              {applicationBranding.logoUrl && <img key={applicationBranding.logoUrl} src={applicationBranding.logoUrl} alt="" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.style.display = 'none'; }} />}
+              <BrandLogoMark
+                logoUrl={applicationBranding.logoUrl}
+                name={applicationBranding.brandName}
+                primaryColor={applicationBranding.primaryColor}
+                accentColor={applicationBranding.accentColor}
+              />
             </span>
+
             <span><strong>{applicationBranding.brandName}</strong><small>Platform console</small></span>
           </div>
           <div className="platform-header-actions">
@@ -2853,10 +3151,42 @@ function App() {
                 <label>Tagline<input value={applicationBrandingDraft.tagline} maxLength={140} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, tagline: event.target.value })} /></label>
                 <label className="span-all">Login headline<input value={applicationBrandingDraft.loginTitle} maxLength={120} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, loginTitle: event.target.value })} /></label>
                 <label className="span-all">Description<textarea rows={3} maxLength={320} value={applicationBrandingDraft.description} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, description: event.target.value })} /></label>
-                <label>Logo URL<input value={applicationBrandingDraft.logoUrl} maxLength={2048} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, logoUrl: event.target.value })} placeholder="https://… or /assets/logo.svg" /></label>
-                <label>Favicon URL<input value={applicationBrandingDraft.faviconUrl} maxLength={2048} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, faviconUrl: event.target.value })} placeholder="https://… or /favicon.ico" /></label>
-                <label>Primary color<input type="color" value={applicationBrandingDraft.primaryColor} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, primaryColor: event.target.value })} /></label>
-                <label>Accent color<input type="color" value={applicationBrandingDraft.accentColor} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, accentColor: event.target.value })} /></label>
+                <ConfigurableLogoDesigner
+                  title="Logo studio"
+                  subtitle="Choose a vector emblem style, badge shape, stitch border, and monogram—or paste any custom HTTPS or same-origin logo URL below."
+                  name={applicationBrandingDraft.brandName}
+                  logoUrl={applicationBrandingDraft.logoUrl}
+                  primaryColor={applicationBrandingDraft.primaryColor}
+                  accentColor={applicationBrandingDraft.accentColor}
+                  onChangeLogoUrl={(nextUrl) => setApplicationBrandingDraft({ ...applicationBrandingDraft, logoUrl: nextUrl })}
+                  onSyncFavicon={(nextFaviconUrl) => setApplicationBrandingDraft((prev) => ({ ...prev, faviconUrl: nextFaviconUrl }))}
+                />
+                <label>Logo URL<input value={applicationBrandingDraft.logoUrl} maxLength={2048} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, logoUrl: event.target.value })} placeholder="https://… or /logos/shears.svg" /></label>
+                <label>Favicon URL<input value={applicationBrandingDraft.faviconUrl} maxLength={2048} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, faviconUrl: event.target.value })} placeholder="https://… or /favicon.svg" /></label>
+                <label>Primary color<input type="color" value={applicationBrandingDraft.primaryColor} onChange={(event) => {
+                  const nextPrimary = event.target.value;
+                  const parsedLogo = parseConfigurableLogoUrl(applicationBrandingDraft.logoUrl, {
+                    primaryColor: nextPrimary,
+                    accentColor: applicationBrandingDraft.accentColor,
+                    fallbackName: applicationBrandingDraft.brandName,
+                  });
+                  const nextLogoUrl = applicationBrandingDraft.logoUrl && parsedLogo.isConfigurablePreset
+                    ? buildConfigurableLogoUrl({ ...parsedLogo, primaryColor: nextPrimary, accentColor: applicationBrandingDraft.accentColor })
+                    : applicationBrandingDraft.logoUrl;
+                  setApplicationBrandingDraft({ ...applicationBrandingDraft, primaryColor: nextPrimary, logoUrl: nextLogoUrl });
+                }} /></label>
+                <label>Accent color<input type="color" value={applicationBrandingDraft.accentColor} onChange={(event) => {
+                  const nextAccent = event.target.value;
+                  const parsedLogo = parseConfigurableLogoUrl(applicationBrandingDraft.logoUrl, {
+                    primaryColor: applicationBrandingDraft.primaryColor,
+                    accentColor: nextAccent,
+                    fallbackName: applicationBrandingDraft.brandName,
+                  });
+                  const nextLogoUrl = applicationBrandingDraft.logoUrl && parsedLogo.isConfigurablePreset
+                    ? buildConfigurableLogoUrl({ ...parsedLogo, primaryColor: applicationBrandingDraft.primaryColor, accentColor: nextAccent })
+                    : applicationBrandingDraft.logoUrl;
+                  setApplicationBrandingDraft({ ...applicationBrandingDraft, accentColor: nextAccent, logoUrl: nextLogoUrl });
+                }} /></label>
                 <label>Default theme<select value={applicationBrandingDraft.defaultTheme} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, defaultTheme: event.target.value as ThemeMode })}><option value="light">Light</option><option value="dark">Dark</option></select></label>
                 <label>Support email<input type="email" value={applicationBrandingDraft.supportEmail} maxLength={254} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, supportEmail: event.target.value })} /></label>
                 <label className="span-all">Support website<input value={applicationBrandingDraft.supportUrl} maxLength={2048} onChange={(event) => setApplicationBrandingDraft({ ...applicationBrandingDraft, supportUrl: event.target.value })} placeholder="https://support.example.com" /></label>
@@ -2864,9 +3194,14 @@ function App() {
               </div>
               <div className="brand-preview" aria-label="Brand preview">
                 <span className="brand-preview-mark" style={{ backgroundColor: applicationBrandingDraft.primaryColor, color: accessibleTextColor(applicationBrandingDraft.primaryColor) }}>
-                  <span className="brand-mark-fallback">{applicationBrandingDraft.brandName.trim().charAt(0).toUpperCase() || 'A'}</span>
-                  {applicationBrandingDraft.logoUrl && <img key={applicationBrandingDraft.logoUrl} src={applicationBrandingDraft.logoUrl} alt="" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.style.display = 'none'; }} />}
+                  <BrandLogoMark
+                    logoUrl={applicationBrandingDraft.logoUrl}
+                    name={applicationBrandingDraft.brandName}
+                    primaryColor={applicationBrandingDraft.primaryColor}
+                    accentColor={applicationBrandingDraft.accentColor}
+                  />
                 </span>
+
                 <span><strong>{applicationBrandingDraft.brandName || 'Your product name'}</strong><small style={{ color: applicationBrandingDraft.accentColor }}>{applicationBrandingDraft.tagline || 'Your tagline'}</small></span>
                 <span className="brand-preview-chip" style={{ backgroundColor: applicationBrandingDraft.primaryColor, color: accessibleTextColor(applicationBrandingDraft.primaryColor) }}>Primary action</span>
               </div>
@@ -3068,19 +3403,38 @@ function App() {
       <aside className="sidebar">
         <a className="brand-lockup" href="#" onClick={(event) => { event.preventDefault(); setView('dashboard'); }}>
           <span className="brand-mark" aria-hidden="true">
-            <span className="brand-mark-fallback">{applicationBranding.brandName.trim().charAt(0).toUpperCase() || 'A'}</span>
-            {applicationBranding.logoUrl && <img key={applicationBranding.logoUrl} src={applicationBranding.logoUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.style.display = 'none'; }} />}
+            <BrandLogoMark
+              logoUrl={applicationBranding.logoUrl}
+              name={applicationBranding.brandName}
+              primaryColor={applicationBranding.primaryColor}
+              accentColor={applicationBranding.accentColor}
+            />
           </span>
           <span><strong>{applicationBranding.brandName}</strong><small>{applicationBranding.tagline || 'Business workspace'}</small></span>
         </a>
         <div className="shop-switcher">
           <span className="shop-avatar" aria-hidden="true">
-            {businessConfiguration?.business.logoUrl && !businessLogoFailed
-              ? <img key={businessConfiguration.business.logoUrl} src={businessConfiguration.business.logoUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setBusinessLogoFailed(true)} />
-              : (businessConfiguration?.business.name ?? currentUser?.context.business?.name ?? 'S').slice(0, 1).toUpperCase()}
+            {businessConfiguration?.business.logoUrl && !businessLogoFailed ? (
+              <BrandLogoMark
+                logoUrl={businessConfiguration.business.logoUrl}
+                name={businessConfiguration?.business.name ?? currentUser?.context.business?.name ?? 'Shop'}
+                primaryColor={applicationBranding.primaryColor}
+                accentColor={applicationBranding.accentColor}
+                defaultStyle="monogram"
+              />
+            ) : (
+              <BrandLogoMark
+                logoUrl=""
+                name={businessConfiguration?.business.name ?? currentUser?.context.business?.name ?? 'Shop'}
+                primaryColor={applicationBranding.primaryColor}
+                accentColor={applicationBranding.accentColor}
+                defaultStyle="monogram"
+              />
+            )}
           </span>
           <span><strong>{businessConfiguration?.business.name ?? currentUser?.context.business?.name ?? 'Business'}</strong><small>{businessConfiguration?.template.name ?? 'Business workspace'}</small></span>
         </div>
+
         <nav aria-label="Main navigation" className="main-nav">
           {navigationGroups.map((group) => {
             const items = visibleNavigation.filter((item) => group.views.includes(item.view));
@@ -3683,8 +4037,23 @@ function App() {
                 <form className="panel form-panel" onSubmit={saveBusinessConfiguration}>
                   <div className="form-grid">
                     <label>Business name<input value={businessConfigurationDraft.business.name} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, name: event.target.value } })} maxLength={160} required /></label>
-                    <label>Logo URL<input type="text" maxLength={2048} value={businessConfigurationDraft.business.logoUrl ?? ''} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, logoUrl: event.target.value || null } })} placeholder="https://… or /assets/logo.svg" /></label>
+                    <label>Logo URL<input type="text" maxLength={2048} value={businessConfigurationDraft.business.logoUrl ?? ''} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, logoUrl: event.target.value || null } })} placeholder="https://… or /logos/shears.svg" /></label>
+                    <ConfigurableLogoDesigner
+                      title="Business logo studio"
+                      subtitle="Configure a custom emblem for your shop switcher and printed receipts, or enter an external HTTPS logo URL above."
+                      name={businessConfigurationDraft.business.name}
+                      logoUrl={businessConfigurationDraft.business.logoUrl ?? ''}
+                      primaryColor={applicationBranding.primaryColor}
+                      accentColor={applicationBranding.accentColor}
+                      defaultStyle="monogram"
+                      allowColorOverride
+                      onChangeLogoUrl={(nextUrl) => setBusinessConfigurationDraft({
+                        ...businessConfigurationDraft,
+                        business: { ...businessConfigurationDraft.business, logoUrl: nextUrl || null },
+                      })}
+                    />
                     <label>Currency<input value={businessConfigurationDraft.business.currency} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, currency: event.target.value.toUpperCase() } })} pattern="[A-Z]{3}" maxLength={3} required /></label>
+
                     <label>Timezone<input value={businessConfigurationDraft.business.timezone} onChange={(event) => setBusinessConfigurationDraft({ ...businessConfigurationDraft, business: { ...businessConfigurationDraft.business, timezone: event.target.value } })} maxLength={100} required /></label>
                     <label>Business contact / WhatsApp phone<input
                       type="tel"
@@ -3966,7 +4335,18 @@ function App() {
       {receipt && (
         <div className="dialog-backdrop receipt-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReceipt(null); }}>
           <section className="receipt-card receipt-print" role="dialog" aria-modal="true" aria-labelledby="receipt-title">
-            <div className="receipt-brand"><span className="brand-mark">T</span><div><p className="eyebrow">Payment receipt</p><h2 id="receipt-title">{receipt.business.name}</h2></div></div>
+            <div className="receipt-brand">
+              <span className="brand-mark" aria-hidden="true">
+                <BrandLogoMark
+                  logoUrl={receipt.business.logoUrl ?? businessConfiguration?.business.logoUrl ?? applicationBranding.logoUrl}
+                  name={receipt.business.name}
+                  primaryColor={applicationBranding.primaryColor}
+                  accentColor={applicationBranding.accentColor}
+                />
+              </span>
+              <div><p className="eyebrow">Payment receipt</p><h2 id="receipt-title">{receipt.business.name}</h2></div>
+            </div>
+
             <p className="receipt-number">{receipt.receiptNumber}</p>
             <dl className="receipt-details">
               <div><dt>Customer</dt><dd>{receipt.order.customer.name}</dd></div>

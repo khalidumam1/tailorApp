@@ -10,8 +10,9 @@ import { useAppStyles } from '../theme/useAppStyles';
 import { useAppTheme } from '../theme/palette';
 import { Icon, type IconName } from '../Icons';
 import { ActionButton, EmptyState, IconDot, StatusPill, openExternal } from '../theme/primitives';
-import { useWorkspace, sendWhatsAppMessage } from '../hooks/useWorkspace';
+import { useWorkspace } from '../hooks/useWorkspace';
 import { loadPayments, summarizePayments, type PaymentRow } from '../data/payments';
+
 import { receiptMessage, whatsappUrl, normalizePhone } from '../data/messaging';
 import { interpolate } from '../i18n';
 import { PaymentForm } from '../components/PaymentForm';
@@ -110,8 +111,9 @@ export function PaymentsScreen({
      });
      
      try {
-       await sendWhatsAppMessage(normalizedPhone, message, null);
+       await ws.sendWhatsAppMessage(normalizedPhone, message, null);
        // Optionally show a success message
+
        // Alert.alert(copy.sendReceiptBtn, copy.whatsappReceiptSent);
      } catch (error) {
        Alert.alert(copy.sendReceiptBtn, copy.error);

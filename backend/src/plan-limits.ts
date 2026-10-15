@@ -19,12 +19,14 @@ export async function assertPlanLimit(
   const limitName = permissionLimit[permission];
   if (!limitName || additionalUsage <= 0) return;
 
-  await tx.$queryRaw`SELECT "id" FROM "Business" WHERE "id" = ${businessId}::uuid FOR UPDATE`;
   const setting = await tx.platformSetting.findUnique({ where: { key: 'billing' }, select: { value: true } });
   const billing = setting?.value;
   const enforcementEnabled = typeof billing === 'object' && billing !== null
     && 'enforcementEnabled' in billing && billing.enforcementEnabled === true;
   if (!enforcementEnabled) return;
+
+  await tx.$queryRaw`SELECT "id" FROM "Business" WHERE "id" = ${businessId}::uuid FOR NO KEY UPDATE`;
+
 
   const now = new Date();
   const entitlement = await tx.subscription.findFirst({

@@ -486,15 +486,39 @@ select { cursor: pointer; appearance: none; background-image: linear-gradient(45
   font-size: .9375rem;
   font-weight: 700;
 }
-.brand-mark, .platform-brand-mark, .brand-preview-mark { position: relative; }
+.brand-mark, .platform-brand-mark, .shop-avatar, .brand-preview-mark { position: relative; }
 .brand-mark > img, .shop-avatar > img, .platform-brand-mark > img, .brand-preview-mark > img {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: contain;
+  background: var(--surface);
+}
+.brand-mark-vector {
+  display: block;
+  width: 100%;
+  height: 100%;
+  line-height: 0;
+}
+.brand-mark-vector > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 .brand-mark-fallback { display: grid; width: 100%; height: 100%; place-items: center; }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 
 .shop-switcher {
   display: flex;
@@ -1579,6 +1603,140 @@ tbody td strong { display: block; color: var(--ink-900); font-size: .8125rem; fo
   font-size: .75rem;
   font-weight: 650;
 }
+
+.logo-designer {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface-sunken);
+}
+.logo-designer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.logo-designer-header h3 {
+  margin: 2px 0 4px;
+  font-size: 1rem;
+}
+.logo-designer-header .muted {
+  margin: 0;
+  font-size: .8125rem;
+}
+.logo-designer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.logo-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+  gap: 10px;
+}
+.logo-preset-card {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease, transform .12s ease;
+}
+.logo-preset-card:hover {
+  border-color: var(--brand-600);
+  transform: translateY(-1px);
+}
+.logo-preset-card.is-selected {
+  border-color: var(--configured-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--configured-primary) 24%, transparent);
+  background: color-mix(in srgb, var(--configured-primary) 6%, var(--surface));
+}
+.logo-preset-thumb {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  line-height: 0;
+}
+.logo-preset-thumb > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.logo-preset-meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.logo-preset-meta strong {
+  color: var(--ink-900);
+  font-size: .8125rem;
+  font-weight: 650;
+}
+.logo-preset-meta small {
+  color: var(--ink-500);
+  font-size: .71875rem;
+  line-height: 1.35;
+}
+.logo-designer-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+.logo-shape-group {
+  display: grid;
+  gap: 6px;
+}
+.logo-control-label {
+  color: var(--ink-700);
+  font-size: .75rem;
+  font-weight: 600;
+}
+.logo-shape-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.logo-shape-pill {
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink-700);
+  font-size: .75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.logo-shape-pill.is-active {
+  border-color: var(--configured-primary);
+  background: var(--configured-primary);
+  color: var(--configured-primary-foreground, #ffffff);
+}
+.logo-monogram-field {
+  width: 140px;
+}
+.logo-monogram-field input {
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+.logo-color-field {
+  width: 120px;
+}
+.logo-stitch-toggle {
+  padding-bottom: 8px;
+}
+
 
 /* Grid helpers used by the new dashboards */
 .split-2 { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 14px; align-items: start; }

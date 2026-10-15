@@ -5,13 +5,20 @@
  * saves through the business configuration API, which checks the version so
  * a stale copy cannot overwrite newer changes.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
+import {
+  BRAND_LOGO_PRESETS,
+  BRAND_LOGO_SHAPES,
+  buildConfigurableLogoUrl,
+  parseConfigurableLogoUrl,
+} from '@tailor/shared';
 import { useAppStyles } from '../theme/useAppStyles';
 import { useAppTheme } from '../theme/palette';
-import { ActionButton, Field, StatusPill } from '../theme/primitives';
+import { ActionButton, ConfigurableBrandMark, Field, StatusPill } from '../theme/primitives';
 import { useWorkspace, type BusinessMember, type BusinessPermission, type BusinessRole } from '../hooks/useWorkspace';
 import { itemTypeKeyFrom, sameList } from '../data/format';
+
 
 type ToggleProps = { value: boolean; onToggle: (next: boolean) => void; disabled?: boolean };
 
@@ -111,7 +118,17 @@ export function BusinessSettingsScreen() {
 
   const trimmedName = businessName.trim();
   const trimmedLogo = logoUrl.trim();
+  const parsedLogo = useMemo(
+    () => parseConfigurableLogoUrl(trimmedLogo, {
+      style: 'shears',
+      primaryColor: ws.branding.primaryColor,
+      accentColor: ws.branding.accentColor,
+      fallbackName: trimmedName || ws.branding.brandName,
+    }),
+    [trimmedLogo, trimmedName, ws.branding.accentColor, ws.branding.brandName, ws.branding.primaryColor],
+  );
   const brandingChanged = trimmedName !== (config?.business.name ?? '') || trimmedLogo !== (config?.business.logoUrl ?? '');
+
   const modulesChanged = !sameList(modules, config?.enabledModules ?? []);
   const methodsChanged = !sameList(methods, config?.paymentMethods ?? []);
   const widgetsChanged = !sameList(widgets, config?.dashboardWidgets ?? []);
@@ -185,10 +202,73 @@ export function BusinessSettingsScreen() {
       {/* Branding */}
       <View style={[styles.card, styles.cardAccentPrimary]}>
         <Text style={styles.sectionTitle}>{copy.branding}</Text>
+        <View style={styles.toggleRow}>
+          <ConfigurableBrandMark
+            logoUrl={trimmedLogo}
+            name={trimmedName || ws.session?.business.name || ws.branding.brandName}
+            primaryColor={ws.branding.primaryColor}
+            accentColor={ws.branding.accentColor}
+            size="lg"
+          />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.toggleLabel}>{trimmedName || ws.session?.business.name || '—'}</Text>
+            <Text style={styles.toggleHint}>
+              {parsedLogo.isConfigurablePreset
+                ? `${BRAND_LOGO_PRESETS.find((preset) => preset.key === parsedLogo.style)?.label ?? parsedLogo.style} · ${parsedLogo.shape}`
+                : copy.logoUrl}
+            </Text>
+          </View>
+        </View>
         {canManage ? (
           <>
             <Field label={copy.businessName} value={businessName} onChangeText={setBusinessName} />
-            <Field label={copy.logoUrl} value={logoUrl} onChangeText={setLogoUrl} helper="https://" />
+            <View style={styles.chipWrap}>
+              {BRAND_LOGO_PRESETS.map((preset) => {
+                const selected = parsedLogo.isConfigurablePreset && parsedLogo.style === preset.key;
+                return (
+                  <Pressable
+                    key={preset.key}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected, disabled: offline }}
+                    android_ripple={{ color: palette.primarySoft }}
+                    disabled={offline}
+                    onPress={() => setLogoUrl(buildConfigurableLogoUrl({
+                      ...parsedLogo,
+                      style: preset.key,
+                      primaryColor: ws.branding.primaryColor,
+                      accentColor: ws.branding.accentColor,
+                    }))}
+                    style={({ pressed }) => [styles.chip, selected && styles.chipSelected, pressed && styles.chipPressed]}
+                  >
+                    <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{preset.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <View style={styles.chipWrap}>
+              {BRAND_LOGO_SHAPES.map((shapeOption) => {
+                const selected = parsedLogo.isConfigurablePreset && parsedLogo.shape === shapeOption.key;
+                return (
+                  <Pressable
+                    key={shapeOption.key}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected, disabled: offline }}
+                    android_ripple={{ color: palette.primarySoft }}
+                    disabled={offline}
+                    onPress={() => setLogoUrl(buildConfigurableLogoUrl({
+                      ...parsedLogo,
+                      shape: shapeOption.key,
+                      primaryColor: ws.branding.primaryColor,
+                      accentColor: ws.branding.accentColor,
+                    }))}
+                    style={({ pressed }) => [styles.chip, selected && styles.chipSelected, pressed && styles.chipPressed]}
+                  >
+                    <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{shapeOption.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Field label={copy.logoUrl} value={logoUrl} onChangeText={setLogoUrl} helper="https:// or /logos/shears.svg" />
             <ActionButton
               title={copy.saveSettings}
               secondary
@@ -201,6 +281,7 @@ export function BusinessSettingsScreen() {
         ) : (
           <Text style={styles.listMeta}>{ws.session?.business.name ?? '—'}</Text>
         )}
+
         <View style={styles.toggleRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.toggleLabel}>{copy.primaryColor}</Text>
