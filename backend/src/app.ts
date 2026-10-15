@@ -71,7 +71,10 @@ app.use(helmet({
   // origins, so the default same-origin resource policy would be misleading.
   crossOriginResourcePolicy: { policy: allowAnyCorsOrigin ? 'cross-origin' : 'same-origin' },
 }));
-app.use(cors({
+// One CORS policy for both the preflight handler below and normal requests.
+// A second, default `cors()` on OPTIONS used to answer preflights with a
+// wildcard origin that the actual request would then not honour.
+const corsPolicy = cors({
   origin(origin, callback) {
     if (allowAnyCorsOrigin || !origin || corsOrigins.has(origin)) {
       callback(null, true);
@@ -88,8 +91,9 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'Idempotency-Key'],
   exposedHeaders: ['x-request-id'],
   maxAge: 600,
-}));
-app.options(/.*/, cors());
+});
+app.use(corsPolicy);
+app.options(/.*/, corsPolicy);
 app.use(express.json({
   limit: '256kb',
   strict: true,

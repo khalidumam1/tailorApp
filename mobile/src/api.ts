@@ -578,7 +578,11 @@ export async function apiRequest<T = unknown>(
   if (generation !== sessionGeneration) throw inactiveSessionError();
   if (!response.ok) {
     const failure = responseError(body, response);
-    if (['MEMBERSHIP_INACTIVE', 'BUSINESS_ACCESS_DENIED', 'PERMISSION_DENIED'].includes(failure.code ?? '')) {
+    // Only membership-level failures end the session. PERMISSION_DENIED just
+    // means this role lacks one permission — surface it and stay signed in,
+    // otherwise a tailor-role user who reaches a payments-gated call would be
+    // signed out of the whole app for a single forbidden request.
+    if (['MEMBERSHIP_INACTIVE', 'BUSINESS_ACCESS_DENIED'].includes(failure.code ?? '')) {
       notifySessionExpired();
       void clearSession().catch(() => undefined);
     }
