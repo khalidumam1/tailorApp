@@ -112,50 +112,50 @@ export function createPalette(branding: ApplicationBranding, mode: ThemeMode): A
   const darkSecondary = '#9eb3a6';
   const darkMuted = '#6f8678';
 
-  return {
-    mode,
-    background: dark ? darkBackground : '#f4f6f4',
-    surface: dark ? darkSurface : '#ffffff',
-    surfaceMuted: dark ? darkSurfaceMuted : '#f8faf9',
-    surfaceSunken: dark ? darkSurfaceSunken : '#eef2ef',
-    border: dark ? darkBorder : '#e3e9e5',
-    borderStrong: dark ? darkBorderStrong : '#d8e2dc',
-    text: dark ? darkText : '#182a25',
-    secondaryText: dark ? darkSecondary : '#56675d',
-    mutedText: dark ? darkMuted : '#6e7d76',
-    primary: branding.primaryColor,
-    primaryText: dark
-      ? mixHex(branding.primaryColor, '#ffffff', 0.7)
-      : mixHex('#0e1a16', branding.primaryColor, 0.32),
-    onPrimary: accessibleTextColor(branding.primaryColor),
-    primarySoft: dark
-      ? mixHex(branding.primaryColor, '#0c1a14', 0.22)
-      : mixHex(branding.primaryColor, '#ffffff', 0.1),
-    accent: branding.accentColor,
-    success: dark ? '#7ad6a3' : '#1b6c4c',
-    successSurface: dark ? '#0f2a1c' : '#e8f5ee',
-    successBorder: dark ? '#1f4830' : '#cae5d6',
-    warning: dark ? '#f0c073' : '#8a6413',
-    warningSurface: dark ? '#2a2113' : '#fdf4e3',
-    warningBorder: dark ? '#4a3b1d' : '#f0e0bb',
-    danger: dark ? '#f19386' : '#9b4034',
-    dangerSurface: dark ? '#2c1815' : '#fdeeeb',
-    dangerBorder: dark ? '#52281f' : '#f3d6cf',
-    info: dark ? '#88b9e4' : '#2d5f8a',
-    infoSurface: dark ? '#0f2236' : '#ecf3fa',
-    shadow: dark ? '#000000' : '#18372b',
-    moneySurface: dark ? '#163024' : '#17362e',
-    moneyLabel: dark ? '#9bbfa9' : '#c4d9ce',
-    heroBackground: dark
-      ? `linear-gradient(140deg, ${mixHex(branding.primaryColor, darkHero, 0.55)} 0%, ${darkHero} 80%)`
-      : mixHex(branding.primaryColor, '#ffffff', 0.06),
-    heroBorder: dark ? mixHex(branding.primaryColor, '#0a1310', 0.55) : mixHex(branding.primaryColor, '#ffffff', 0.4),
-    heroShadow: dark ? '#000000' : mixHex(branding.primaryColor, '#000000', 0.2),
-    glassBar: dark ? 'rgba(15, 26, 20, 0.92)' : 'rgba(255, 255, 255, 0.94)',
-    glassBarBorder: dark ? '#22332a' : '#e3e9e5',
-    glassBarText: dark ? '#6f8678' : '#6e7d76',
-    glassBarTextActive: dark ? mixHex(branding.primaryColor, '#ffffff', 0.7) : mixHex('#0e1a16', branding.primaryColor, 0.32),
-  };
+   return {
+     mode,
+     background: dark ? darkBackground : '#f4f6f4',
+     surface: dark ? darkSurface : '#ffffff',
+     surfaceMuted: dark ? darkSurfaceMuted : '#f8faf9',
+     surfaceSunken: dark ? darkSurfaceSunken : '#eef2ef',
+     border: dark ? darkBorder : '#e3e9e5',
+     borderStrong: dark ? darkBorderStrong : '#d8e2dc',
+     text: dark ? mixHex(darkText, '#ffffff', 0.9) : '#182a25',
+     secondaryText: dark ? darkSecondary : '#56675d',
+     mutedText: dark ? mixHex(darkMuted, '#ffffff', 0.8) : '#6e7d76',
+     primary: branding.primaryColor,
+     primaryText: dark
+       ? mixHex(branding.primaryColor, '#ffffff', 0.65)
+       : mixHex('#0e1a16', branding.primaryColor, 0.32),
+     onPrimary: accessibleTextColor(branding.primaryColor),
+     primarySoft: dark
+       ? mixHex(branding.primaryColor, '#0c1a14', 0.18)
+       : mixHex(branding.primaryColor, '#ffffff', 0.08),
+     accent: branding.accentColor,
+     success: dark ? '#6cc08f' : '#1b6c4c',
+     successSurface: dark ? '#0f2a1c' : '#e8f5ee',
+     successBorder: dark ? '#1f4830' : '#cae5d6',
+     warning: dark ? '#e6b866' : '#8a6413',
+     warningSurface: dark ? '#2a2113' : '#fdf4e3',
+     warningBorder: dark ? '#4a3b1d' : '#f0e0bb',
+     danger: dark ? '#d97a6f' : '#9b4034',
+     dangerSurface: dark ? '#2c1815' : '#fdeeeb',
+     dangerBorder: dark ? '#52281f' : '#f3d6cf',
+     info: dark ? '#7aa3ce' : '#2d5f8a',
+     infoSurface: dark ? '#0f2236' : '#ecf3fa',
+     shadow: dark ? '#000000' : '#18372b',
+     moneySurface: dark ? '#163024' : '#17362e',
+     moneyLabel: dark ? '#8fa896' : '#c4d9ce',
+     heroBackground: dark
+       ? `linear-gradient(140deg, ${mixHex(branding.primaryColor, darkHero, 0.65)} 0%, ${darkHero} 80%)`
+       : mixHex(branding.primaryColor, '#ffffff', 0.04),
+     heroBorder: dark ? mixHex(branding.primaryColor, '#0a1310', 0.5) : mixHex(branding.primaryColor, '#ffffff', 0.35),
+     heroShadow: dark ? '#000000' : mixHex(branding.primaryColor, '#000000', 0.15),
+     glassBar: dark ? 'rgba(12, 20, 16, 0.9)' : 'rgba(250, 250, 250, 0.92)',
+     glassBarBorder: dark ? '#22332a' : '#e3e9e5',
+     glassBarText: dark ? '#8fa896' : '#6e7d76',
+     glassBarTextActive: dark ? mixHex(branding.primaryColor, '#ffffff', 0.6) : mixHex('#0e1a16', branding.primaryColor, 0.3),
+   };
 }
 
 const defaultPalette = createPalette(DEFAULT_APPLICATION_BRANDING, 'dark');

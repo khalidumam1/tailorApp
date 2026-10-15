@@ -9,7 +9,7 @@ import { useAppStyles } from '../theme/useAppStyles';
 import { useAppTheme } from '../theme/palette';
 import { Icon } from '../Icons';
 import { ActionButton, EmptyState } from '../theme/primitives';
-import { useWorkspace, resolveMobileWorkflowStage } from '../hooks/useWorkspace';
+import { useWorkspace, resolveMobileWorkflowStage, sendWhatsAppMessage } from '../hooks/useWorkspace';
 import { computeDashboardSummary } from '../data/analytics';
 import { AreaChart } from '../components/AreaChart';
 import { OrderForm } from '../components/OrderForm';
@@ -192,8 +192,39 @@ export function OrdersScreen({
                         </Pressable>
                       ) : null}
 
-                      {paymentOpen && ws.can('payments:write') && ws.moduleEnabled('payments') ? <PaymentForm /> : null}
-                    </View>
+                       {paymentOpen && ws.can('payments:write') && ws.moduleEnabled('payments') ? <PaymentForm /> : null}
+                     {/* WhatsApp order status button */}
+                     {ws.can('orders:read') && ws.moduleEnabled('customers') && (
+                       <View key={`${order.id}-whatsapp`} style={{ marginTop: 10 }}>
+                         <Pressable
+                           accessibilityRole="button"
+                           accessibilityState={{ disabled: !ws.online }}
+                           android_ripple={{ color: palette.primarySoft }}
+                           onPress={() => {
+                             const customer = ws.customers.find(c => c.id === order.customer_id);
+                             if (customer && customer.phone) {
+                               const normalizedPhone = normalizePhone(customer.phone);
+                               if (normalizedPhone) {
+                                 const stageLabel = resolveMobileWorkflowStage(stages, order)?.label ?? order.status;
+                                 const message = `Order ${order.id} is now ${stageLabel}.`;
+                                 sendWhatsAppMessage(normalizedPhone, message, order.id);
+                               }
+                             }
+                           }}
+                           style={({ pressed }) => [
+                             styles.nextStageBtn,
+                             (!ws.online) && styles.disabled,
+                             pressed && styles.pressed
+                           ]}
+                         >
+                           <Text style={styles.nextStageText}>
+                             {copy.whatsappOrderStatus}
+                           </Text>
+                           <Icon name="chat" size={16} color={palette.primaryText} />
+                         </Pressable>
+                       </View>
+                     )}
+                   </View>
                   );
                 })
               )}

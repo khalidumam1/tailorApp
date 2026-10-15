@@ -10,9 +10,9 @@ import { useAppStyles } from '../theme/useAppStyles';
 import { useAppTheme } from '../theme/palette';
 import { Icon, type IconName } from '../Icons';
 import { ActionButton, EmptyState, IconDot, StatusPill, openExternal } from '../theme/primitives';
-import { useWorkspace } from '../hooks/useWorkspace';
+import { useWorkspace, sendWhatsAppMessage } from '../hooks/useWorkspace';
 import { loadPayments, summarizePayments, type PaymentRow } from '../data/payments';
-import { receiptMessage, whatsappUrl } from '../data/messaging';
+import { receiptMessage, whatsappUrl, normalizePhone } from '../data/messaging';
 import { interpolate } from '../i18n';
 import { PaymentForm } from '../components/PaymentForm';
 
@@ -88,31 +88,44 @@ export function PaymentsScreen({
     [ws.orders],
   );
 
-  const sendReceipt = (row: PaymentRow) => {
-    const phone = row.customerPhone ?? ws.customers.find((c) => c.id === row.customerId)?.phone ?? null;
-    const url = whatsappUrl(phone, receiptMessage({
-      businessName: ws.session?.business.name ?? '',
-      receiptLabel: copy.receipt,
-      receiptNumber: row.receiptNumber,
-      amount: formatCurrency(row.amount.toFixed(2), currency),
-      date: new Date(row.createdAt).toLocaleDateString(),
-      customerName: row.customerName,
-    }));
-    if (!url) {
-      Alert.alert(copy.sendReceiptBtn, copy.noPhoneNumber);
-      return;
-    }
-    openExternal(url, copy);
-  };
+   const sendReceipt = async (row: PaymentRow) => {
+     const phone = row.customerPhone ?? ws.customers.find((c) => c.id === row.customerId)?.phone ?? null;
+     if (!phone) {
+       Alert.alert(copy.sendReceiptBtn, copy.noPhoneNumber);
+       return;
+     }
+     const normalizedPhone = normalizePhone(phone);
+     if (!normalizedPhone) {
+       Alert.alert(copy.sendReceiptBtn, copy.invalidNumber);
+       return;
+     }
+     
+     const message = receiptMessage({
+       businessName: ws.session?.business.name ?? '',
+       receiptLabel: copy.receipt,
+       receiptNumber: row.receiptNumber,
+       amount: formatCurrency(row.amount.toFixed(2), currency),
+       date: new Date(row.createdAt).toLocaleDateString(),
+       customerName: row.customerName,
+     });
+     
+     try {
+       await sendWhatsAppMessage(normalizedPhone, message, null);
+       // Optionally show a success message
+       // Alert.alert(copy.sendReceiptBtn, copy.whatsappReceiptSent);
+     } catch (error) {
+       Alert.alert(copy.sendReceiptBtn, copy.error);
+     }
+   };
 
-  const sendLatestReceipt = () => {
-    const latest = ledger.find((row) => row.kind === 'PAYMENT');
-    if (!latest) {
-      Alert.alert(copy.sendReceiptBtn, copy.noPaymentsToSend);
-      return;
-    }
-    sendReceipt(latest);
-  };
+   const sendLatestReceipt = async () => {
+     const latest = ledger.find((row) => row.kind === 'PAYMENT');
+     if (!latest) {
+       Alert.alert(copy.sendReceiptBtn, copy.noPaymentsToSend);
+       return;
+     }
+     await sendReceipt(latest);
+   };
 
   const shareList = () => {
     const lines = filtered.map((row) => `${row.receiptNumber} · ${row.customerName} · ${row.kind === 'REVERSAL' ? '-' : '+'}${formatCurrency(row.amount.toFixed(2), currency)} · ${new Date(row.createdAt).toLocaleDateString()}`);

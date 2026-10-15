@@ -41,16 +41,17 @@ import {
   type Session,
 } from '../api';
 import {
-  amountToMinorUnits,
-  createClientId,
-  openLocalDatabase,
-  readBusinessConfigurationCache,
-  writeBusinessConfigurationCache,
-  type LocalCatalogItem,
-  type LocalCustomer,
-  type LocalOrder,
-  type LocalTemplate,
-} from '../local';
+   amountToMinorUnits,
+   createClientId,
+   openLocalDatabase,
+   readBusinessConfigurationCache,
+   writeBusinessConfigurationCache,
+   type LocalCatalogItem,
+   type LocalCustomer,
+   type LocalOrder,
+   type LocalTemplate,
+ } from '../local';
+import { normalizePhone } from '../data/phone';
 import {
   applyLocalOrderWorkflowTransition,
   createPaymentAttempt,
@@ -1241,16 +1242,86 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         version: typeof response.data?.version === 'number' ? response.data.version : order.version + 1,
         updatedAt: response.data?.updatedAt,
       });
-      await refreshLocal(session.business.id);
-      await runSync();
+       await refreshLocal(session.business.id);
+       await runSync();
+       
+       // Send WhatsApp notification for order status update
+       try {
+         const businessPhone = businessConfiguration?.contactPhone;
+         if (businessPhone) {
+           // Find the customer to get their phone number
+           const customer = customers.find(c => c.id === order.customer_id);
+           if (customer && customer.phone) {
+             // Normalize the phone number
+             const normalizedPhone = normalizePhone(customer.phone);
+             if (normalizedPhone) {
+               // Create a simple message based on the order status
+               const stageLabel = resolveMobileWorkflowStage(stages, order)?.label ?? order.status;
+               const message = `Order ${order.id} is now ${stageLabel}.`;
+               
+               await sendWhatsAppMessage(normalizedPhone, message, order.id);
+             }
+           }
+         }
+       } catch (whatsappError) {
+         // Don't fail the order transition if WhatsApp fails
+         console.warn('Failed to send WhatsApp notification:', whatsappError);
+       }
     } catch (transitionError) {
       setError(transitionError instanceof Error ? transitionError.message : copy.error);
     } finally {
       setTransitioningOrderKey(null);
     }
-  }, [businessConfiguration, copy.error, copy.paymentOnline, online, refreshLocal, runSync, session, updateSession]);
+   }, [businessConfiguration, copy.error, copy.paymentOnline, online, refreshLocal, runSync, session, updateSession]);
 
-  const openOrderPayment = useCallback(async (order: LocalOrder) => {
+   const sendWhatsAppMessage = useCallback(async (recipientPhone: string, message: string, orderId?: string | null) => {
+     if (!session || online !== true) {
+       setError(copy.paymentOnline);
+       return;
+     }
+     const businessPhone = businessConfiguration?.contactPhone;
+     if (!businessPhone) {
+       setError(copy.noWhatsappNumber);
+       return;
+     }
+     setError('');
+     try {
+       const response = await apiRequest<{
+         data?: {
+           id: string;
+           status: WhatsAppNotification['status'];
+           recipientPhone: string;
+           lastError: string | null;
+           createdAt: string;
+         };
+       }>(session, `/api/v1/whatsapp/send`, {
+         method: 'POST',
+         body: { recipientPhone, message, orderId },
+       }, updateSession);
+       
+       if (response.data) {
+         // Add the sent notification to the history
+         setNotificationHistory(prev => [{
+           id: response.data.id,
+           customerId: null, // Would need to be fetched or passed in
+           orderId: orderId ?? null,
+           paymentId: null,
+           recipientName: null, // Would need to be fetched or passed in
+           kind: 'order_status', // Default kind, could be customized
+           status: response.data.status,
+           recipientPhone: response.data.recipientPhone,
+           lastError: response.data.lastError,
+           ...response.data
+         }]);
+       }
+     } catch (whatsappError) {
+       setError(whatsappError instanceof Error ? whatsappError.message : copy.error);
+     } finally {
+       // No specific loading state to clear, but we could add one if needed
+     }
+   }, [copy.error, online, session, updateSession, businessConfiguration?.contactPhone]);
+
+   const openOrderPayment = useCallback(async (order: LocalOrder) => {
     if (!session || online !== true || order.sync_state !== 'synced') {
       setError(copy.paymentOnline);
       return;
@@ -1597,16 +1668,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     handleSignIn,
     selectShop,
     handleSignOut,
-    changeLanguage,
-    submitSubscriptionPayment,
-    saveCustomer,
-    saveOrder,
-    saveMeasurements,
-    saveCatalogItem,
-    toggleCatalogItem,
-    transitionOrder,
-    openOrderPayment,
-    recordPayment,
+     changeLanguage,
+     submitSubscriptionPayment,
+     saveCustomer,
+     saveOrder,
+     saveMeasurements,
+     saveCatalogItem,
+     toggleCatalogItem,
+     transitionOrder,
+     sendWhatsAppMessage,
+     openOrderPayment,
+     recordPayment,
     runSync,
     refreshNotificationHistory,
     refreshSubscriptionBilling,
