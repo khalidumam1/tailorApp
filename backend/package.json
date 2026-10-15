@@ -17,8 +17,9 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
-    "db:seed": "tsx prisma/seed.ts",
+    "db:seed": "npm run build:shared && tsx prisma/seed.ts",
     "bootstrap:platform-admin": "tsx scripts/bootstrap-platform-admin.ts",
+
     "platform:grants:backfill": "tsx scripts/backfill-platform-grants.ts",
     "build:shared": "node scripts/build-shared.mjs"
   },

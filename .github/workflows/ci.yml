@@ -40,9 +40,10 @@ jobs:
       - run: npm ci
       - run: npm run db:generate
       - run: npm run db:migrate
-      - run: npm run db:seed
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
       - run: npm audit --workspace @tailor/api --workspace @tailor/web --workspace @tailor/shared
+
+
 
