@@ -7,11 +7,11 @@
     "node": ">=22"
   },
   "scripts": {
-    "start": "npm run build --prefix shared && expo start",
-    "android": "npm run build --prefix shared && expo run:android",
-    "ios": "npm run build --prefix shared && expo run:ios",
-    "typecheck": "npm run build --prefix shared && tsc --noEmit",
-    "build:shared": "npm run build --prefix shared",
+    "start": "npm run build:shared && expo start",
+    "android": "npm run build:shared && expo run:android",
+    "ios": "npm run build:shared && expo run:ios",
+    "typecheck": "npm run build:shared && tsc --noEmit",
+    "build:shared": "node scripts/build-shared.mjs",
     "test": "tsx --test src/data/__tests__/*.test.ts"
   },
   "dependencies": {

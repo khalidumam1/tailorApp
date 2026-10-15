@@ -113,9 +113,46 @@ commands below once in your environment to confirm.
    everywhere; a short server-side rotation grace window would soften this
    if it ever becomes a support issue.
 
+## 6. Follow-up: backend `typecheck` TS2339 on `financialAccountId`
+
+Running `npm run typecheck` failed in `backend/src/routes/payment.routes.ts`
+(3 × TS2339: `Property 'financialAccountId' does not exist`). Root cause,
+reproduced exactly in the sandbox before fixing:
+
+- In a **monorepo install**, npm resolves the backend's
+  `"@tailor/shared": "file:./shared"` dependency to the root workspace
+  **`packages/shared`** (the workspace wins the package name; there is no
+  `backend/node_modules/@tailor/shared`). The compiler therefore reads
+  `packages/shared/dist` — not `backend/shared`.
+- On `main`, `packages/shared` was the copy missing `financialAccountId`
+  (the section-2 drift), so the monorepo typecheck was already broken; it
+  only passed with a standalone backend install. After pulling the section-2
+  source fix, the same error persisted whenever `packages/shared/dist` was
+  stale, because the backend `typecheck` only rebuilt `backend/shared`.
+
+**Fix:** backend and mobile now have `scripts/build-shared.mjs` (the script
+the web app already had), which builds *every* shared copy that exists
+(`./shared` and `../packages/shared`), and their `build:shared` /
+`typecheck` / `start` scripts use it. Whichever copy the compiler resolves
+is always freshly built from the (now identical) sources.
+
+**Verification:** reproduced the 3 errors with a stale `packages/shared/dist`,
+then ran the new build — both dists regenerated and the backend typecheck
+reports **0** `financialAccountId` errors. (In this sandbox the only
+remaining backend errors are the expected "Prisma Client not generated"
+class, since `binaries.prisma.sh` is unreachable here; on a normal machine
+`db:generate` runs first, as in the reported log, and the typecheck passes.)
+
+**To apply locally:** pull this branch, then from the repo root run
+`npm ci` once (refreshes workspace links) followed by `npm run typecheck`.
+Running `npm run typecheck` from inside `backend/` also works now.
+
 ## Files changed
 
 - `web/src/main.tsx` — session + view persistence, cross-tab adoption, footer copy
 - `mobile/src/api.ts` — permission denial no longer destroys the session
 - `packages/shared/src/index.ts`, `web/shared/src/index.ts` — payment contract aligned
 - `backend/src/app.ts` — single CORS policy for preflight and requests
+- `backend/scripts/build-shared.mjs`, `mobile/scripts/build-shared.mjs` (new) and
+  `backend/package.json`, `mobile/package.json` — always build every shared copy,
+  so a stale `packages/shared/dist` can no longer break the backend/mobile typecheck
