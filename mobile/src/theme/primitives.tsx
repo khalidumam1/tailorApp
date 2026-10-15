@@ -3,7 +3,7 @@
  * These are extracted from the original App.tsx and now live in their own
  * file so any screen can compose them.
  */
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -15,17 +15,47 @@ import {
   View,
 } from 'react-native';
 import { Image } from 'react-native';
-import { SvgUri } from 'react-native-svg';
+import { SvgUri, SvgXml } from 'react-native-svg';
+import {
+  parseConfigurableLogoUrl,
+  renderConfigurableLogoSvg,
+  type LogoStyleKey,
+} from '@tailor/shared';
 import { Icon, type IconName } from '../Icons';
 import { useAppTheme } from './palette';
 import { useAppStyles } from './useAppStyles';
 import { resolveBrandAssetUrl } from './branding';
 
-export function ApplicationMark({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
-  const { branding, palette } = useAppTheme();
+export function ConfigurableBrandMark({
+  logoUrl,
+  name,
+  primaryColor,
+  accentColor,
+  defaultStyle = 'shears',
+  size = 'sm',
+}: {
+  logoUrl?: string | null;
+  name: string;
+  primaryColor: string;
+  accentColor: string;
+  defaultStyle?: LogoStyleKey;
+  size?: 'sm' | 'lg';
+}) {
+  const { palette } = useAppTheme();
   const styles = useAppStyles();
   const [failedUrl, setFailedUrl] = useState('');
-  const uri = branding.logoUrl ? resolveBrandAssetUrl(branding.logoUrl) : '';
+  const parsed = useMemo(
+    () => parseConfigurableLogoUrl(logoUrl, {
+      style: defaultStyle,
+      primaryColor,
+      accentColor,
+      fallbackName: name,
+    }),
+    [accentColor, defaultStyle, logoUrl, name, primaryColor],
+  );
+  const svgXml = useMemo(() => renderConfigurableLogoSvg(parsed, name), [name, parsed]);
+  const rawUrl = (logoUrl ?? '').trim();
+  const uri = rawUrl && !parsed.isConfigurablePreset ? resolveBrandAssetUrl(rawUrl) : '';
   useEffect(() => setFailedUrl(''), [uri]);
   const isSvg = /\.svg(?:$|[?#])/i.test(uri);
   const markStyle = size === 'lg' ? styles.authBrandMark : styles.brandMark;
@@ -36,8 +66,11 @@ export function ApplicationMark({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
   return (
     <View style={[markStyle, { backgroundColor: palette.primary }]}>
       <Text style={[letterStyle, { color: palette.onPrimary, fontSize }]}>
-        {branding.brandName.trim().charAt(0).toUpperCase() || 'A'}
+        {parsed.monogram.charAt(0) || 'A'}
       </Text>
+      <View style={[StyleSheet.absoluteFill, styles.logoImage]}>
+        <SvgXml xml={svgXml} width={dim} height={dim} />
+      </View>
       {uri && failedUrl !== uri
         ? isSvg
           ? (
@@ -52,6 +85,20 @@ export function ApplicationMark({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
     </View>
   );
 }
+
+export function ApplicationMark({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
+  const { branding } = useAppTheme();
+  return (
+    <ConfigurableBrandMark
+      logoUrl={branding.logoUrl}
+      name={branding.brandName}
+      primaryColor={branding.primaryColor}
+      accentColor={branding.accentColor}
+      size={size}
+    />
+  );
+}
+
 
 export function ThemeToggle({ copy, compact = false }: { copy: ReturnType<typeof import('../i18n').getCopy>; compact?: boolean }) {
   const { themeMode, toggleTheme, palette } = useAppTheme();

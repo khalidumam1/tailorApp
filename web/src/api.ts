@@ -356,7 +356,8 @@ const receiptSchema = z.object({
   method: z.enum(['CASH', 'BANK', 'DIGITAL']),
   kind: z.enum(['PAYMENT', 'REVERSAL']),
   createdAt: z.string(),
-  business: z.object({ name: z.string(), timezone: z.string(), currency: z.string() }),
+  business: z.object({ name: z.string(), logoUrl: z.string().nullable().optional(), timezone: z.string(), currency: z.string() }),
+
   order: z.object({
     orderNumber: z.string(),
     customer: z.object({ name: z.string(), phone: z.string() }),

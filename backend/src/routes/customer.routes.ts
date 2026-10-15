@@ -8,6 +8,7 @@ import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { assertPlanLimit } from '../plan-limits.js';
 import { customFieldValueData, validateCustomFieldValues } from '../domain/custom-fields.js';
+import { isRetryableOrderTransactionError } from '../domain/orders.js';
 import { queueCustomerNotification } from '../whatsapp.js';
 
 const router = express.Router();
@@ -18,6 +19,26 @@ const whatsappConsentSchema = z.object({
   consented: z.boolean(),
   version: z.number().int().positive(),
 });
+
+const CUSTOMER_TRANSACTION_OPTIONS = {
+  maxWait: 20_000,
+  timeout: 30_000,
+} satisfies Parameters<typeof prisma.$transaction>[1];
+
+async function runCustomerTransaction<T>(
+  operation: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  const maxAttempts = 3;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await prisma.$transaction(operation, CUSTOMER_TRANSACTION_OPTIONS);
+    } catch (error) {
+      if (attempt < maxAttempts && isRetryableOrderTransactionError(error)) continue;
+      throw error;
+    }
+  }
+}
+
 
 function getBusinessId(req: express.Request): string {
   if (req.auth?.scope !== 'business' || !req.auth.business) {
@@ -39,9 +60,10 @@ function handleDuplicate(error: unknown): never {
 }
 
 async function customerFieldDefinitions(
-  tx: Prisma.TransactionClient,
+  tx: Prisma.TransactionClient | typeof prisma,
   businessId: string,
 ): Promise<CustomFieldDefinition[]> {
+
   const business = await tx.business.findUnique({
     where: { id: businessId },
     include: {
@@ -172,11 +194,11 @@ router.get('/duplicate-check', requireBusinessPermission('customers:read'), asyn
 router.post('/', requireBusinessPermission('customers:write'), asyncHandler(async (req, res) => {
   const businessId = getBusinessId(req);
   const input = createCustomerSchema.parse(req.body);
+  const definitions = await customerFieldDefinitions(prisma, businessId);
+  const customValues = validateCustomFieldValues(definitions, input.customFields ?? {});
   try {
-    const customer = await prisma.$transaction(async (tx) => {
+    const customer = await runCustomerTransaction(async (tx) => {
       await assertPlanLimit(tx, businessId, 'customers:write');
-      const definitions = await customerFieldDefinitions(tx, businessId);
-      const customValues = validateCustomFieldValues(definitions, input.customFields ?? {});
       const created = await tx.customer.create({
         data: {
           businessId,
@@ -188,7 +210,6 @@ router.post('/', requireBusinessPermission('customers:write'), asyncHandler(asyn
       });
       const customValueRows = customerFieldValueRows(businessId, created.id, customValues);
       if (customValueRows.length) await tx.customFieldValue.createMany({ data: customValueRows });
-      await queueCustomerNotification(tx, created.id, 'CUSTOMER_CREATED');
       await tx.auditEvent.create({
         data: {
           businessId,
@@ -207,11 +228,17 @@ router.post('/', requireBusinessPermission('customers:write'), asyncHandler(asyn
         },
       });
     });
+    try {
+      await queueCustomerNotification(prisma, customer.id, 'CUSTOMER_CREATED');
+    } catch {
+      // Customer creation is already committed; notification failures must not fail the response.
+    }
     res.status(201).json({ data: withCustomFieldMap(customer) });
   } catch (error) {
     handleDuplicate(error);
   }
 }));
+
 
 router.get('/:customerId', requireBusinessPermission('customers:read'), asyncHandler(async (req, res) => {
   const businessId = getBusinessId(req);
@@ -248,11 +275,11 @@ router.patch('/:customerId', requireBusinessPermission('customers:write'), async
   const businessId = getBusinessId(req);
   const customerId = customerIdSchema.parse(req.params.customerId);
   const input = updateCustomerSchema.parse(req.body);
+  const customValues = input.customFields !== undefined
+    ? validateCustomFieldValues(await customerFieldDefinitions(prisma, businessId), input.customFields)
+    : [];
   try {
-    const customer = await prisma.$transaction(async (tx) => {
-      const customValues = input.customFields !== undefined
-        ? validateCustomFieldValues(await customerFieldDefinitions(tx, businessId), input.customFields)
-        : [];
+    const customer = await runCustomerTransaction(async (tx) => {
       const existing = await tx.customer.findFirst({
         where: { id: customerId, businessId, deletedAt: null },
         select: { phoneNormalized: true },
@@ -296,7 +323,6 @@ router.patch('/:customerId', requireBusinessPermission('customers:write'), async
           customFieldValues: { include: { fieldDefinition: { select: { key: true, label: true, type: true } } } },
         },
       });
-      await queueCustomerNotification(tx, updated.id, 'CUSTOMER_UPDATED');
       await tx.auditEvent.create({
         data: {
           businessId,
@@ -310,6 +336,11 @@ router.patch('/:customerId', requireBusinessPermission('customers:write'), async
       });
       return updated;
     });
+    try {
+      await queueCustomerNotification(prisma, customer.id, 'CUSTOMER_UPDATED');
+    } catch {
+      // Customer update is already committed; notification failures must not fail the response.
+    }
     res.json({ data: withCustomFieldMap(customer) });
   } catch (error) {
     handleDuplicate(error);
@@ -321,7 +352,7 @@ router.post('/:customerId/whatsapp-consent', requireBusinessPermission('customer
   const customerId = customerIdSchema.parse(req.params.customerId);
   const input = whatsappConsentSchema.parse(req.body);
   const now = new Date();
-  const customer = await prisma.$transaction(async (tx) => {
+  const customer = await runCustomerTransaction(async (tx) => {
     const update = await tx.customer.updateMany({
       where: { id: customerId, businessId, deletedAt: null, version: input.version },
       data: {
@@ -364,7 +395,8 @@ router.delete('/:customerId', requireBusinessPermission('customers:write'), asyn
   const businessId = getBusinessId(req);
   const customerId = customerIdSchema.parse(req.params.customerId);
   const { version } = deleteSchema.parse(req.body);
-  await prisma.$transaction(async (tx) => {
+  await runCustomerTransaction(async (tx) => {
+
     const result = await tx.customer.updateMany({
       where: { id: customerId, businessId, deletedAt: null, version },
       data: { deletedAt: new Date(), version: { increment: 1 } },

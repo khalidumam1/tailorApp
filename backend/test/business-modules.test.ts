@@ -43,3 +43,20 @@ test('existing route permissions map to their module while administrative permis
   assert.equal(moduleForBusinessPermission('settings:manage'), undefined);
   assert.equal(moduleForBusinessPermission('settings:manage', 'inventory'), 'inventory');
 });
+
+test('assertPlanLimit skips row locking when billing enforcement is disabled', async () => {
+  const { assertPlanLimit } = await import('../src/plan-limits.js');
+  let rawQueries = 0;
+  const tx = {
+    $queryRaw: async () => {
+      rawQueries += 1;
+      return [];
+    },
+    platformSetting: {
+      findUnique: async () => ({ value: { enforcementEnabled: false } }),
+    },
+  };
+  await assertPlanLimit(tx as never, '11111111-1111-4111-8111-111111111111', 'customers:write');
+  assert.equal(rawQueries, 0);
+});
+

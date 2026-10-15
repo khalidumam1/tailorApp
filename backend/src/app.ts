@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { parseConfigurableLogoUrl, renderConfigurableLogoSvg } from '@tailor/shared';
 import cors from 'cors';
+
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
@@ -127,6 +129,23 @@ app.get('/api/v1/public/application-branding', asyncHandler(async (_req, res) =>
   res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
   res.json({ data: await loadApplicationBranding() });
 }));
+
+const serveConfigurableLogoSvg = asyncHandler(async (req, res) => {
+  const branding = await loadApplicationBranding();
+  const options = parseConfigurableLogoUrl(req.originalUrl, {
+    primaryColor: branding.primaryColor,
+    accentColor: branding.accentColor,
+    fallbackName: branding.brandName,
+  });
+  const svg = renderConfigurableLogoSvg(options, branding.brandName);
+  res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=3600');
+  res.send(svg);
+});
+
+app.get('/api/v1/public/logo.svg', serveConfigurableLogoSvg);
+app.get('/logos/:style.svg', serveConfigurableLogoSvg);
+
 
 app.get('/api/v1/ready', async (req, res, next) => {
   try {

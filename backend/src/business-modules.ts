@@ -25,22 +25,21 @@ export async function resolveBusinessModuleAccess(
   platformEnabledModules: string[];
   enabledModules: string[];
 }> {
-  const [business, moduleSetting] = await Promise.all([
-    client.business.findUnique({
-      where: { id: businessId },
-      select: {
-        template: { select: { enabledModules: true } },
-        configuration: { select: { enabledModules: true } },
-      },
-    }),
-    client.businessSetting.findUnique({
-      where: { businessId_key: { businessId, key: PLATFORM_ENABLED_MODULES_SETTING_KEY } },
-      select: { value: true },
-    }),
-  ]);
-
+  const business = await client.business.findUnique({
+    where: { id: businessId },
+    select: {
+      template: { select: { enabledModules: true } },
+      configuration: { select: { enabledModules: true } },
+    },
+  });
   if (!business) throw new HttpError(404, 'Business not found', 'BUSINESS_NOT_FOUND');
   if (!business.template) throw new HttpError(409, 'Business has no assigned template', 'BUSINESS_TEMPLATE_MISSING');
+
+  const moduleSetting = await client.businessSetting.findUnique({
+    where: { businessId_key: { businessId, key: PLATFORM_ENABLED_MODULES_SETTING_KEY } },
+    select: { value: true },
+  });
+
 
   const templateModules = business.template.enabledModules;
   const platformEnabledModules = resolvePlatformEnabledModules(

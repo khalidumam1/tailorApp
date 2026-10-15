@@ -7,6 +7,7 @@ import {
 } from '@tailor/shared';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { isRetryableOrderTransactionError } from '../domain/orders.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
@@ -14,6 +15,12 @@ import { queueMeasurementAppended } from '../whatsapp.js';
 
 const router = express.Router();
 const idSchema = z.string().uuid();
+const MEASUREMENT_TRANSACTION_OPTIONS = {
+  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+  maxWait: 20_000,
+  timeout: 30_000,
+} satisfies Parameters<typeof prisma.$transaction>[1];
+
 
 function getContext(req: express.Request): { businessId: string; actorId: string } {
   if (req.auth?.scope !== 'business' || !req.auth.business) {
@@ -124,47 +131,61 @@ router.post('/customers/:customerId/revisions', requireBusinessPermission('measu
     throw new HttpError(400, `Measurement field "${missingField.label}" is required`, 'REQUIRED_MEASUREMENT_MISSING');
   }
 
-  const result = await prisma.$transaction(async (tx) => {
-    const profile = await tx.measurementProfile.upsert({
-      where: {
-        businessId_customerId_garmentTemplateId: {
-          businessId,
-          customerId,
-          garmentTemplateId: template.id,
-        },
-      },
-      update: {},
-      create: { businessId, customerId, garmentTemplateId: template.id },
-    });
-    const previous = await tx.measurementRevision.aggregate({
-      where: { profileId: profile.id },
-      _max: { version: true },
-    });
-    const revision = await tx.measurementRevision.create({
-      data: {
-        profileId: profile.id,
-        version: (previous._max.version ?? 0) + 1,
-        values: input.values,
-        notes: input.notes,
-        measuredAt: new Date(input.measuredAt),
-      },
-    });
-    await queueMeasurementAppended(tx, revision.id);
-    await tx.auditEvent.create({
-      data: {
-        businessId,
-        actorId,
-        action: 'measurement.revision_created',
-        entityType: 'measurement_revision',
-        entityId: revision.id,
-        metadata: { profileId: profile.id, version: revision.version },
-        requestId: req.requestId,
-      },
-    });
-    return { profile, revision };
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  let result: { profile: Awaited<ReturnType<typeof prisma.measurementProfile.upsert>>; revision: Awaited<ReturnType<typeof prisma.measurementRevision.create>> };
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      result = await prisma.$transaction(async (tx) => {
+        const profile = await tx.measurementProfile.upsert({
+          where: {
+            businessId_customerId_garmentTemplateId: {
+              businessId,
+              customerId,
+              garmentTemplateId: template.id,
+            },
+          },
+          update: {},
+          create: { businessId, customerId, garmentTemplateId: template.id },
+        });
+        const previous = await tx.measurementRevision.aggregate({
+          where: { profileId: profile.id },
+          _max: { version: true },
+        });
+        const revision = await tx.measurementRevision.create({
+          data: {
+            profileId: profile.id,
+            version: (previous._max.version ?? 0) + 1,
+            values: input.values,
+            notes: input.notes,
+            measuredAt: new Date(input.measuredAt),
+          },
+        });
+        await tx.auditEvent.create({
+          data: {
+            businessId,
+            actorId,
+            action: 'measurement.revision_created',
+            entityType: 'measurement_revision',
+            entityId: revision.id,
+            metadata: { profileId: profile.id, version: revision.version },
+            requestId: req.requestId,
+          },
+        });
+        return { profile, revision };
+      }, MEASUREMENT_TRANSACTION_OPTIONS);
+      break;
+    } catch (error) {
+      if (attempt < 3 && isRetryableOrderTransactionError(error)) continue;
+      throw error;
+    }
+  }
+  try {
+    await queueMeasurementAppended(prisma, result.revision.id);
+  } catch {
+    // Measurement revision is already committed; notification failures must not fail the response.
+  }
 
   res.status(201).json({ data: result });
+
 }));
 
 export default router;

@@ -215,14 +215,19 @@ router.post('/orders/:orderId', requireBusinessPermission('payments:write'), asy
           requestId: req.requestId,
         },
       });
-      await queuePaymentReceived(tx, created.id);
       return created;
     }, {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       maxWait: 20_000,
       timeout: 30_000,
     });
+    try {
+      await queuePaymentReceived(prisma, payment.id);
+    } catch {
+      // Payment is already committed; notification failures must not fail the response.
+    }
     res.status(201).json({ data: payment });
+
   } catch (error) {
     mapFinancialConflict(error);
   }
@@ -329,11 +334,12 @@ router.get('/:paymentId/receipt', requireBusinessPermission('payments:read'), as
   const payment = await prisma.payment.findFirst({
     where: { id: paymentId, businessId },
     include: {
-      business: { select: { name: true, timezone: true, currency: true } },
+      business: { select: { name: true, logoUrl: true, timezone: true, currency: true } },
       order: { include: { customer: { select: { name: true, phone: true } } } },
       correctionOf: { select: { receiptNumber: true } },
     },
   });
+
   if (!payment) throw new HttpError(404, 'Payment not found', 'PAYMENT_NOT_FOUND');
   res.json({ data: payment });
 }));
