@@ -84,6 +84,75 @@ if (typeof document !== 'undefined') {
   document.documentElement.dataset.theme = initialThemePreference ?? 'light';
 }
 
+/**
+ * Persisted sign-in, so refreshing the page (or the browser restoring the
+ * tab) no longer throws the user back to the login screen.
+ *
+ * The session used to live only in React state (`useState`), so every reload
+ * discarded it even though the API issues a 30-day refresh token precisely
+ * so clients can resume. We now keep the token pair in `sessionStorage`:
+ * it survives reloads and tab restores, but is still cleared when the tab
+ * is closed — the same "this visit on this device" boundary the login page
+ * always promised, and a smaller window than `localStorage` for a stolen
+ * token. Storage can throw (private browsing, quotas); every access is
+ * guarded and falls back to the old memory-only behaviour.
+ *
+ * The last open view is stored alongside the session so a refresh also
+ * returns the user to the screen they were working on. Cross-tab writes are
+ * adopted (see the `storage` listener in `App`): the API rotates the
+ * refresh token on every refresh and revokes *all* sessions when an
+ * already-rotated token is replayed, so two tabs must never refresh with
+ * different generations of the token.
+ */
+const SESSION_STORAGE_KEY = 'tailorapp.session.v1';
+
+const businessViews: View[] = [
+  'dashboard', 'orders', 'catalog', 'customers', 'measurements',
+  'payments', 'notifications', 'subscription', 'configuration', 'erp',
+];
+const platformViews: PlatformView[] = [
+  'overview', 'businesses', 'templates', 'staff', 'audit', 'health',
+  'billing', 'plans', 'paymentQueue', 'settings', 'billingSettings', 'branding', 'reports',
+];
+
+interface StoredWorkspaceSession {
+  session: Session;
+  view?: View;
+  platformView?: PlatformView;
+}
+
+function parseStoredWorkspaceSession(serialized: string): StoredWorkspaceSession | null {
+  try {
+    const parsed = JSON.parse(serialized) as Record<string, unknown> | null;
+    const candidate = parsed?.session as Record<string, unknown> | undefined;
+    if (!candidate
+      || typeof candidate.accessToken !== 'string' || !candidate.accessToken
+      || typeof candidate.refreshToken !== 'string' || !candidate.refreshToken) {
+      return null;
+    }
+    return {
+      session: candidate as unknown as Session,
+      view: businessViews.includes(parsed?.view as View) ? parsed?.view as View : undefined,
+      platformView: platformViews.includes(parsed?.platformView as PlatformView)
+        ? parsed?.platformView as PlatformView
+        : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function storedWorkspaceSession(): StoredWorkspaceSession | null {
+  try {
+    const serialized = sessionStorage.getItem(SESSION_STORAGE_KEY);
+    return serialized ? parseStoredWorkspaceSession(serialized) : null;
+  } catch {
+    return null;
+  }
+}
+
+const initialStoredSession = storedWorkspaceSession();
+
 const erpNavigationAccess: Array<{ module: string; permission: string }> = [
   { module: 'inventory', permission: 'inventory:read' },
   { module: 'suppliers', permission: 'suppliers:read' },
@@ -185,7 +254,7 @@ function messageFor(error: unknown): string {
 }
 
 function App() {
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<Session | null>(() => initialStoredSession?.session ?? null);
   const authGeneration = useRef(0);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [applicationBranding, setApplicationBranding] = useState<ApplicationBranding>(DEFAULT_APPLICATION_BRANDING);
@@ -198,7 +267,7 @@ function App() {
   const [password, setPassword] = useState('');
   const [scopeChoice, setScopeChoice] = useState<'business' | 'platform'>('business');
   const [businessChoice, setBusinessChoice] = useState('');
-  const [view, setView] = useState<View>('dashboard');
+  const [view, setView] = useState<View>(() => initialStoredSession?.view ?? 'dashboard');
   const [online, setOnline] = useState(navigator.onLine);
   const [loading, setLoading] = useState(false);
   const [working, setWorking] = useState(false);
@@ -257,7 +326,7 @@ function App() {
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'BANK' | 'DIGITAL'>('CASH');
   const paymentAttemptRef = useRef<{ orderId: string; amount: string; method: string; idempotencyKey: string } | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
-  const [platformView, setPlatformView] = useState<PlatformView>('overview');
+  const [platformView, setPlatformView] = useState<PlatformView>(() => initialStoredSession?.platformView ?? 'overview');
   const [settingsTab, setSettingsTab] = useState<'branding' | 'billing'>('branding');
   const [platformReloadToken, setPlatformReloadToken] = useState(0);
   const [platformBusinesses, setPlatformBusinesses] = useState<import('./api').PlatformBusiness[]>([]);
@@ -575,6 +644,46 @@ function App() {
     window.addEventListener('storage', preferenceChanged);
     return () => window.removeEventListener('storage', preferenceChanged);
   }, []);
+
+  // Persist the session (and the screen the user is on) so a refresh resumes
+  // where they left off instead of returning to the login screen. Signing
+  // out or session expiry sets `session` to null, which clears the record.
+  useEffect(() => {
+    try {
+      if (!session) {
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+        return;
+      }
+      const stored: StoredWorkspaceSession = { session, view, platformView };
+      sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(stored));
+    } catch {
+      // Storage unavailable (e.g. private browsing): the session simply
+      // stays memory-only for this visit, as it did before.
+    }
+  }, [platformView, session, view]);
+
+  // Keep open tabs on the same rotated token pair. The API revokes every
+  // session when an already-rotated refresh token is replayed, so a tab
+  // holding a stale pair could otherwise sign out all the others.
+  useEffect(() => {
+    const sessionChanged = (event: StorageEvent) => {
+      if (event.key !== SESSION_STORAGE_KEY) return;
+      if (!event.newValue) {
+        // Signed out (or the session expired) in another tab.
+        authGeneration.current += 1;
+        clearRefreshCache();
+        setSession(null);
+        clearSessionData();
+        return;
+      }
+      const stored = parseStoredWorkspaceSession(event.newValue);
+      if (stored && stored.session.refreshToken !== session?.refreshToken) {
+        setSession(stored.session);
+      }
+    };
+    window.addEventListener('storage', sessionChanged);
+    return () => window.removeEventListener('storage', sessionChanged);
+  }, [clearSessionData, session?.refreshToken]);
 
   useEffect(() => {
     let active = true;
@@ -2124,7 +2233,7 @@ function App() {
           <button className="button button-primary button-wide" type="submit" disabled={working || (selection !== null && scopeChoice === 'business' && !businessChoice)}>
             {working ? 'Signing in…' : 'Sign in'}
           </button>
-          <p className="fine-print">{applicationBranding.footerText || 'Your session stays in memory on this device. Never share your password.'}</p>
+          <p className="fine-print">{applicationBranding.footerText || 'Refreshing this page keeps you signed in on this device. Never share your password.'}</p>
           {(applicationBranding.supportEmail || applicationBranding.supportUrl) && (
             <p className="auth-support">
               Need help?{' '}
