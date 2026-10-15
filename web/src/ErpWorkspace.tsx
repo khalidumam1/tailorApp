@@ -554,7 +554,7 @@ export function ErpWorkspace({
           </form>
           <PanelTitle kicker="On hand" title="Stock by variant and location" />
           <div className="table-wrap"><table><thead><tr><th>Item / variant</th><th>Location</th><th>On hand</th><th>Average cost</th><th>Value</th><th>Reorder point</th></tr></thead><tbody>
-            {inventoryItems.flatMap((item) => item.variants.flatMap((variant) => variant.balances.map((balance) => <tr key={balance.id}><td><strong>{item.name} · {variant.name}</strong><span className="table-note">{item.kind.toLowerCase()} · {variant.sku ?? 'No SKU'}</span></td><td>{balance.location.name}</td><td>{formatQuantity(balance.quantity)} {item.baseUnit}</td><td>{money(balance.averageUnitCost)}</td><td>{money(valuationRows.find((row) => row.variant.id === variant.id && row.location.id === balance.location.id)?.value ?? '0.00')}</td><td>{item.reorderPoint ?? '—'}</td></tr>)))}
+            {inventoryItems.flatMap((item) => item.variants.flatMap((variant) => variant.balances.map((balance) => <tr key={`${variant.id}:${balance.location.id}`}><td><strong>{item.name} · {variant.name}</strong><span className="table-note">{item.kind.toLowerCase()} · {variant.sku ?? 'No SKU'}</span></td><td>{balance.location.name}</td><td>{formatQuantity(balance.quantity)} {item.baseUnit}</td><td>{money(balance.averageUnitCost)}</td><td>{money(valuationRows.find((row) => row.variant.id === variant.id && row.location.id === balance.location.id)?.value ?? '0.00')}</td><td>{item.reorderPoint ?? '—'}</td></tr>)))}
             {!inventoryItems.length && <EmptyRow colSpan={6} text="No stock items yet. Add a material or supply to get started." />}
           </tbody></table></div>
           <PanelTitle kicker="Audit history" title="Recent movements" />
