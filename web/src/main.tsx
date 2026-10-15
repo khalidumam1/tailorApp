@@ -36,6 +36,7 @@ import {
   type WhatsAppNotification,
 } from './api';
 import { ErpWorkspace } from './ErpWorkspace';
+import ChatAssistant from './ChatAssistant';
 import { BusinessStructureEditors } from './BusinessStructureEditors';
 import { BusinessTeamAdmin } from './BusinessTeamAdmin';
 import { AreaChart, BarList, ColumnChart, DonutChart, paletteColor, Sparkline } from './Charts';
@@ -3983,6 +3984,8 @@ function App() {
           </section>
         </div>
       )}
+
+      <ChatAssistant session={session} onNavigate={(view) => setView(view as any)} />
     </div>
   );
 }
