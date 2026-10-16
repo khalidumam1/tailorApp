@@ -39,6 +39,7 @@ import {
   type Session,
 } from '../api';
 import { normalizePhone } from '../data/phone';
+import { businessConfigurationCacheKey } from '../data/storage-keys';
 import { whatsappUrl } from '../data/messaging';
 import {
   attemptFor,
@@ -612,7 +613,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       return () => { active = false; };
     }
     const loadConfiguration = async () => {
-      const cacheKey = `business-config:${session.business.id}`;
+      const cacheKey = businessConfigurationCacheKey(session.business.id);
       // A corrupt or outdated cache entry is ignored so the network copy can still load.
       const cached = safeParseCache(await SecureStore.getItemAsync(cacheKey), parseBusinessConfiguration);
       if (cached && cached.business.id === session.business.id && active) {
