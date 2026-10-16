@@ -25,6 +25,15 @@ export function MeasurementsScreen() {
   const copy = ws.copy;
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const { loadCustomerMeasurements } = ws;
+
+  // Revisions are fetched per customer when that customer is selected.
+  useEffect(() => {
+    if (!selectedCustomerId) return;
+    loadCustomerMeasurements(selectedCustomerId).catch((cause: unknown) => {
+      ws.setError(cause instanceof Error ? cause.message : copy.error);
+    });
+  }, [selectedCustomerId, loadCustomerMeasurements]);
 
   const revisions = useMemo<Revision[]>(() => ws.measurements
     .filter((record) => record.customer_id === selectedCustomerId)

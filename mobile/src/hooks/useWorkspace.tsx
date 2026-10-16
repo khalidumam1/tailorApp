@@ -278,6 +278,7 @@ export type WorkspaceContextValue = {
 
   recordPayment: () => Promise<void>;
   refreshWorkspace: () => Promise<void>;
+  loadCustomerMeasurements: (customerId: string) => Promise<void>;
   refreshNotificationHistory: () => Promise<void>;
   refreshSubscriptionBilling: () => Promise<void>;
   cancelOrderPayment: () => void;
@@ -683,24 +684,48 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
   }, [copy.error, session, subscriptionPayment.method, subscriptionPlanId, updateSession, isCurrentWorkspace]);
 
+  const loadCustomerMeasurements = useCallback(async (customerId: string) => {
+    if (!session || !customerId) return;
+    const generation = workspaceGeneration.current;
+    const businessId = session.business.id;
+    const response = await erpRequest<{
+      items: Array<{
+        garmentTemplate: { name: string };
+        revisions: Array<{ id: string; values: Record<string, unknown>; measuredAt: string }>;
+      }>;
+    }>(`/measurements/customers/${customerId}`);
+    if (!isCurrentWorkspace(generation, businessId)) return;
+    const records = response.items.flatMap((profile) => profile.revisions.map((revision) => ({
+      id: revision.id,
+      customer_id: customerId,
+      template_name: profile.garmentTemplate.name,
+      values_json: JSON.stringify(revision.values),
+      measured_at: revision.measuredAt,
+    })));
+    setMeasurements((current) => [
+      ...current.filter((record) => record.customer_id !== customerId),
+      ...records,
+    ]);
+  }, [erpRequest, session, isCurrentWorkspace]);
+
   const refreshWorkspace = useCallback(async () => {
     if (!session) return;
     const generation = workspaceGeneration.current;
     const businessId = session.business.id;
     try {
-      const [nextCustomers, nextOrders, nextCatalogItems, nextTemplates, nextMeasurements] = await Promise.all([
+      // Measurements are loaded per customer (see loadCustomerMeasurements); the
+      // API has no workspace-wide measurement list, so it is not fetched here.
+      const [nextCustomers, nextOrders, nextCatalogItems, nextTemplates] = await Promise.all([
         erpRequest<{ items: LocalCustomer[] }>('/customers'),
         erpRequest<{ items: LocalOrder[] }>('/orders'),
-        erpRequest<{ items: LocalCatalogItem[] }>('/catalog/items'),
-        erpRequest<{ items: LocalTemplate[] }>('/templates'),
-        erpRequest<{ items: Array<{ id: string; customer_id: string; template_name: string; values_json: string; measured_at: string }> }>('/measurements'),
+        erpRequest<{ items: LocalCatalogItem[] }>('/catalog'),
+        erpRequest<{ items: LocalTemplate[] }>('/measurements/templates'),
       ]);
       if (!isCurrentWorkspace(generation, businessId)) return;
       setCustomers(nextCustomers.items);
       setOrders(nextOrders.items);
       setCatalogItems(nextCatalogItems.items);
       setTemplates(nextTemplates.items);
-      setMeasurements(nextMeasurements.items);
       if (session.permissions.includes('orders:read')
         && businessConfiguration?.enabledModules.includes('orders') === true) {
         const result = await apiRequest<{ data: Record<string, unknown> }>(
@@ -734,7 +759,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // Catalog refresh on page entry
   useEffect(() => {
     if (!session || !businessConfiguration?.enabledModules.includes('catalog')) return;
-    void erpRequest<{ items: LocalCatalogItem[] }>('/catalog/items')
+    void erpRequest<{ items: LocalCatalogItem[] }>('/catalog')
       .then((result) => setCatalogItems(result.items))
       .catch((catalogError: unknown) => {
         setError(catalogError instanceof Error ? catalogError.message : copy.error);
@@ -970,16 +995,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setSaving(true);
     setError('');
     try {
-      await erpRequest('/measurements', {
+      await erpRequest(`/measurements/customers/${customer.id}/revisions`, {
         method: 'POST',
         body: {
-          customerId: customer.id,
-          templateId: template.id,
+          garmentTemplateId: template.id,
           values: measurementValues,
           notes: measurementNotes,
+          measuredAt: new Date().toISOString(),
         },
       });
-      await refreshWorkspace();
+      await loadCustomerMeasurements(customer.id);
       setMeasurementForm(false);
       setMeasurementValues({});
       setMeasurementNotes('');
@@ -988,7 +1013,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     } finally {
       setSaving(false);
     }
-  }, [copy.chooseCustomer, copy.error, customers, measurementCustomer, measurementNotes, measurementTemplate, measurementValues, refreshWorkspace, session, templates]);
+  }, [copy.chooseCustomer, copy.error, customers, loadCustomerMeasurements, measurementCustomer, measurementNotes, measurementTemplate, measurementValues, session, templates]);
 
   const saveCatalogItem = useCallback(async () => {
     if (!session || !businessConfiguration) return;
@@ -1009,7 +1034,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setSaving(true);
     setError('');
     try {
-      await erpRequest('/catalog/items', {
+      await erpRequest('/catalog', {
         method: 'POST',
         body: {
           typeKey,
@@ -1046,7 +1071,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         method: 'PATCH',
         body: { version: item.version, active: !item.active },
       }, updateSession);
-      const refreshed = await erpRequest<{ items: LocalCatalogItem[] }>('/catalog/items');
+      const refreshed = await erpRequest<{ items: LocalCatalogItem[] }>('/catalog');
       setCatalogItems(refreshed.items);
     } catch (catalogError) {
       setError(catalogError instanceof Error ? catalogError.message : copy.error);
@@ -1479,6 +1504,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     openOrderPayment,
     recordPayment,
     refreshWorkspace,
+    loadCustomerMeasurements,
     refreshNotificationHistory,
     refreshSubscriptionBilling,
     cancelOrderPayment,
