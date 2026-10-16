@@ -228,6 +228,36 @@ export function createStyles(palette: AppPalette) {
     pillMuted: { backgroundColor: palette.surfaceMuted },
     pillMutedText: { color: palette.mutedText },
 
+    // --- Dashboard metrics ---
+    metricGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'space-between',
+      rowGap: 10,
+      marginBottom: 16,
+    },
+    metricCard: {
+      width: '48.5%',
+      minHeight: 112,
+      justifyContent: 'flex-end',
+      backgroundColor: palette.surface,
+      borderRadius: 14,
+      padding: 14,
+    },
+    metricIcon: {
+      position: 'absolute',
+      top: 12,
+      right: 12,
+      width: 32,
+      height: 32,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: palette.primarySoft,
+    },
+    metricValue: { color: palette.text, fontSize: 22, fontWeight: '900', paddingRight: 28 },
+    metricLabel: { color: palette.mutedText, fontSize: 13, lineHeight: 18, fontWeight: '600', marginTop: 3 },
+
     // --- Chips ---
     chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
     chip: {
