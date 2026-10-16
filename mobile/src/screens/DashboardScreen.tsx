@@ -85,29 +85,37 @@ export function DashboardScreen({ onNavigate }: { onNavigate: Navigate }) {
         ))}
       </View>
 
-      {/* Metric cards */}
-      <View style={styles.chipWrap}>
+      {/* Dashboard metrics use their own two-column grid. Reusing listCard here
+          made all six cards shrink into tall, empty-looking white strips on
+          narrow Android screens. */}
+      <View style={styles.metricGrid}>
         {ws.businessConfiguration?.dashboardWidgets
           .filter((key) => ws.can('orders:read') && ws.moduleEnabled('orders')
             && (!['outstanding', 'collectedToday'].includes(key)
               || (ws.can('payments:read') && ws.moduleEnabled('payments'))))
           .map((key) => {
-            const map: Record<string, [string, string]> = {
-              newOrders: [newOrdersCount, copy.ordersToday],
-              dueToday: [dueTodayCount, copy.dueToday],
-              inProgress: [inProgressCount, copy.inProgressLabel],
-              overdue: [overdueCount, copy.overdueLabel],
-              outstanding: [formatCurrency(outstanding, ws.businessConfiguration?.business.currency), copy.outstandingLabel],
-              collectedToday: [formatCurrency(collectedToday, ws.businessConfiguration?.business.currency), copy.collectedToday],
+            const map: Record<string, [string, string, IconName]> = {
+              newOrders: [newOrdersCount, copy.ordersToday, 'orders'],
+              dueToday: [dueTodayCount, copy.dueToday, 'calendar'],
+              inProgress: [inProgressCount, copy.inProgressLabel, 'arrowRight'],
+              overdue: [overdueCount, copy.overdueLabel, 'alert'],
+              outstanding: [formatCurrency(outstanding, ws.businessConfiguration?.business.currency), copy.outstandingLabel, 'wallet'],
+              collectedToday: [formatCurrency(collectedToday, ws.businessConfiguration?.business.currency), copy.collectedToday, 'arrowUp'],
             };
             const value = map[key];
             if (!value) return null;
             return (
-              <View key={key} style={styles.listCard}>
-                <View style={styles.listMain}>
-                  <Text style={styles.listPrice}>{value[0]}</Text>
-                  <Text style={styles.listMeta}>{value[1]}</Text>
+              <View
+                key={key}
+                accessible
+                accessibilityLabel={`${value[1]}: ${value[0]}`}
+                style={styles.metricCard}
+              >
+                <View style={styles.metricIcon}>
+                  <Icon name={value[2]} size={18} color={palette.primaryText} />
                 </View>
+                <Text style={styles.metricValue} numberOfLines={1} adjustsFontSizeToFit>{value[0]}</Text>
+                <Text style={styles.metricLabel} numberOfLines={2}>{value[1]}</Text>
               </View>
             );
           })}
