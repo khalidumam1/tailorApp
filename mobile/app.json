@@ -17,18 +17,6 @@
     "plugins": [
       "expo-secure-store",
       [
-        "expo-sqlite",
-        {
-          "useSQLCipher": true
-        }
-      ],
-      [
-        "@morrowdigital/watermelondb-expo-plugin",
-        {
-          "disableJsi": true
-        }
-      ],
-      [
         "expo-build-properties",
         {
           "android": {
@@ -36,7 +24,13 @@
               "pickFirst": [
                 "**/libc++_shared.so"
               ]
-            }
+            },
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "useLegacyPackaging": true,
+            "buildArchs": [
+              "arm64-v8a"
+            ]
           }
         }
       ]
