@@ -109,7 +109,7 @@ export function PaymentsScreen({
     });
 
     try {
-      await ws.sendWhatsAppMessage(normalizedPhone, message, null);
+      await ws.sendWhatsAppMessage(normalizedPhone, message);
     } catch (error) {
       Alert.alert(copy.sendReceiptBtn, copy.error);
     }

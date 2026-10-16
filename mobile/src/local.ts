@@ -14,6 +14,8 @@ export interface LocalCustomer {
 export interface LocalOrder {
   id: string;
   business_id: string;
+  order_number?: string | null;
+  createdAt?: string | null;
   customer_id: string;
   customer_name: string;
   garment_name: string;

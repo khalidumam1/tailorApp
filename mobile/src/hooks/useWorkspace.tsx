@@ -22,7 +22,7 @@ import {
   type ReactNode,
 } from 'react';
 import type React from 'react';
-import { Alert } from 'react-native';
+import { Alert, Linking } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import {
   ApiError,
@@ -39,6 +39,22 @@ import {
   type Session,
 } from '../api';
 import { normalizePhone } from '../data/phone';
+import { whatsappUrl } from '../data/messaging';
+import {
+  attemptFor,
+  orderPaymentMethodOptions,
+  buildCatalogRequest,
+  buildOrderRequest,
+  fetchAllPages,
+  mapRemoteCatalogItem,
+  mapRemoteCustomer,
+  mapRemoteOrder,
+  safeParseCache,
+  subscriptionAmountFor,
+  type IdempotentAttempt,
+  type RemoteCustomer,
+  type RemoteOrder,
+} from '../data/erp-mapping';
 import { getCopy, languageOptions, type Language } from '../i18n';
 import { resolveBrandAssetUrl } from '../theme/branding';
 import { useAppTheme } from '../theme/palette';
@@ -273,7 +289,7 @@ export type WorkspaceContextValue = {
   saveCatalogItem: () => Promise<void>;
   toggleCatalogItem: (item: LocalCatalogItem) => Promise<void>;
   transitionOrder: (order: LocalOrder, targetStageKey?: string) => Promise<void>;
-  sendWhatsAppMessage: (recipientPhone: string, message: string, orderId?: string | null) => Promise<void>;
+  sendWhatsAppMessage: (recipientPhone: string, message: string) => Promise<void>;
   openOrderPayment: (order: LocalOrder) => Promise<void>;
 
   recordPayment: () => Promise<void>;
@@ -417,6 +433,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const [session, setSession] = useState<Session | null>(null);
   const sessionRef = useRef<Session | null>(null);
+  const orderAttemptRef = useRef<IdempotentAttempt | null>(null);
+  const paymentAttemptRef = useRef<IdempotentAttempt | null>(null);
   const workspaceGeneration = useRef(0);
   const isCurrentWorkspace = useCallback((generation: number, businessId: string) =>
     workspaceGeneration.current === generation && sessionRef.current?.business.id === businessId, []);
@@ -570,6 +588,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setLoadingNotifications(false);
     setLoadingSubscription(false);
     setSelectingShopId(null);
+    orderAttemptRef.current = null;
+    paymentAttemptRef.current = null;
     setError('');
   }, []);
 
@@ -593,13 +613,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
     const loadConfiguration = async () => {
       const cacheKey = `business-config:${session.business.id}`;
-      const cached = await SecureStore.getItemAsync(cacheKey);
-      if (cached) {
-        const parsed = parseBusinessConfiguration(JSON.parse(cached) as unknown);
-        if (parsed.business.id !== session.business.id) {
-          throw new Error('Saved business configuration does not match the signed-in business');
-        }
-        if (active) setBusinessConfiguration(parsed);
+      // A corrupt or outdated cache entry is ignored so the network copy can still load.
+      const cached = safeParseCache(await SecureStore.getItemAsync(cacheKey), parseBusinessConfiguration);
+      if (cached && cached.business.id === session.business.id && active) {
+        setBusinessConfiguration(cached);
       }
       const response = await apiRequest<{ data: unknown }>(
         session,
@@ -708,26 +725,57 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     ]);
   }, [erpRequest, session, isCurrentWorkspace]);
 
+  const loadAllCatalogItems = useCallback(() => fetchAllPages<LocalCatalogItem>(async (cursor) => {
+    const result = await erpRequest<{ items: LocalCatalogItem[]; nextCursor?: string | null }>(
+      `/catalog?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+    );
+    return { items: result.items.map(mapRemoteCatalogItem), nextCursor: result.nextCursor };
+  }), [erpRequest]);
+
   const refreshWorkspace = useCallback(async () => {
     if (!session) return;
     const generation = workspaceGeneration.current;
     const businessId = session.business.id;
+    const permissions = new Set(session.permissions);
+    const modules = new Set(businessConfiguration?.enabledModules ?? []);
+    // Each list is only requested when the role may read it and the module is enabled.
+    // Otherwise the server answers 403 and the user sees an error on every sign-in.
+    const canLoad = (permission: string, module: string) =>
+      permissions.has(permission) && modules.has(module);
+    if (!businessConfiguration) return;
     try {
-      // Measurements are loaded per customer (see loadCustomerMeasurements); the
-      // API has no workspace-wide measurement list, so it is not fetched here.
+      const customersAllowed = canLoad('customers:read', 'customers');
+      const ordersAllowed = canLoad('orders:read', 'orders');
+      const catalogAllowed = canLoad('orders:read', 'catalog');
+      const templatesAllowed = canLoad('measurements:read', 'measurements');
       const [nextCustomers, nextOrders, nextCatalogItems, nextTemplates] = await Promise.all([
-        erpRequest<{ items: LocalCustomer[] }>('/customers'),
-        erpRequest<{ items: LocalOrder[] }>('/orders'),
-        erpRequest<{ items: LocalCatalogItem[] }>('/catalog'),
-        erpRequest<{ items: LocalTemplate[] }>('/measurements/templates'),
+        customersAllowed
+          ? fetchAllPages<LocalCustomer>(async (cursor) => {
+            const result = await erpRequest<{ items: RemoteCustomer[]; nextCursor?: string | null }>(
+              `/customers?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+            );
+            return { items: result.items.map(mapRemoteCustomer), nextCursor: result.nextCursor };
+          })
+          : Promise.resolve([] as LocalCustomer[]),
+        ordersAllowed
+          ? fetchAllPages<LocalOrder>(async (cursor) => {
+            const result = await erpRequest<{ items: RemoteOrder[]; nextCursor?: string | null }>(
+              `/orders?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+            );
+            return { items: result.items.map(mapRemoteOrder), nextCursor: result.nextCursor };
+          })
+          : Promise.resolve([] as LocalOrder[]),
+        catalogAllowed ? loadAllCatalogItems() : Promise.resolve([] as LocalCatalogItem[]),
+        templatesAllowed
+          ? erpRequest<{ items: LocalTemplate[] }>('/measurements/templates').then((result) => result.items)
+          : Promise.resolve([] as LocalTemplate[]),
       ]);
       if (!isCurrentWorkspace(generation, businessId)) return;
-      setCustomers(nextCustomers.items);
-      setOrders(nextOrders.items);
-      setCatalogItems(nextCatalogItems.items);
-      setTemplates(nextTemplates.items);
-      if (session.permissions.includes('orders:read')
-        && businessConfiguration?.enabledModules.includes('orders') === true) {
+      setCustomers(nextCustomers);
+      setOrders(nextOrders);
+      setCatalogItems(nextCatalogItems);
+      setTemplates(nextTemplates);
+      if (ordersAllowed) {
         const result = await apiRequest<{ data: Record<string, unknown> }>(
           session,
           '/api/v1/reports/dashboard',
@@ -743,7 +791,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setError(refreshFailure instanceof Error ? refreshFailure.message : copy.error);
       }
     }
-  }, [businessConfiguration?.enabledModules, session, updateSession, copy.error, isCurrentWorkspace]);
+  }, [businessConfiguration, copy.error, erpRequest, loadAllCatalogItems, session, updateSession, isCurrentWorkspace]);
 
   useEffect(() => {
     if (!session) return;
@@ -759,12 +807,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // Catalog refresh on page entry
   useEffect(() => {
     if (!session || !businessConfiguration?.enabledModules.includes('catalog')) return;
-    void erpRequest<{ items: LocalCatalogItem[] }>('/catalog')
-      .then((result) => setCatalogItems(result.items))
+    void loadAllCatalogItems()
+      .then((items) => setCatalogItems(items))
       .catch((catalogError: unknown) => {
         setError(catalogError instanceof Error ? catalogError.message : copy.error);
       });
-  }, [businessConfiguration?.enabledModules, copy.error, session, updateSession]);
+  }, [businessConfiguration?.enabledModules, copy.error, loadAllCatalogItems, session]);
 
   // Auth actions
   const handleSignIn = useCallback(async (businessId?: string) => {
@@ -850,6 +898,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const submitSubscriptionPayment = useCallback(async () => {
     if (!session || !subscriptionPlanId) return;
+    // The server only accepts the plan's price for the chosen cycle. The form amount
+    // is set when a plan is picked, so it can be stale after the cycle changes.
+    const expectedAmount = subscriptionAmountFor(subscriptionBilling?.plans ?? [], subscriptionPlanId, subscriptionCycle);
+    if (!expectedAmount) {
+      setError(copy.error);
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -862,6 +917,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             planId: subscriptionPlanId,
             cycle: subscriptionCycle,
             ...subscriptionPayment,
+            amount: expectedAmount,
           },
         },
         updateSession,
@@ -875,7 +931,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     } finally {
       setSaving(false);
     }
-  }, [copy.error, copy.pendingAdminReview, copy.submitForReview, refreshSubscriptionBilling, session, subscriptionCycle, subscriptionPayment, subscriptionPlanId, updateSession]);
+  }, [copy.error, copy.pendingAdminReview, copy.submitForReview, refreshSubscriptionBilling, session, subscriptionBilling, subscriptionCycle, subscriptionPayment, subscriptionPlanId, updateSession]);
 
   const saveCustomer = useCallback(async () => {
     if (!session) return;
@@ -954,21 +1010,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setError('');
     try {
       amountToMinorUnits(unitPrice);
-      await erpRequest('/orders', {
-        method: 'POST',
-        body: {
-          customerId: customer.id,
-          itemTypeKey: currentItemType.key,
-          itemName: itemName.trim(),
-          quantity: Number(quantity),
-          unitPrice,
-          promisedAt: dueDate,
-          notes: orderNotes,
-          orderCustomFields: configuredFieldValues(orderFields, orderCustomFields),
-          itemCustomFields: configuredFieldValues(orderItemFieldDefinitions, itemFieldValues),
-          initialStageKey: initialStage.key,
-        },
+      const body = buildOrderRequest({
+        customerId: customer.id,
+        itemTypeKey: currentItemType.key,
+        itemName,
+        quantity,
+        unitPrice,
+        dueDate,
+        notes: orderNotes,
+        orderCustomFields: configuredFieldValues(orderFields, orderCustomFields),
+        itemCustomFields: configuredFieldValues(orderItemFieldDefinitions, itemFieldValues),
       });
+      // The server requires an Idempotency-Key. An unchanged retry reuses it, so a
+      // lost response cannot create the same order twice.
+      const attempt = attemptFor(orderAttemptRef.current, JSON.stringify(body), createClientId);
+      orderAttemptRef.current = attempt;
+      await erpRequest('/orders', { method: 'POST', body, idempotencyKey: attempt.key });
+      orderAttemptRef.current = null;
       await refreshWorkspace();
       setOrderForm(false);
       setItemName('');
@@ -1036,7 +1094,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     try {
       await erpRequest('/catalog', {
         method: 'POST',
-        body: {
+        body: buildCatalogRequest({
           typeKey,
           name: catalogName,
           description: catalogDescription,
@@ -1045,7 +1103,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           unitPrice: catalogUnitPrice,
           sortOrder: catalogItems.length,
           customFields: configuredFieldValues(visibleCatalogFields, catalogCustomFields),
-        },
+        }),
       });
       await refreshWorkspace();
       setCatalogName('');
@@ -1071,15 +1129,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         method: 'PATCH',
         body: { version: item.version, active: !item.active },
       }, updateSession);
-      const refreshed = await erpRequest<{ items: LocalCatalogItem[] }>('/catalog');
-      setCatalogItems(refreshed.items);
+      setCatalogItems(await loadAllCatalogItems());
     } catch (catalogError) {
       setError(catalogError instanceof Error ? catalogError.message : copy.error);
     } finally {
       setTogglingCatalogId(null);
       setSaving(false);
     }
-  }, [copy.error, session, updateSession]);
+  }, [copy.error, loadAllCatalogItems, session, updateSession]);
 
   const transitionOrder = useCallback(async (order: LocalOrder, targetStageKey?: string) => {
     if (!session) return;
@@ -1107,24 +1164,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         body: { toStageKey: nextStage.key, version: order.version },
       }, updateSession);
       await refreshWorkspace();
-      
-      // Send WhatsApp notification for order status update
-      try {
-        const businessPhone = businessConfiguration?.contactPhone;
-        if (businessPhone) {
-          const customer = customers.find(c => c.id === order.customer_id);
-          if (customer && customer.phone) {
-            const normalizedPhone = normalizePhone(customer.phone);
-            if (normalizedPhone) {
-              const stageLabel = resolveMobileWorkflowStage(stages, order)?.label ?? order.status;
-              const message = `Order ${order.id} is now ${stageLabel}.`;
-              await sendWhatsAppMessage(normalizedPhone, message, order.id);
-            }
-          }
-        }
-      } catch (whatsappError) {
-        console.warn('Failed to send WhatsApp notification:', whatsappError);
-      }
+
     } catch (transitionError) {
       setError(transitionError instanceof Error ? transitionError.message : copy.error);
     } finally {
@@ -1132,63 +1172,32 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
    }, [businessConfiguration, copy.error, refreshWorkspace, session, updateSession]);
 
-   const sendWhatsAppMessage = useCallback(async (recipientPhone: string, message: string, orderId?: string | null) => {
-     if (!session) return;
-     const businessPhone = businessConfiguration?.contactPhone;
-     if (!businessPhone) {
-       setError(copy.noWhatsappNumber);
+   // Opens the user's WhatsApp with the message prepared. The user presses send
+   // there, so nothing is sent silently. Order-status notifications are queued by
+   // the server when a workflow transition succeeds.
+   const sendWhatsAppMessage = useCallback(async (recipientPhone: string, message: string) => {
+     const url = whatsappUrl(recipientPhone, message);
+     if (!url) {
+       setError(copy.error);
        return;
      }
      setError('');
      try {
-       const response = await apiRequest<{
-         data?: {
-           id: string;
-           status: WhatsAppNotification['status'];
-           recipientPhone: string;
-           lastError: string | null;
-           createdAt: string;
-         };
-       }>(session, `/api/v1/whatsapp/send`, {
-         method: 'POST',
-         body: { recipientPhone, message, orderId },
-       }, updateSession);
-       
-       const sent = response.data;
-       if (sent) {
-         setNotificationHistory((prev) => [{
-           id: sent.id,
-           customerId: null,
-           orderId: orderId ?? null,
-           paymentId: null,
-           recipientName: null,
-           kind: 'order_status',
-           status: sent.status,
-           recipientPhone: sent.recipientPhone,
-           lastError: sent.lastError,
-           sentAt: null,
-           deliveredAt: null,
-           readAt: null,
-           failedAt: null,
-           createdAt: sent.createdAt,
-         }, ...prev]);
-       }
-
-     } catch (whatsappError) {
-       setError(whatsappError instanceof Error ? whatsappError.message : copy.error);
-     } finally {
-       // No specific loading state to clear
+       await Linking.openURL(url);
+     } catch {
+       setError(copy.error);
      }
-    }, [copy.error, session, updateSession, businessConfiguration?.contactPhone]);
+   }, [copy.error]);
 
    const openOrderPayment = useCallback(async (order: LocalOrder) => {
      if (!session) return;
      setOpeningPaymentOrderId(order.id);
      setError('');
      try {
-       const paymentMethodOptions = businessConfiguration?.paymentMethods ?? [];
+       const paymentMethodOptions = orderPaymentMethodOptions(businessConfiguration?.paymentMethods ?? []);
        setPaymentOrder(order);
        setPaymentAttempt(null);
+       paymentAttemptRef.current = null;
        setPaymentAmount('');
        setPaymentMethod(paymentMethodOptions[0] ?? '');
      } finally {
@@ -1201,7 +1210,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
        setError(copy.error);
        return;
      }
-     const paymentMethodOptions = businessConfiguration?.paymentMethods ?? [];
+     const paymentMethodOptions = orderPaymentMethodOptions(businessConfiguration?.paymentMethods ?? []);
      let amount: string;
      try {
        const selectedMethod = paymentMethod;
@@ -1216,14 +1225,22 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
        return;
      }
      setSaving(true);
-     const key = createClientId();
      const method = paymentMethod;
+     // A retry of the same payment reuses the key, so a response lost after the
+     // server recorded it cannot create a second payment.
+     const attempt = attemptFor(
+       paymentAttemptRef.current,
+       JSON.stringify({ orderId: paymentOrder.id, amount, method }),
+       createClientId,
+     );
+     paymentAttemptRef.current = attempt;
      try {
        await apiRequest(session, `/api/v1/payments/orders/${paymentOrder.id}`, {
          method: 'POST',
-         headers: { 'Idempotency-Key': key },
+         headers: { 'Idempotency-Key': attempt.key },
          body: { amount, method },
        }, updateSession);
+       paymentAttemptRef.current = null;
        Alert.alert(copy.orders, copy.saved);
        setPaymentOrder(null);
        setPaymentAttempt(null);
@@ -1252,6 +1269,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const cancelOrderPayment = useCallback(() => {
     setPaymentOrder(null);
     setPaymentAttempt(null);
+    paymentAttemptRef.current = null;
     setPaymentAmount('');
     setPaymentMethod('');
     setError('');
@@ -1343,7 +1361,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const can = (permission: string) => membership.includes(permission);
   const term = (key: string, fallback: string) => businessConfiguration?.terminology[key] ?? fallback;
   const moduleEnabled = (module: string) => Boolean(businessConfiguration?.enabledModules.includes(module));
-  const paymentMethodOptions = businessConfiguration?.paymentMethods ?? [];
+  const paymentMethodOptions = orderPaymentMethodOptions(businessConfiguration?.paymentMethods ?? []);
   const paymentMethodLabel = (method: string) => {
     const defaultMethods = ['CASH', 'BANK', 'DIGITAL'];
     const index = defaultMethods.indexOf(method);

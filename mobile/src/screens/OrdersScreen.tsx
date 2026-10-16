@@ -207,8 +207,8 @@ export function OrdersScreen({
                             const normalizedPhone = normalizePhone(customer.phone);
                             if (normalizedPhone) {
                               const stageLabel = resolveMobileWorkflowStage(stages, order)?.label ?? order.status;
-                              const message = `Order ${order.id} is now ${stageLabel}.`;
-                              void ws.sendWhatsAppMessage(normalizedPhone, message, order.id);
+                              const message = `Order ${order.order_number ?? order.id} is now ${stageLabel}.`;
+                              void ws.sendWhatsAppMessage(normalizedPhone, message);
                             }
                           }
                           }}

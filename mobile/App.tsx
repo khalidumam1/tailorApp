@@ -38,7 +38,6 @@ import { BusinessSettingsScreen } from './src/screens/BusinessSettingsScreen';
 import { AnalyticsScreen } from './src/screens/AnalyticsScreen';
 import { ErpScreen } from './src/screens/ErpScreen';
 import { ChatScreen } from './src/screens/ChatScreen';
-import { ConflictResolutionScreen } from './src/screens/ConflictResolutionScreen';
 import { ActionButton } from './src/theme/primitives';
 
 const TAB_PAGES: TabKey[] = ['home', 'orders', 'payments', 'activity', 'more'];
@@ -79,7 +78,6 @@ function AppShell() {
       || (permissions.has('accounting:read') && modules.has('accounting'))) access.add('erp');
     if (access.has('analytics') || access.has('notifications') || access.has('measurements')) access.add('activity');
     if (permissions.has('orders:read')) access.add('chat');
-    if (permissions.has('orders:read') || permissions.has('inventory:read') || permissions.has('cashbook:read') || permissions.has('accounting:read')) access.add('conflicts');
     return access;
   }, [ws.businessConfiguration?.enabledModules, ws.session?.permissions]);
 
@@ -181,9 +179,6 @@ function AppShell() {
       break;
     case 'chat':
       content = <ChatScreen />;
-      break;
-    case 'conflicts':
-      content = <ConflictResolutionScreen />;
       break;
     default:
       content = null;
