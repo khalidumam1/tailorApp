@@ -12,7 +12,8 @@
     "ios": "npm run build:shared && expo run:ios",
     "typecheck": "npm run build:shared && tsc --noEmit",
     "build:shared": "node scripts/build-shared.mjs",
-    "test": "tsx --test src/data/__tests__/*.test.ts"
+    "test": "tsx --test src/data/__tests__/*.test.ts",
+    "test:live": "tsx --test src/data/__tests__/live-api.test.ts"
   },
   "dependencies": {
     "expo": "~57.0.27",
