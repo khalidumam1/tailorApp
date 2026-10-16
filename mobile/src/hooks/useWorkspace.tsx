@@ -23,7 +23,6 @@ import {
 } from 'react';
 import type React from 'react';
 import { Alert } from 'react-native';
-import * as Network from 'expo-network';
 import * as SecureStore from 'expo-secure-store';
 import {
   ApiError,
@@ -32,7 +31,6 @@ import {
   clearSession,
   createSession,
   parseBusinessConfiguration,
-  readSession,
   revokeSession,
   signIn,
   storeSession,
@@ -40,39 +38,11 @@ import {
   type BusinessConfiguration,
   type Session,
 } from '../api';
-import {
-   amountToMinorUnits,
-   createClientId,
-   openLocalDatabase,
-   readBusinessConfigurationCache,
-   writeBusinessConfigurationCache,
-   type LocalCatalogItem,
-   type LocalCustomer,
-   type LocalOrder,
-   type LocalTemplate,
- } from '../local';
 import { normalizePhone } from '../data/phone';
-import {
-  applyLocalOrderWorkflowTransition,
-  createPaymentAttempt,
-  findPendingPaymentAttempt,
-  loadCatalogItems,
-  loadCustomers,
-  loadMeasurements,
-  loadOrders,
-  loadSyncState,
-  loadTemplates,
-  refreshCatalogItems,
-  saveCatalogItemOffline,
-  saveCustomerOffline,
-  saveMeasurementOffline,
-  saveOrderOffline,
-  synchronize,
-  updatePaymentAttempt,
-} from '../sync';
 import { getCopy, languageOptions, type Language } from '../i18n';
 import { resolveBrandAssetUrl } from '../theme/branding';
 import { useAppTheme } from '../theme/palette';
+import { amountToMinorUnits, createClientId, type LocalCatalogItem, type LocalCustomer, type LocalOrder, type LocalTemplate } from '../local';
 
 export type Page =
   | 'home'
@@ -123,7 +93,6 @@ export type BusinessMember = {
   user: { id: string; name: string; email: string; active: boolean };
   role: { id: string; name: string };
 };
-type SyncState = Awaited<ReturnType<typeof loadSyncState>>;
 type SubscriptionPlan = { id: string; name: string; monthlyPrice: string; yearlyPrice: string };
 type SubscriptionBilling = {
   subscription: {
@@ -167,15 +136,7 @@ export type WorkspaceContextValue = {
   palette: ReturnType<typeof useAppTheme>['palette'];
 
   // App lifecycle
-  booting: boolean;
-  localReady: boolean;
-  bootError: string;
-  bootAttempt: number;
-  retryBoot: () => void;
-
-  // Auth
   session: Session | null;
-  online: boolean | null;
 
   // Workspace
   businessConfiguration: BusinessConfiguration | null;
@@ -183,10 +144,7 @@ export type WorkspaceContextValue = {
   orders: LocalOrder[];
   catalogItems: LocalCatalogItem[];
   templates: LocalTemplate[];
-  measurements: Array<{ id: string; customer_id: string; template_name: string; values_json: string; measured_at: string; sync_state: string }>;
-  syncState: SyncState;
-  syncError: string;
-  syncing: boolean;
+  measurements: Array<{ id: string; customer_id: string; template_name: string; values_json: string; measured_at: string }>;
   dashboard: Record<string, unknown>;
   notificationHistory: WhatsAppNotification[];
   subscriptionBilling: SubscriptionBilling | null;
@@ -319,7 +277,7 @@ export type WorkspaceContextValue = {
   openOrderPayment: (order: LocalOrder) => Promise<void>;
 
   recordPayment: () => Promise<void>;
-  runSync: () => Promise<void>;
+  refreshWorkspace: () => Promise<void>;
   refreshNotificationHistory: () => Promise<void>;
   refreshSubscriptionBilling: () => Promise<void>;
   cancelOrderPayment: () => void;
@@ -463,11 +421,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     workspaceGeneration.current === generation && sessionRef.current?.business.id === businessId, []);
 
   const [businessConfiguration, setBusinessConfiguration] = useState<BusinessConfiguration | null>(null);
-  const [booting, setBooting] = useState(true);
-  const [localReady, setLocalReady] = useState(false);
-  const [bootError, setBootError] = useState('');
-  const [bootAttempt, setBootAttempt] = useState(0);
-  const [online, setOnline] = useState<boolean | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
@@ -479,19 +432,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [catalogItems, setCatalogItems] = useState<LocalCatalogItem[]>([]);
   const [templates, setTemplates] = useState<LocalTemplate[]>([]);
   const [measurements, setMeasurements] = useState<Array<{
-    id: string; customer_id: string; template_name: string; values_json: string; measured_at: string; sync_state: string;
+    id: string; customer_id: string; template_name: string; values_json: string; measured_at: string;
   }>>([]);
-  const [syncState, setSyncState] = useState<SyncState>({
-    pending: 0,
-    attention: 0,
-    next_retry_at: null,
-    attention_details: [],
-    last_successful_sync: null,
-    last_error: null,
-  });
-  const [syncError, setSyncError] = useState('');
-  const [syncing, setSyncing] = useState(false);
-  const syncLock = useRef(false);
   const [dashboard, setDashboard] = useState<Record<string, unknown>>({});
   const [notificationHistory, setNotificationHistory] = useState<WhatsAppNotification[]>([]);
   const [subscriptionBilling, setSubscriptionBilling] = useState<SubscriptionBilling | null>(null);
@@ -554,7 +496,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     sessionRef.current = nextSession;
     setSession(nextSession);
     void storeSession(nextSession).catch((storageError: unknown) => {
-      setSyncError(storageError instanceof Error ? storageError.message : copy.error);
+      setError(storageError instanceof Error ? storageError.message : copy.error);
     });
   }, [copy.error]);
 
@@ -581,10 +523,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setCatalogItems([]);
     setTemplates([]);
     setMeasurements([]);
-    setSyncState({ pending: 0, attention: 0, next_retry_at: null, attention_details: [], last_successful_sync: null, last_error: null });
-    setSyncError('');
-    setSyncing(false);
-    syncLock.current = false;
     setDashboard({});
     setNotificationHistory([]);
     setSubscriptionBilling(null);
@@ -653,17 +591,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       return () => { active = false; };
     }
     const loadConfiguration = async () => {
-      const cached = await readBusinessConfigurationCache(session.business.id);
+      const cacheKey = `business-config:${session.business.id}`;
+      const cached = await SecureStore.getItemAsync(cacheKey);
       if (cached) {
         const parsed = parseBusinessConfiguration(JSON.parse(cached) as unknown);
         if (parsed.business.id !== session.business.id) {
           throw new Error('Saved business configuration does not match the signed-in business');
         }
-        const normalized = JSON.stringify(parsed);
-        if (normalized !== cached) await writeBusinessConfigurationCache(session.business.id, normalized);
         if (active) setBusinessConfiguration(parsed);
       }
-      if (online !== true) return;
       const response = await apiRequest<{ data: unknown }>(
         session,
         '/api/v1/business/configuration',
@@ -674,17 +610,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (parsed.business.id !== session.business.id) {
         throw new Error('The server returned configuration for another business');
       }
-      await writeBusinessConfigurationCache(session.business.id, JSON.stringify(parsed));
+      await SecureStore.setItemAsync(cacheKey, JSON.stringify(parsed));
       if (active) setBusinessConfiguration(parsed);
     };
     void loadConfiguration().catch((configurationError: unknown) => {
-      if (active) setSyncError(configurationError instanceof Error ? configurationError.message : copy.error);
+      if (active) setError(configurationError instanceof Error ? configurationError.message : copy.error);
     });
     return () => { active = false; };
-  }, [copy.error, online, session?.accessToken, session?.business.id, updateSession]);
+    }, [copy.error, session?.accessToken, session?.business.id, updateSession]);
 
   const refreshNotificationHistory = useCallback(async () => {
-    if (!session || online !== true || !session.permissions.includes('notifications:read')
+    if (!session || !session.permissions.includes('notifications:read')
       || sessionRef.current?.business.id !== session.business.id) return;
     const generation = workspaceGeneration.current;
     const businessId = session.business.id;
@@ -707,10 +643,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setLoadingNotifications(false);
       }
     }
-  }, [copy.error, online, session, updateSession, isCurrentWorkspace]);
+  }, [copy.error, session, updateSession, isCurrentWorkspace]);
 
   const refreshSubscriptionBilling = useCallback(async () => {
-    if (!session || online !== true || !session.permissions.includes('subscriptions:read')
+    if (!session || !session.permissions.includes('subscriptions:read')
       || sessionRef.current?.business.id !== session.business.id) return;
     const generation = workspaceGeneration.current;
     const businessId = session.business.id;
@@ -745,45 +681,26 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setLoadingSubscription(false);
       }
     }
-  }, [copy.error, online, session, subscriptionPayment.method, subscriptionPlanId, updateSession, isCurrentWorkspace]);
+  }, [copy.error, session, subscriptionPayment.method, subscriptionPlanId, updateSession, isCurrentWorkspace]);
 
-  const refreshLocal = useCallback(async (businessId: string) => {
-    const generation = workspaceGeneration.current;
-    if (sessionRef.current?.business.id !== businessId) return;
-    const [nextCustomers, nextOrders, nextCatalogItems, nextTemplates, nextMeasurements, nextSyncState] = await Promise.all([
-      loadCustomers(businessId),
-      loadOrders(businessId),
-      loadCatalogItems(businessId),
-      loadTemplates(businessId),
-      loadMeasurements(businessId),
-      loadSyncState(businessId),
-    ]);
-    if (!isCurrentWorkspace(generation, businessId)) return;
-    setCustomers(nextCustomers);
-    setOrders(nextOrders);
-    setCatalogItems(nextCatalogItems);
-    setTemplates(nextTemplates);
-    setMeasurements(nextMeasurements);
-    setSyncState(nextSyncState);
-  }, [isCurrentWorkspace]);
-
-  const runSync = useCallback(async () => {
-    if (!session || online !== true || syncLock.current
-      || sessionRef.current?.business.id !== session.business.id) return;
+  const refreshWorkspace = useCallback(async () => {
+    if (!session) return;
     const generation = workspaceGeneration.current;
     const businessId = session.business.id;
-    syncLock.current = true;
-    setSyncing(true);
-    setSyncError('');
     try {
-      await synchronize(
-        session,
-        updateSession,
-        businessConfiguration?.enabledModules.includes('catalog') === true,
-      );
+      const [nextCustomers, nextOrders, nextCatalogItems, nextTemplates, nextMeasurements] = await Promise.all([
+        erpRequest<{ items: LocalCustomer[] }>('/customers'),
+        erpRequest<{ items: LocalOrder[] }>('/orders'),
+        erpRequest<{ items: LocalCatalogItem[] }>('/catalog/items'),
+        erpRequest<{ items: LocalTemplate[] }>('/templates'),
+        erpRequest<{ items: Array<{ id: string; customer_id: string; template_name: string; values_json: string; measured_at: string }> }>('/measurements'),
+      ]);
       if (!isCurrentWorkspace(generation, businessId)) return;
-      await refreshLocal(businessId);
-      if (!isCurrentWorkspace(generation, businessId)) return;
+      setCustomers(nextCustomers.items);
+      setOrders(nextOrders.items);
+      setCatalogItems(nextCatalogItems.items);
+      setTemplates(nextTemplates.items);
+      setMeasurements(nextMeasurements.items);
       if (session.permissions.includes('orders:read')
         && businessConfiguration?.enabledModules.includes('orders') === true) {
         const result = await apiRequest<{ data: Record<string, unknown> }>(
@@ -796,104 +713,33 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       } else if (isCurrentWorkspace(generation, businessId)) {
         setDashboard({});
       }
-    } catch (syncFailure) {
+    } catch (refreshFailure) {
       if (isCurrentWorkspace(generation, businessId)) {
-        setSyncError(syncFailure instanceof Error ? syncFailure.message : copy.syncError);
-      }
-    } finally {
-      if (isCurrentWorkspace(generation, businessId)) {
-        syncLock.current = false;
-        setSyncing(false);
-        await refreshLocal(businessId).catch(() => undefined);
+        setError(refreshFailure instanceof Error ? refreshFailure.message : copy.error);
       }
     }
-  }, [businessConfiguration?.enabledModules, session, online, updateSession, refreshLocal, copy.syncError, isCurrentWorkspace]);
-
-  // Boot
-  useEffect(() => {
-    let mounted = true;
-    setBooting(true);
-    setBootError('');
-    const timeout = setTimeout(() => {
-      if (mounted) {
-        setBootError(copy.startupTimeout);
-        setBooting(false);
-      }
-    }, 15_000);
-    Promise.all([
-      openLocalDatabase(),
-      readSession(),
-      SecureStore.getItemAsync(LANGUAGE_KEY),
-    ]).then(([, savedSession, savedLanguage]) => {
-      if (!mounted) return;
-      setLocalReady(true);
-      sessionRef.current = savedSession;
-      setSession(savedSession);
-      if (savedLanguage === 'en' || savedLanguage === 'ur' || savedLanguage === 'ur-roman') {
-        setLanguageState(savedLanguage);
-      }
-    }).catch((bootError: unknown) => {
-      if (mounted) setBootError(bootError instanceof Error ? bootError.message : copy.error);
-    }).finally(() => {
-      clearTimeout(timeout);
-      if (mounted) setBooting(false);
-    });
-    return () => {
-      mounted = false;
-      clearTimeout(timeout);
-    };
-  }, [bootAttempt, copy.error, copy.startupTimeout]);
-
-  useEffect(() => {
-    let mounted = true;
-    Network.getNetworkStateAsync().then((state) => {
-      if (mounted) setOnline(state.isConnected === true && state.isInternetReachable !== false);
-    }).catch(() => {
-      if (mounted) setOnline(null);
-    });
-    const subscription = Network.addNetworkStateListener((state) => {
-      setOnline(state.isConnected === true && state.isInternetReachable !== false);
-    });
-    return () => {
-      mounted = false;
-      subscription.remove();
-    };
-  }, []);
+  }, [businessConfiguration?.enabledModules, session, updateSession, copy.error, isCurrentWorkspace]);
 
   useEffect(() => {
     if (!session) return;
     const generation = workspaceGeneration.current;
     const businessId = session.business.id;
-    void refreshLocal(businessId).catch((loadError: unknown) => {
+    void refreshWorkspace().catch((loadError: unknown) => {
       if (isCurrentWorkspace(generation, businessId)) {
-        setSyncError(loadError instanceof Error ? loadError.message : copy.error);
+        setError(loadError instanceof Error ? loadError.message : copy.error);
       }
     });
-  }, [session?.business.id, refreshLocal, copy.error, isCurrentWorkspace]);
-
-  useEffect(() => {
-    if (!session || online !== true) return;
-    void runSync();
-  }, [session?.business.id, online, runSync]);
-
-  useEffect(() => {
-    if (!session || online !== true || syncState.pending === 0) return undefined;
-    const dueAt = syncState.next_retry_at ?? Date.now();
-    const delay = Math.max(1_000, Math.min(60_000, dueAt - Date.now()));
-    const timeout = setTimeout(() => { void runSync(); }, delay);
-    return () => clearTimeout(timeout);
-  }, [online, runSync, session?.business.id, syncState.next_retry_at, syncState.pending]);
+  }, [session?.business.id, refreshWorkspace, copy.error, isCurrentWorkspace]);
 
   // Catalog refresh on page entry
   useEffect(() => {
-    if (!session || online !== true
-      || !businessConfiguration?.enabledModules.includes('catalog')) return;
-    void refreshCatalogItems(session, session.business.id, updateSession)
-      .then(setCatalogItems)
+    if (!session || !businessConfiguration?.enabledModules.includes('catalog')) return;
+    void erpRequest<{ items: LocalCatalogItem[] }>('/catalog/items')
+      .then((result) => setCatalogItems(result.items))
       .catch((catalogError: unknown) => {
         setError(catalogError instanceof Error ? catalogError.message : copy.error);
       });
-  }, [businessConfiguration?.enabledModules, copy.error, online, session, updateSession]);
+  }, [businessConfiguration?.enabledModules, copy.error, session, updateSession]);
 
   // Auth actions
   const handleSignIn = useCallback(async (businessId?: string) => {
@@ -951,13 +797,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setSelectingShopId(null);
       setAuthBusy(false);
     }
-  }, [copy.error, pendingCredentials, resetWorkspaceData]);
+  }, [copy.error, pendingCredentials, resetWorkspaceData, session]);
 
   const handleSignOut = useCallback(async () => {
     const endingSession = session;
-    const revocation = endingSession && online === true
-      ? revokeSession(endingSession.refreshToken)
-      : null;
+    const revocation = endingSession ? revokeSession(endingSession.refreshToken) : null;
     sessionRef.current = null;
     resetWorkspaceData();
     setSession(null);
@@ -972,7 +816,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         Alert.alert(copy.signOut, copy.syncError);
       }
     }
-  }, [copy.signOut, copy.syncError, online, resetWorkspaceData, session]);
+  }, [copy.signOut, copy.syncError, resetWorkspaceData, session]);
 
   const changeLanguage = useCallback(async (next: Language) => {
     await SecureStore.setItemAsync(LANGUAGE_KEY, next);
@@ -1021,26 +865,27 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setSaving(true);
     setError('');
     try {
-      await saveCustomerOffline({
-        businessId: session.business.id,
-        name: customerName,
-        phone: customerPhone,
-        notes: customerNotes,
-        customFields: configuredFieldValues(customerFields, customerCustomFields),
+      await erpRequest('/customers', {
+        method: 'POST',
+        body: {
+          name: customerName,
+          phone: customerPhone,
+          notes: customerNotes,
+          customFields: configuredFieldValues(customerFields, customerCustomFields),
+        },
       });
-      await refreshLocal(session.business.id);
+      await refreshWorkspace();
       setCustomerName('');
       setCustomerPhone('');
       setCustomerNotes('');
       setCustomerCustomFields({});
       setCustomerForm(false);
-      if (online === true) void runSync();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : copy.error);
     } finally {
       setSaving(false);
     }
-  }, [businessConfiguration, copy.error, customerCustomFields, customerName, customerNotes, customerPhone, online, refreshLocal, runSync, session]);
+  }, [businessConfiguration, copy.error, customerCustomFields, customerName, customerNotes, customerPhone, refreshWorkspace, session]);
 
   const saveOrder = useCallback(async () => {
     if (!session) return;
@@ -1084,20 +929,22 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setError('');
     try {
       amountToMinorUnits(unitPrice);
-      await saveOrderOffline({
-        businessId: session.business.id,
-        customer,
-        itemName,
-        itemTypeKey: currentItemType.key,
-        orderCustomFields: configuredFieldValues(orderFields, orderCustomFields),
-        itemCustomFields: configuredFieldValues(orderItemFieldDefinitions, itemFieldValues),
-        initialStageKey: initialStage.key,
-        quantity: Number(quantity),
-        unitPrice,
-        promisedAt: dueDate,
-        notes: orderNotes,
+      await erpRequest('/orders', {
+        method: 'POST',
+        body: {
+          customerId: customer.id,
+          itemTypeKey: currentItemType.key,
+          itemName: itemName.trim(),
+          quantity: Number(quantity),
+          unitPrice,
+          promisedAt: dueDate,
+          notes: orderNotes,
+          orderCustomFields: configuredFieldValues(orderFields, orderCustomFields),
+          itemCustomFields: configuredFieldValues(orderItemFieldDefinitions, itemFieldValues),
+          initialStageKey: initialStage.key,
+        },
       });
-      await refreshLocal(session.business.id);
+      await refreshWorkspace();
       setOrderForm(false);
       setItemName('');
       setOrderCustomFields({});
@@ -1105,13 +952,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setQuantity('1');
       setUnitPrice('');
       setOrderNotes('');
-      if (online === true) void runSync();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : copy.error);
     } finally {
       setSaving(false);
     }
-  }, [businessConfiguration, copy.chooseCustomer, copy.error, customers, dueDate, itemName, online, orderCustomFields, orderItemCustomFields, orderItemTypeKey, orderNotes, quantity, refreshLocal, runSync, selectedCustomer, session, unitPrice]);
+  }, [businessConfiguration, copy.chooseCustomer, copy.error, customers, dueDate, itemName, orderCustomFields, orderItemCustomFields, orderItemTypeKey, orderNotes, quantity, refreshWorkspace, selectedCustomer, session, unitPrice]);
 
   const saveMeasurements = useCallback(async () => {
     if (!session) return;
@@ -1124,24 +970,25 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setSaving(true);
     setError('');
     try {
-      await saveMeasurementOffline({
-        businessId: session.business.id,
-        customer,
-        template,
-        values: measurementValues,
-        notes: measurementNotes,
+      await erpRequest('/measurements', {
+        method: 'POST',
+        body: {
+          customerId: customer.id,
+          templateId: template.id,
+          values: measurementValues,
+          notes: measurementNotes,
+        },
       });
-      await refreshLocal(session.business.id);
+      await refreshWorkspace();
       setMeasurementForm(false);
       setMeasurementValues({});
       setMeasurementNotes('');
-      if (online === true) void runSync();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : copy.error);
     } finally {
       setSaving(false);
     }
-  }, [copy.chooseCustomer, copy.error, customers, measurementCustomer, measurementNotes, measurementTemplate, measurementValues, online, refreshLocal, runSync, session, templates]);
+  }, [copy.chooseCustomer, copy.error, customers, measurementCustomer, measurementNotes, measurementTemplate, measurementValues, refreshWorkspace, session, templates]);
 
   const saveCatalogItem = useCallback(async () => {
     if (!session || !businessConfiguration) return;
@@ -1162,31 +1009,32 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setSaving(true);
     setError('');
     try {
-      await saveCatalogItemOffline({
-        businessId: session.business.id,
-        typeKey,
-        name: catalogName,
-        description: catalogDescription,
-        sku: catalogSku,
-        unit: catalogUnit,
-        unitPrice: catalogUnitPrice,
-        sortOrder: catalogItems.length,
-        customFields: configuredFieldValues(visibleCatalogFields, catalogCustomFields),
+      await erpRequest('/catalog/items', {
+        method: 'POST',
+        body: {
+          typeKey,
+          name: catalogName,
+          description: catalogDescription,
+          sku: catalogSku,
+          unit: catalogUnit,
+          unitPrice: catalogUnitPrice,
+          sortOrder: catalogItems.length,
+          customFields: configuredFieldValues(visibleCatalogFields, catalogCustomFields),
+        },
       });
-      await refreshLocal(session.business.id);
+      await refreshWorkspace();
       setCatalogName('');
       setCatalogDescription('');
       setCatalogSku('');
       setCatalogUnitPrice('');
       setCatalogCustomFields({});
       setCatalogForm(false);
-      if (online === true) void runSync();
     } catch (catalogError) {
       setError(catalogError instanceof Error ? catalogError.message : copy.error);
     } finally {
       setSaving(false);
     }
-  }, [businessConfiguration, catalogCustomFields, catalogDescription, catalogItems.length, catalogName, catalogSku, catalogTypeKey, catalogUnit, catalogUnitPrice, copy.error, online, refreshLocal, runSync, session]);
+  }, [businessConfiguration, catalogCustomFields, catalogDescription, catalogItems.length, catalogName, catalogSku, catalogTypeKey, catalogUnit, catalogUnitPrice, copy.error, refreshWorkspace, session]);
 
   const toggleCatalogItem = useCallback(async (item: LocalCatalogItem) => {
     if (!session) return;
@@ -1198,8 +1046,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         method: 'PATCH',
         body: { version: item.version, active: !item.active },
       }, updateSession);
-      const refreshed = await refreshCatalogItems(session, session.business.id, updateSession);
-      setCatalogItems(refreshed);
+      const refreshed = await erpRequest<{ items: LocalCatalogItem[] }>('/catalog/items');
+      setCatalogItems(refreshed.items);
     } catch (catalogError) {
       setError(catalogError instanceof Error ? catalogError.message : copy.error);
     } finally {
@@ -1209,10 +1057,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [copy.error, session, updateSession]);
 
   const transitionOrder = useCallback(async (order: LocalOrder, targetStageKey?: string) => {
-    if (!session || online !== true || order.sync_state !== 'synced') {
-      setError(copy.paymentOnline);
-      return;
-    }
+    if (!session) return;
     const stages = businessConfiguration?.workflow.stages ?? [];
     const fromStage = resolveMobileWorkflowStage(stages, order);
     const transition = businessConfiguration?.workflow.transitions.find((item) =>
@@ -1236,51 +1081,34 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         method: 'POST',
         body: { toStageKey: nextStage.key, version: order.version },
       }, updateSession);
-      await applyLocalOrderWorkflowTransition({
-        businessId: session.business.id,
-        orderId: order.id,
-        workflowStageKey: response.data?.workflowStageKey ?? nextStage.key,
-        status: response.data?.status,
-        version: typeof response.data?.version === 'number' ? response.data.version : order.version + 1,
-        updatedAt: response.data?.updatedAt,
-      });
-       await refreshLocal(session.business.id);
-       await runSync();
-       
-       // Send WhatsApp notification for order status update
-       try {
-         const businessPhone = businessConfiguration?.contactPhone;
-         if (businessPhone) {
-           // Find the customer to get their phone number
-           const customer = customers.find(c => c.id === order.customer_id);
-           if (customer && customer.phone) {
-             // Normalize the phone number
-             const normalizedPhone = normalizePhone(customer.phone);
-             if (normalizedPhone) {
-               // Create a simple message based on the order status
-               const stageLabel = resolveMobileWorkflowStage(stages, order)?.label ?? order.status;
-               const message = `Order ${order.id} is now ${stageLabel}.`;
-               
-               await sendWhatsAppMessage(normalizedPhone, message, order.id);
-             }
-           }
-         }
-       } catch (whatsappError) {
-         // Don't fail the order transition if WhatsApp fails
-         console.warn('Failed to send WhatsApp notification:', whatsappError);
-       }
+      await refreshWorkspace();
+      
+      // Send WhatsApp notification for order status update
+      try {
+        const businessPhone = businessConfiguration?.contactPhone;
+        if (businessPhone) {
+          const customer = customers.find(c => c.id === order.customer_id);
+          if (customer && customer.phone) {
+            const normalizedPhone = normalizePhone(customer.phone);
+            if (normalizedPhone) {
+              const stageLabel = resolveMobileWorkflowStage(stages, order)?.label ?? order.status;
+              const message = `Order ${order.id} is now ${stageLabel}.`;
+              await sendWhatsAppMessage(normalizedPhone, message, order.id);
+            }
+          }
+        }
+      } catch (whatsappError) {
+        console.warn('Failed to send WhatsApp notification:', whatsappError);
+      }
     } catch (transitionError) {
       setError(transitionError instanceof Error ? transitionError.message : copy.error);
     } finally {
       setTransitioningOrderKey(null);
     }
-   }, [businessConfiguration, copy.error, copy.paymentOnline, online, refreshLocal, runSync, session, updateSession]);
+   }, [businessConfiguration, copy.error, refreshWorkspace, session, updateSession]);
 
    const sendWhatsAppMessage = useCallback(async (recipientPhone: string, message: string, orderId?: string | null) => {
-     if (!session || online !== true) {
-       setError(copy.paymentOnline);
-       return;
-     }
+     if (!session) return;
      const businessPhone = businessConfiguration?.contactPhone;
      if (!businessPhone) {
        setError(copy.noWhatsappNumber);
@@ -1303,7 +1131,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
        
        const sent = response.data;
        if (sent) {
-         // Add the sent notification to the history
          setNotificationHistory((prev) => [{
            id: sent.id,
            customerId: null,
@@ -1325,90 +1152,66 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
      } catch (whatsappError) {
        setError(whatsappError instanceof Error ? whatsappError.message : copy.error);
      } finally {
-       // No specific loading state to clear, but we could add one if needed
+       // No specific loading state to clear
      }
-   }, [copy.error, online, session, updateSession, businessConfiguration?.contactPhone]);
+    }, [copy.error, session, updateSession, businessConfiguration?.contactPhone]);
 
    const openOrderPayment = useCallback(async (order: LocalOrder) => {
-    if (!session || online !== true || order.sync_state !== 'synced') {
-      setError(copy.paymentOnline);
-      return;
-    }
-    setOpeningPaymentOrderId(order.id);
-    setError('');
-    try {
-      const paymentMethodOptions = businessConfiguration?.paymentMethods ?? [];
-      const existing = await findPendingPaymentAttempt(session.business.id, order.id);
-      setPaymentOrder(order);
-      setPaymentAttempt(existing ?? null);
-      setPaymentAmount(existing?.amount ?? '');
-      setPaymentMethod(existing?.method ?? paymentMethodOptions[0] ?? '');
-    } finally {
-      setOpeningPaymentOrderId(null);
-    }
-  }, [businessConfiguration, copy.paymentOnline, online, session]);
+     if (!session) return;
+     setOpeningPaymentOrderId(order.id);
+     setError('');
+     try {
+       const paymentMethodOptions = businessConfiguration?.paymentMethods ?? [];
+       setPaymentOrder(order);
+       setPaymentAttempt(null);
+       setPaymentAmount('');
+       setPaymentMethod(paymentMethodOptions[0] ?? '');
+     } finally {
+       setOpeningPaymentOrderId(null);
+     }
+   }, [businessConfiguration, session]);
 
-  const recordPayment = useCallback(async () => {
-    if (!session || !paymentOrder || online !== true || paymentOrder.sync_state !== 'synced') {
-      setError(copy.paymentOnline);
-      return;
-    }
-    const paymentMethodOptions = businessConfiguration?.paymentMethods ?? [];
-    let amount: string;
-    try {
-      if (paymentAttempt && (paymentAmount !== paymentAttempt.amount || paymentMethod !== paymentAttempt.method)) {
-        throw new Error(copy.paymentUnconfirmed);
-      }
-      const selectedMethod = paymentAttempt?.method ?? paymentMethod;
-      if (!selectedMethod || (!paymentAttempt && !paymentMethodOptions.includes(selectedMethod))) {
-        throw new Error('Select a configured payment method before recording payment.');
-      }
-      amountToMinorUnits(paymentAmount);
-      amount = paymentAmount;
-      if (amountToMinorUnits(amount) <= 0n) throw new Error(copy.error);
-    } catch (paymentError) {
-      setError(paymentError instanceof Error ? paymentError.message : copy.error);
-      return;
-    }
-    setSaving(true);
-    const key = paymentAttempt?.idempotency_key ?? createClientId();
-    const method = paymentAttempt?.method ?? paymentMethod;
-    try {
-      if (!paymentAttempt) {
-        await createPaymentAttempt({
-          idempotencyKey: key,
-          businessId: session.business.id,
-          orderId: paymentOrder.id,
-          amount,
-          method,
-        });
-        setPaymentAttempt({ idempotency_key: key, amount, method });
-      }
-      await apiRequest(session, `/api/v1/payments/orders/${paymentOrder.id}`, {
-        method: 'POST',
-        headers: { 'Idempotency-Key': key },
-        body: { amount, method },
-      }, updateSession);
-      await updatePaymentAttempt(key, 'confirmed', null);
-      Alert.alert(copy.orders, copy.saved);
-      setPaymentOrder(null);
-      setPaymentAttempt(null);
-      setPaymentAmount('');
-      await runSync();
-    } catch (paymentError) {
-      const message = paymentError instanceof Error ? paymentError.message : copy.error;
-      if (paymentError instanceof ApiError && paymentError.status >= 400
-        && paymentError.status < 500 && paymentError.status !== 401) {
-        await updatePaymentAttempt(key, 'rejected', message);
-        setPaymentAttempt(null);
-      } else {
-        await updatePaymentAttempt(key, 'pending', message);
-      }
-      setError(message);
-    } finally {
-      setSaving(false);
-    }
-  }, [businessConfiguration, copy.error, copy.orders, copy.paymentOnline, copy.paymentUnconfirmed, copy.saved, online, paymentAmount, paymentAttempt, paymentMethod, paymentOrder, runSync, session, updateSession]);
+   const recordPayment = useCallback(async () => {
+     if (!session || !paymentOrder) {
+       setError(copy.error);
+       return;
+     }
+     const paymentMethodOptions = businessConfiguration?.paymentMethods ?? [];
+     let amount: string;
+     try {
+       const selectedMethod = paymentMethod;
+       if (!selectedMethod || !paymentMethodOptions.includes(selectedMethod)) {
+         throw new Error('Select a configured payment method before recording payment.');
+       }
+       amountToMinorUnits(paymentAmount);
+       amount = paymentAmount;
+       if (amountToMinorUnits(amount) <= 0n) throw new Error(copy.error);
+     } catch (paymentError) {
+       setError(paymentError instanceof Error ? paymentError.message : copy.error);
+       return;
+     }
+     setSaving(true);
+     const key = createClientId();
+     const method = paymentMethod;
+     try {
+       await apiRequest(session, `/api/v1/payments/orders/${paymentOrder.id}`, {
+         method: 'POST',
+         headers: { 'Idempotency-Key': key },
+         body: { amount, method },
+       }, updateSession);
+       Alert.alert(copy.orders, copy.saved);
+       setPaymentOrder(null);
+       setPaymentAttempt(null);
+       setPaymentAmount('');
+       setPaymentMethod('');
+       await refreshWorkspace();
+     } catch (paymentError) {
+       const message = paymentError instanceof Error ? paymentError.message : copy.error;
+       setError(message);
+     } finally {
+       setSaving(false);
+     }
+   }, [businessConfiguration, copy.error, copy.orders, copy.saved, paymentAmount, paymentMethod, paymentOrder, refreshWorkspace, session, updateSession]);
 
   // Page-conditional data loaders (the original App.tsx called these inside
   // useEffects that depended on `page`). We expose them so screens can call
@@ -1433,7 +1236,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // the configuration version, so the payload always carries the version that
   // was loaded; on success the fresh configuration replaces the cached one.
   const saveBusinessConfiguration = useCallback(async (patch: Record<string, unknown>): Promise<boolean> => {
-    if (!session || online !== true || !businessConfiguration) {
+    if (!session || !businessConfiguration) {
       setError(copy.settingsOnline);
       return false;
     }
@@ -1446,7 +1249,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       }, updateSession);
       const response = await apiRequest<{ data: unknown }>(session, '/api/v1/business/configuration', {}, updateSession);
       const parsed = parseBusinessConfiguration(response.data);
-      await writeBusinessConfigurationCache(session.business.id, JSON.stringify(parsed));
       setBusinessConfiguration(parsed);
       return true;
     } catch (saveFailure) {
@@ -1455,28 +1257,28 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     } finally {
       setSaving(false);
     }
-  }, [businessConfiguration, copy.error, copy.settingsOnline, online, session, updateSession]);
+  }, [businessConfiguration, copy.error, copy.settingsOnline, session, updateSession]);
 
   const fetchRoles = useCallback(async (): Promise<BusinessRole[]> => {
-    if (!session || online !== true) throw new Error(copy.settingsOnline);
+    if (!session) throw new Error(copy.settingsOnline);
     const response = await apiRequest<{ data?: { items?: BusinessRole[] } }>(session, '/api/v1/business/roles', {}, updateSession);
     return (response.data?.items ?? []).filter((role) => role.name !== 'Owner');
-  }, [copy.settingsOnline, online, session, updateSession]);
+  }, [copy.settingsOnline, session, updateSession]);
 
   const fetchBusinessPermissions = useCallback(async (): Promise<BusinessPermission[]> => {
-    if (!session || online !== true) throw new Error(copy.settingsOnline);
+    if (!session) throw new Error(copy.settingsOnline);
     const response = await apiRequest<{ data?: { items?: BusinessPermission[] } }>(session, '/api/v1/business/permissions', {}, updateSession);
     return response.data?.items ?? [];
-  }, [copy.settingsOnline, online, session, updateSession]);
+  }, [copy.settingsOnline, session, updateSession]);
 
   const fetchBusinessStaff = useCallback(async (): Promise<BusinessMember[]> => {
-    if (!session || online !== true) throw new Error(copy.settingsOnline);
+    if (!session) throw new Error(copy.settingsOnline);
     const response = await apiRequest<{ data?: { items?: BusinessMember[] } }>(session, '/api/v1/business/staff', {}, updateSession);
     return response.data?.items ?? [];
-  }, [copy.settingsOnline, online, session, updateSession]);
+  }, [copy.settingsOnline, session, updateSession]);
 
   const createBusinessRole = useCallback(async (input: { name: string; permissions: string[] }): Promise<BusinessRole> => {
-    if (!session || online !== true) throw new Error(copy.settingsOnline);
+    if (!session) throw new Error(copy.settingsOnline);
     setSaving(true);
     setError('');
     try {
@@ -1489,10 +1291,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     } finally {
       setSaving(false);
     }
-  }, [copy.error, copy.settingsOnline, online, session, updateSession]);
+  }, [copy.error, copy.settingsOnline, session, updateSession]);
 
   const inviteStaffMember = useCallback(async (input: { name: string; email: string; initialPassword: string; roleId: string }): Promise<BusinessMember> => {
-    if (!session || online !== true) throw new Error(copy.settingsOnline);
+    if (!session) throw new Error(copy.settingsOnline);
     setSaving(true);
     setError('');
     try {
@@ -1509,7 +1311,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     } finally {
       setSaving(false);
     }
-  }, [copy.error, copy.settingsOnline, online, session, updateSession]);
+  }, [copy.error, copy.settingsOnline, session, updateSession]);
 
   // Helpers
   const membership = session?.permissions ?? [];
@@ -1547,8 +1349,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const stageLabel = (key: string) => businessConfiguration?.workflow.stages
     .find((stage) => stage.key === key)?.label ?? key.replaceAll('_', ' ');
 
-  const retryBoot = useCallback(() => setBootAttempt((attempt) => attempt + 1), []);
-
   const value: WorkspaceContextValue = useMemo(() => ({
     copy,
     rtl,
@@ -1558,22 +1358,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     branding,
     themeMode,
     palette,
-    booting,
-    localReady,
-    bootError,
-    bootAttempt,
-    retryBoot,
     session,
-    online,
     businessConfiguration,
     customers,
     orders,
     catalogItems,
     templates,
     measurements,
-    syncState,
-    syncError,
-    syncing,
     dashboard,
     notificationHistory,
     subscriptionBilling,
@@ -1682,12 +1473,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
      saveOrder,
      saveMeasurements,
      saveCatalogItem,
-     toggleCatalogItem,
-     transitionOrder,
-     sendWhatsAppMessage,
-     openOrderPayment,
-     recordPayment,
-    runSync,
+    toggleCatalogItem,
+    transitionOrder,
+    sendWhatsAppMessage,
+    openOrderPayment,
+    recordPayment,
+    refreshWorkspace,
     refreshNotificationHistory,
     refreshSubscriptionBilling,
     cancelOrderPayment,
@@ -1704,10 +1495,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     authBusy,
     shopChoices,
   }), [
-    copy, rtl, language, changeLanguage, languageOptions, branding, themeMode, palette,
-    booting, localReady, bootError, bootAttempt, retryBoot, session, online,
+    copy, rtl, language, changeLanguage, languageOptions,     branding, themeMode, palette,
+    session,
     businessConfiguration, customers, orders, catalogItems, templates, measurements,
-    syncState, syncError, syncing, dashboard, notificationHistory, subscriptionBilling,
+    dashboard, notificationHistory, subscriptionBilling,
     error, search, customerForm, customerName, customerPhone, customerNotes, customerCustomFields,
     catalogForm, catalogName, catalogDescription, catalogTypeKey, catalogSku, catalogUnit,
     catalogUnitPrice, catalogCustomFields, orderForm, selectedCustomer, itemName,
@@ -1721,9 +1512,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     selectedTemplate, currentItemType, orderItemFieldDefinitions, orderItemFields, orderFields,
     customerFields, catalogFields, stageLabel, erpRequest, handleSignIn, selectShop, handleSignOut,
     changeLanguage, submitSubscriptionPayment, saveCustomer, saveOrder, saveMeasurements,
-    saveCatalogItem, toggleCatalogItem, transitionOrder, sendWhatsAppMessage, openOrderPayment, recordPayment,
-
-    runSync, refreshNotificationHistory, refreshSubscriptionBilling, email, password,
+    saveCatalogItem, toggleCatalogItem, transitionOrder, sendWhatsAppMessage, openOrderPayment, recordPayment, refreshWorkspace,
+    refreshNotificationHistory, refreshSubscriptionBilling, email, password,
     authBusy, shopChoices, cancelOrderPayment, saveBusinessConfiguration, fetchRoles,
     fetchBusinessPermissions, fetchBusinessStaff, createBusinessRole, inviteStaffMember,
   ]);

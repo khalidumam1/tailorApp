@@ -1,7 +1,6 @@
 /**
  * Common UI primitives: brand mark, theme toggle, field, action button.
- * These are extracted from the original App.tsx and now live in their own
- * file so any screen can compose them.
+ * Simple, clean components following standard mobile patterns.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
@@ -61,7 +60,7 @@ export function ConfigurableBrandMark({
   const markStyle = size === 'lg' ? styles.authBrandMark : styles.brandMark;
   const letterStyle = size === 'lg' ? styles.authBrandLetter : styles.brandLetter;
   const dim = size === 'lg' ? 64 : 36;
-  const fontSize = size === 'lg' ? 30 : 17;
+  const fontSize = size === 'lg' ? 28 : 17;
 
   return (
     <View style={[markStyle, { backgroundColor: palette.primary }]}>
@@ -98,7 +97,6 @@ export function ApplicationMark({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
     />
   );
 }
-
 
 export function ThemeToggle({ copy, compact = false }: { copy: ReturnType<typeof import('../i18n').getCopy>; compact?: boolean }) {
   const { themeMode, toggleTheme, palette } = useAppTheme();
@@ -256,7 +254,7 @@ export function EmptyState({ title, detail, action, onAction }: { title: string;
       <Text style={styles.listTitle}>{title}</Text>
       {detail ? <Text style={styles.emptyText}>{detail}</Text> : null}
       {action && onAction ? (
-        <View style={{ marginTop: 12, alignSelf: 'stretch' }}>
+        <View style={{ marginTop: 16, alignSelf: 'stretch' }}>
           <ActionButton title={action} onPress={onAction} secondary />
         </View>
       ) : null}

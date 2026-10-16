@@ -111,6 +111,21 @@ const translations = {
     settingsOnline: 'Connect to the internet to save settings.', sendReceiptHint: 'Opens WhatsApp with the receipt ready to send.',
     noPaymentsToSend: 'No payments to send yet.', paymentsOnline: 'Connect to the internet to load the payment ledger.',
     nothingToSave: 'Nothing to save.', savedItems: 'Saved items', catalog: 'Catalog', byQuantity: 'By quantity on recent orders', catalogHint: 'Saved items and types',
+
+    // ---- Chat assistant ----
+    chatAssistant: 'Chat assistant', chatSubtitle: 'Ask about orders, customers, payments and collections.',
+    chatWelcome: 'How can I help with your shop today?',
+    chatOffline: 'Connect to use the assistant', chatOfflineDetail: 'The assistant needs a live connection to answer questions about your shop.',
+    chatEmpty: 'No messages yet', chatEmptyDetail: 'Send a message to start the conversation.',
+    chatTyping: 'Assistant is typing…', chatInputLabel: 'Type a message', chatPlaceholder: 'Ask about orders, customers, payments…',
+    send: 'Send',
+
+    // ---- Sync attention / conflict resolution ----
+    syncAttention: 'Needs attention', syncAttentionSubtitle: 'Sync conflicts and rejected changes await your review.',
+    syncPending: 'Pending syncs', syncConflicts: 'Conflicts',
+    syncOffline: 'Connect to resolve conflicts', syncOfflineDetail: 'A live connection is needed to retry or dismiss sync conflicts.',
+    syncNoConflicts: 'All caught up', syncNoConflictsDetail: 'There are no conflicts or rejected changes to resolve.',
+    syncRetry: 'Retry sync', syncConflict: 'Conflict', syncUseServer: 'Use server version', syncKeepLocal: 'Keep local changes', syncRetryAll: 'Retry all syncs',
   },
   ur: {
     app: 'درزی ڈیسک', tagline: 'آپ کی ورکشاپ، منظم انداز میں',
@@ -218,6 +233,21 @@ const translations = {
     settingsOnline: 'سیٹنگز محفوظ کرنے کے لیے انٹرنیٹ سے جڑیں۔', sendReceiptHint: 'WhatsApp کھلے گا جس میں رسید تیار ہوگی۔',
     noPaymentsToSend: 'بھیجنے کے لیے ابھی کوئی ادائیگی نہیں۔', paymentsOnline: 'ادائیگی کا ریکارڈ دیکھنے کے لیے انٹرنیٹ سے جڑیں۔',
     nothingToSave: 'محفوظ کرنے کے لیے کچھ نہیں۔', savedItems: 'محفوظ آئٹمز', catalog: 'کیٹلاگ', byQuantity: 'حالیہ آرڈرز میں مقدار کے لحاظ سے', catalogHint: 'محفوظ آئٹمز اور اقسام',
+
+    // ---- Chat assistant ----
+    chatAssistant: 'چٹ اسسٹنٹ', chatSubtitle: 'آرڈرز، گاہک، ادائیگیوں اور وصولیوں کے بارے میں پوچھیں.',
+    chatWelcome: 'میں آپ کی دکان کے بارے میں کیسے مدد کر سکتا ہوں؟',
+    chatOffline: 'مدد کے لیے انٹرنیٹ سے جڑیں', chatOfflineDetail: 'اسسٹنٹ کو آپ کی دکان کے بارے میں سوالات کے جوابات دینے کے لیے فعال کنیکشن درکار ہے۔',
+    chatEmpty: 'ابھی کوئی پیغام نہیں', chatEmptyDetail: 'گفتگو شروع کرنے کے لیے پیغام بھیجیں۔',
+    chatTyping: 'اسسٹنٹ تحریر کر رہا ہے…', chatInputLabel: 'پیغام لکھیں', chatPlaceholder: 'آرڈرز، گاہک، ادائیگیوں کے بارے میں پوچھیں…',
+    send: 'بھیجیں',
+
+    // ---- Sync attention / conflict resolution ----
+    syncAttention: 'توجہ درکار', syncAttentionSubtitle: 'synced کے تکرار اور مسترد تبدیلیوں کا جائزہ درکار ہے۔',
+    syncPending: 'Muwakil sync', syncConflicts: 'تکرات',
+    syncOffline: 'تکرات حل کرنے کے لیے انٹرنیٹ سے جڑیں', syncOfflineDetail: 'synced کو دوبارہ کرنے یا مسترد کرنے کے لیےفعال کنیکشن درکار ہے۔',
+    syncNoConflicts: 'سب ٹھیک ہے', syncNoConflictsDetail: 'حل کرنے کے لیے کوئی تکرار یا مسترد تبدیلی موجود نہیں ہے۔',
+    syncRetry: 'synced دوبارہ کریں', syncConflict: 'تکرار', syncUseServer: 'serer ورژن استعمال کریں', syncKeepLocal: 'مقامی تبدیلیاں برقرار رکھیں', syncRetryAll: 'تمام synced دوبارہ کریں',
   },
   'ur-roman': {
     app: 'Darzi Desk', tagline: 'Aap ki workshop, munazzam andaaz mein',
@@ -325,6 +355,21 @@ const translations = {
     settingsOnline: 'Settings save karne ke liye internet se judein.', sendReceiptHint: 'WhatsApp khulega aur receipt tayyar hogi.',
     noPaymentsToSend: 'Bhejne ke liye abhi koi payment nahi.', paymentsOnline: 'Payment record dekhne ke liye internet se judein.',
     nothingToSave: 'Save karne ke liye kuch nahi.', savedItems: 'Saved items', catalog: 'Catalog', byQuantity: 'By quantity on recent orders', catalogHint: 'Saved items and types',
+
+    // ---- Chat assistant ----
+    chatAssistant: 'Chat assistant', chatSubtitle: 'Orders, grahak, payment aur wasooli ke baare mein poochein.',
+    chatWelcome: 'Main aapki dukaan ke baare mein kaise madad kar sakta hoon?',
+    chatOffline: 'Madad ke liye internet se jurein', chatOfflineDetail: 'Assistant ko aapki dukaan ke baare mein sawalon ke jawab dene ke liye active connection darkar hai.',
+    chatEmpty: 'Abhi koi message nahi', chatEmptyDetail: 'Baat shuru karne ke liye message bhejein.',
+    chatTyping: 'Assistant likh raha hai…', chatInputLabel: 'Message likhein', chatPlaceholder: 'Orders, grahak, payments ke baare mein poochein…',
+    send: 'Bhejein',
+
+    // ---- Sync attention / conflict resolution ----
+    syncAttention: 'Tawajjo darkar', syncAttentionSubtitle: 'synced ke takrar aur mustard tabdeeliyon ka jaiza darkar hai.',
+    syncPending: 'Muwakil sync', syncConflicts: 'Takrarat',
+    syncOffline: 'Takrar hal karne ke liye internet se jurein', syncOfflineDetail: 'synced ko dobara karne ya mustard karne ke liye active connection darkar hai.',
+    syncNoConflicts: 'Sab theek hai', syncNoConflictsDetail: 'Hal karne ke liye koi takrar ya mustard tabdeeli maujood nahi hai.',
+    syncRetry: 'synced dobara karein', syncConflict: 'Takrar', syncUseServer: 'server version istemal karein', syncKeepLocal: 'Maqami tabdeeliyan barqarar rakhein', syncRetryAll: 'Tamam synced dobara karein',
   },
 } as const;
 

@@ -1,7 +1,5 @@
 /**
- * Dashboard — Payrio-style hero card, quick action row, recent activity.
- * Mirrors the web's `dashboard` view but renders as a single-column mobile
- * screen with a hero balance card and a list of recent activity.
+ * Dashboard — clean, simple layout with hero card, quick actions, metrics, and recent activity.
  */
 import { useEffect } from 'react';
 import { Pressable, Text, View } from 'react-native';
@@ -22,11 +20,6 @@ export function DashboardScreen({ onNavigate }: { onNavigate: Navigate }) {
   const ws = useWorkspace();
   const copy = ws.copy;
 
-  // Refresh the dashboard payload (and trigger a sync) on entry.
-  useEffect(() => {
-    void ws.runSync();
-  }, [ws.runSync]);
-
   const stages = ws.businessConfiguration?.workflow.stages ?? [];
   const stageMapObj: Record<string, string> = {};
   for (const stage of stages) stageMapObj[stage.key] = stage.label;
@@ -40,59 +33,30 @@ export function DashboardScreen({ onNavigate }: { onNavigate: Navigate }) {
   const dueTodayCount = String(ws.dashboard.dueToday ?? summary.dueToday);
   const overdueCount = String(ws.dashboard.overdue ?? summary.overdue);
 
-  const syncStateLabel = ws.syncing
-    ? copy.syncing
-    : ws.syncState.pending > 0
-      ? `${ws.syncState.pending} ${copy.pending}`
-      : copy.lastSync;
-  const lastSyncLabel = ws.syncState.last_successful_sync
-    ? new Date(ws.syncState.last_successful_sync).toLocaleString()
-    : copy.never;
-
   return (
     <>
-      <View style={styles.syncCard}>
-        <View style={styles.syncCopy}>
-          <Text style={styles.syncTitle}>{syncStateLabel}</Text>
-          <Text style={styles.syncMeta}>{lastSyncLabel}</Text>
-          {ws.syncError || ws.syncState.attention > 0 ? (
-            <Text style={styles.errorText}>{ws.syncError || `${ws.syncState.attention} ${copy.attention}`}</Text>
-          ) : null}
-        </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ disabled: ws.syncing || ws.online !== true, busy: ws.syncing }}
-          android_ripple={{ color: palette.primarySoft }}
-          disabled={ws.syncing || ws.online !== true}
-          onPress={() => void ws.runSync()}
-          style={({ pressed }) => [styles.chip, (ws.syncing || ws.online !== true) && styles.disabled, pressed && styles.chipPressed]}
-        >
-          <Text style={styles.chipTextSelected}>{ws.syncing ? copy.syncing : copy.retry}</Text>
-        </Pressable>
-      </View>
-
       {ws.error ? <Text accessibilityRole="alert" style={styles.errorBanner}>{ws.error}</Text> : null}
 
       {/* Hero balance card */}
       {ws.can('payments:read') && ws.moduleEnabled('payments') ? (
-      <View style={styles.heroCard}>
-        <Text style={styles.heroLabel}>{copy.totalBalance}</Text>
-        <Text style={styles.heroSubLabel}>{copy.balanceSubtitle}</Text>
-        <Text style={styles.heroAmount} numberOfLines={1} adjustsFontSizeToFit>
-          {formatCurrency(outstanding, ws.businessConfiguration?.business.currency)}
-        </Text>
-        <View style={styles.heroRow}>
-          <View style={styles.heroPill}>
-            <Icon name="arrowUp" size={12} color={palette.success} />
-            <Text style={styles.heroPillText}>
-              {interpolate(copy.pct, summary.trendPercent >= 0 ? `+${summary.trendPercent}` : `${summary.trendPercent}`)} {copy.vLastMonth}
+        <View style={styles.heroCard}>
+          <Text style={styles.heroLabel}>{copy.totalBalance}</Text>
+          <Text style={styles.heroSubLabel}>{copy.balanceSubtitle}</Text>
+          <Text style={styles.heroAmount} numberOfLines={1} adjustsFontSizeToFit>
+            {formatCurrency(outstanding, ws.businessConfiguration?.business.currency)}
+          </Text>
+          <View style={styles.heroRow}>
+            <View style={styles.heroPill}>
+              <Icon name="arrowUp" size={12} color={palette.success} />
+              <Text style={styles.heroPillText}>
+                {interpolate(copy.pct, summary.trendPercent >= 0 ? `+${summary.trendPercent}` : `${summary.trendPercent}`)} {copy.vLastMonth}
+              </Text>
+            </View>
+            <Text style={styles.heroMeta}>
+              {interpolate(copy.activeOrders, String(summary.totalActive))}
             </Text>
           </View>
-          <Text style={styles.heroMeta}>
-            {interpolate(copy.activeOrders, String(summary.totalActive))}
-          </Text>
         </View>
-      </View>
       ) : null}
 
       {/* Quick action row */}
@@ -149,7 +113,7 @@ export function DashboardScreen({ onNavigate }: { onNavigate: Navigate }) {
           })}
       </View>
 
-      {/* Money card (collected / outstanding) */}
+      {/* Money card */}
       {ws.can('payments:read') && ws.moduleEnabled('payments') ? (
         <View style={styles.moneyCard}>
           <View style={styles.moneyRow}>
@@ -163,67 +127,57 @@ export function DashboardScreen({ onNavigate }: { onNavigate: Navigate }) {
         </View>
       ) : null}
 
-      {/* Order value mini-chart and recent feed */}
+      {/* Order chart and recent feed */}
       {ws.can('orders:read') && ws.moduleEnabled('orders') ? (
-      <>
-      <View style={styles.chartCard}>
-        <View style={styles.chartHeader}>
-          <View>
-            <Text style={styles.chartLabel}>{copy.last8weeks}</Text>
-            <Text style={styles.chartValue}>
-              {formatCurrency(summary.weeklyOrderValue.reduce((s, p) => s + p.value, 0).toFixed(2), ws.businessConfiguration?.business.currency)}
-            </Text>
+        <>
+        <View style={styles.chartCard}>
+          <View style={styles.chartHeader}>
+            <View>
+              <Text style={styles.chartLabel}>{copy.last8weeks}</Text>
+              <Text style={styles.chartValue}>
+                {formatCurrency(summary.weeklyOrderValue.reduce((s, p) => s + p.value, 0).toFixed(2), ws.businessConfiguration?.business.currency)}
+              </Text>
+            </View>
+            <View style={styles.chartPill}>
+              <Text style={styles.chartPillText}>
+                {interpolate(copy.pct, summary.trendPercent >= 0 ? `+${summary.trendPercent}` : `${summary.trendPercent}`)}
+              </Text>
+            </View>
           </View>
-          <View style={styles.chartPill}>
-            <Text style={styles.chartPillText}>
-              {interpolate(copy.pct, summary.trendPercent >= 0 ? `+${summary.trendPercent}` : `${summary.trendPercent}`)}
-            </Text>
-          </View>
+          <AreaChart data={summary.weeklyOrderValue} currency={ws.businessConfiguration?.business.currency} copyKey={copy.totalCount} />
         </View>
-        <AreaChart data={summary.weeklyOrderValue} currency={ws.businessConfiguration?.business.currency} copyKey={copy.totalCount} />
-      </View>
 
-      {/* Recent activity */}
-      <View style={styles.sectionRow}>
-        <Text style={styles.sectionTitle}>{copy.recentActivity}</Text>
-        <Pressable accessibilityRole="button" onPress={() => onNavigate('orders')} hitSlop={8}>
-          <Text style={styles.sectionLink}>{copy.viewAll}</Text>
-        </Pressable>
-      </View>
+        {/* Recent activity */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, marginTop: 4 }}>
+          <Text style={styles.sectionTitle}>{copy.recentActivity}</Text>
+          <Pressable accessibilityRole="button" onPress={() => onNavigate('orders')} hitSlop={8}>
+            <Text style={styles.sectionLink}>{copy.viewAll}</Text>
+          </Pressable>
+        </View>
 
-      {ws.orders.length === 0 ? (
-        <EmptyState title={copy.emptyOrders} />
-      ) : (
-        ws.orders.slice(0, 6).map((order) => {
-          const stage = stageMapObj[order.workflow_stage_key ?? order.status] ?? order.workflow_stage_key ?? order.status;
-          return (
-            <Pressable key={order.id} accessibilityRole="button" onPress={() => onNavigate('orders')} android_ripple={{ color: palette.primarySoft }} style={styles.listCard}>
-              <IconDot tone={order.sync_state === 'synced' ? 'mint' : 'amber'} name="orders" />
-              <View style={styles.listMain}>
-                <Text style={styles.listTitle} numberOfLines={1}>
-                  {(order.item_name ?? order.garment_name) || '—'} · {order.customer_name}
-                </Text>
-                <Text style={styles.listMeta}>{stage} · {order.promised_at.slice(0, 10)}</Text>
-              </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={styles.listPrice}>{formatCurrency(order.total, ws.businessConfiguration?.business.currency)}</Text>
-                {order.sync_state !== 'synced' ? <StatusPill tone="amber">{copy.pending}</StatusPill> : null}
-              </View>
-            </Pressable>
-          );
-        })
-      )}
-      </>
+        {ws.orders.length === 0 ? (
+          <EmptyState title={copy.emptyOrders} />
+        ) : (
+          ws.orders.slice(0, 6).map((order) => {
+            const stage = stageMapObj[order.workflow_stage_key ?? order.status] ?? order.workflow_stage_key ?? order.status;
+            return (
+              <Pressable key={order.id} accessibilityRole="button" onPress={() => onNavigate('orders')} android_ripple={{ color: palette.primarySoft }} style={styles.listCard}>
+                <IconDot name="orders" />
+                <View style={styles.listMain}>
+                  <Text style={styles.listTitle} numberOfLines={1}>
+                    {(order.item_name ?? order.garment_name) || '—'} · {order.customer_name}
+                  </Text>
+                  <Text style={styles.listMeta}>{stage} · {order.promised_at.slice(0, 10)}</Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={styles.listPrice}>{formatCurrency(order.total, ws.businessConfiguration?.business.currency)}</Text>
+                </View>
+              </Pressable>
+            );
+          })
+        )}
+        </>
       ) : null}
-
-      {/* Sync up-to-date pill */}
-      <View style={[styles.syncCard, { marginTop: 12 }]}>
-        <Icon name="check" size={20} color={palette.success} />
-        <View style={styles.syncCopy}>
-          <Text style={styles.syncTitle}>{copy.syncUpToDate}</Text>
-          <Text style={styles.syncMeta}>{lastSyncLabel}</Text>
-        </View>
-      </View>
     </>
   );
 }

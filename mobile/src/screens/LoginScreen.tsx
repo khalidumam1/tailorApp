@@ -1,7 +1,5 @@
 /**
- * Login / shop selection screen — Payrio style: large brand mark, dense
- * inputs and primary action button, with language chips and a compact
- * theme toggle in the top right.
+ * Login / shop selection screen — simple, clean layout.
  */
 import { Alert, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';

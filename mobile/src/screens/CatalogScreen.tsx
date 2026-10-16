@@ -1,7 +1,6 @@
 /**
- * Catalog — saved items and types the shop sells or makes. Owners and managers
- * can add entries (with configured custom fields) and activate or deactivate
- * synced entries. Changes made offline are queued and sync when online.
+ * Catalog — clean list of items the shop sells or makes.
+ * Owners and managers can add entries with configured custom fields.
  */
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
@@ -97,7 +96,7 @@ export function CatalogScreen() {
         <EmptyState title={copy.emptyCatalog} />
       ) : items.map((item) => {
         const busy = ws.togglingCatalogId === item.id;
-        const canToggle = canManage && ws.online === true && item.syncState === 'synced';
+        const canToggle = canManage;
         return (
           <View key={item.id} style={[styles.listCard, !item.active && styles.disabled]}>
             <View style={styles.listMain}>
@@ -109,9 +108,6 @@ export function CatalogScreen() {
               {item.unitPrice ? <Text style={styles.listMeta}>{formatCurrency(item.unitPrice, currency)} / {item.unit}</Text> : null}
               <StoredCustomFields serialized={JSON.stringify(item.customFields)} definitions={ws.catalogFields} errorLabel={copy.error} />
             </View>
-            <Text style={styles.syncBadge}>
-              {item.syncState === 'synced' ? '✓' : ['conflict', 'rejected'].includes(item.syncState) ? '!' : '↑'}
-            </Text>
             {canToggle ? (
               <Pressable
                 accessibilityRole="button"

@@ -1,12 +1,10 @@
 /**
- * Business settings — the shop-level configuration the owner or a manager can
- * change from the phone: business name and logo, enabled modules, payment
- * methods, dashboard widgets, item types, and team roles and members. Each section
- * saves through the business configuration API, which checks the version so
- * a stale copy cannot overwrite newer changes.
+ * Business settings — clean layout for shop-level configuration:
+ * branding, modules, payment methods, item types, dashboard widgets,
+ * team roles and members.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import {
   BRAND_LOGO_PRESETS,
   BRAND_LOGO_SHAPES,
@@ -18,7 +16,6 @@ import { useAppTheme } from '../theme/palette';
 import { ActionButton, ConfigurableBrandMark, Field, StatusPill } from '../theme/primitives';
 import { useWorkspace, type BusinessMember, type BusinessPermission, type BusinessRole } from '../hooks/useWorkspace';
 import { itemTypeKeyFrom, sameList } from '../data/format';
-
 
 type ToggleProps = { value: boolean; onToggle: (next: boolean) => void; disabled?: boolean };
 
@@ -47,7 +44,6 @@ export function BusinessSettingsScreen() {
   const config = ws.businessConfiguration;
   const canManage = ws.can('settings:manage');
   const canInvite = ws.can('staff:manage');
-  const offline = ws.online !== true;
 
   const [businessName, setBusinessName] = useState(config?.business.name ?? '');
   const [logoUrl, setLogoUrl] = useState(config?.business.logoUrl ?? '');
@@ -70,18 +66,16 @@ export function BusinessSettingsScreen() {
   const [roleName, setRoleName] = useState('');
   const [rolePermissions, setRolePermissions] = useState<string[]>([]);
 
-  // Reset drafts whenever a fresh configuration is loaded or saved.
   useEffect(() => {
     setBusinessName(config?.business.name ?? '');
     setLogoUrl(config?.business.logoUrl ?? '');
     setModules(config?.enabledModules ?? []);
     setMethods(config?.paymentMethods ?? []);
     setWidgets(config?.dashboardWidgets ?? []);
-    // Keyed on the version: a background refresh with the same version keeps drafts.
-  }, [config?.version, config?.business.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [config?.version, config?.business.id]);
 
   const reloadTeam = useCallback(async () => {
-    if (!canInvite || offline) return;
+    if (!canInvite) return;
     setTeamLoading(true);
     setTeamError('');
     try {
@@ -101,11 +95,11 @@ export function BusinessSettingsScreen() {
     } finally {
       setTeamLoading(false);
     }
-  }, [canInvite, copy.error, offline, ws.fetchBusinessPermissions, ws.fetchBusinessStaff, ws.fetchRoles]);
+  }, [canInvite, copy.error, ws.fetchBusinessPermissions, ws.fetchBusinessStaff, ws.fetchRoles]);
 
   useEffect(() => {
-    if (canInvite && !offline) void reloadTeam();
-  }, [canInvite, offline, reloadTeam]);
+    if (canInvite) void reloadTeam();
+  }, [canInvite, reloadTeam]);
 
   const toggle = (list: string[], setList: (next: string[]) => void, value: string) => {
     setList(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
@@ -189,15 +183,13 @@ export function BusinessSettingsScreen() {
     && invitePassword.length >= 16 && roles.some((role) => role.id === inviteRoleId);
 
   return (
-    <>
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
       <View style={styles.pageHeadingRow}>
         <View>
           <Text style={styles.pageTitle}>{copy.businessSettings}</Text>
           <Text style={styles.pageSubtitle}>{copy.businessSettingsSub}</Text>
         </View>
       </View>
-
-      {offline ? <Text style={styles.errorText}>{copy.settingsOnline}</Text> : null}
 
       {/* Branding */}
       <View style={[styles.card, styles.cardAccentPrimary]}>
@@ -229,9 +221,8 @@ export function BusinessSettingsScreen() {
                   <Pressable
                     key={preset.key}
                     accessibilityRole="button"
-                    accessibilityState={{ selected, disabled: offline }}
+                    accessibilityState={{ selected }}
                     android_ripple={{ color: palette.primarySoft }}
-                    disabled={offline}
                     onPress={() => setLogoUrl(buildConfigurableLogoUrl({
                       ...parsedLogo,
                       style: preset.key,
@@ -252,9 +243,8 @@ export function BusinessSettingsScreen() {
                   <Pressable
                     key={shapeOption.key}
                     accessibilityRole="button"
-                    accessibilityState={{ selected, disabled: offline }}
+                    accessibilityState={{ selected }}
                     android_ripple={{ color: palette.primarySoft }}
-                    disabled={offline}
                     onPress={() => setLogoUrl(buildConfigurableLogoUrl({
                       ...parsedLogo,
                       shape: shapeOption.key,
@@ -274,7 +264,7 @@ export function BusinessSettingsScreen() {
               secondary
               loading={ws.saving}
               loadingTitle={copy.loading}
-              disabled={!brandingChanged || !trimmedName || offline || ws.saving}
+              disabled={!brandingChanged || !trimmedName || ws.saving}
               onPress={() => void saveAndConfirm({ business: { name: trimmedName, logoUrl: trimmedLogo || null } })}
             />
           </>
@@ -307,7 +297,7 @@ export function BusinessSettingsScreen() {
             </View>
             <Toggle
               value={modules.includes(m)}
-              disabled={!canManage || offline}
+              disabled={!canManage}
               onToggle={() => toggle(modules, setModules, m)}
             />
           </View>
@@ -318,7 +308,7 @@ export function BusinessSettingsScreen() {
             secondary
             loading={ws.saving}
             loadingTitle={copy.loading}
-            disabled={!modulesChanged || modules.length === 0 || offline || ws.saving}
+            disabled={!modulesChanged || modules.length === 0 || ws.saving}
             onPress={() => void saveAndConfirm({ enabledModules: modules })}
           />
         ) : null}
@@ -351,7 +341,7 @@ export function BusinessSettingsScreen() {
             secondary
             loading={ws.saving}
             loadingTitle={copy.loading}
-            disabled={!methodsChanged || methods.length === 0 || offline || ws.saving}
+            disabled={!methodsChanged || methods.length === 0 || ws.saving}
             onPress={() => void saveAndConfirm({ paymentMethods: methods })}
           />
         ) : null}
@@ -375,7 +365,7 @@ export function BusinessSettingsScreen() {
               secondary
               loading={ws.saving}
               loadingTitle={copy.loading}
-              disabled={!newTypeLabel.trim() || offline || ws.saving}
+              disabled={!newTypeLabel.trim() || ws.saving}
               onPress={() => void addItemType()}
             />
           </>
@@ -409,13 +399,13 @@ export function BusinessSettingsScreen() {
             secondary
             loading={ws.saving}
             loadingTitle={copy.loading}
-            disabled={!widgetsChanged || offline || ws.saving}
+            disabled={!widgetsChanged || ws.saving}
             onPress={() => void saveAndConfirm({ dashboardWidgets: widgets })}
           />
         ) : null}
       </View>
 
-      {/* Workflow stages (read-only on mobile; the web app edits the workflow) */}
+      {/* Workflow stages */}
       <View style={[styles.card, styles.cardAccentBlue]}>
         <Text style={styles.sectionTitle}>{copy.workflowStages}</Text>
         <View style={styles.chipWrap}>
@@ -434,9 +424,9 @@ export function BusinessSettingsScreen() {
           {canInvite ? (
             <Pressable
               accessibilityRole="button"
-              disabled={offline || teamLoading}
+              disabled={teamLoading}
               onPress={() => void reloadTeam()}
-              style={({ pressed }) => [styles.teamRole, (offline || teamLoading) && styles.disabled, pressed && styles.pressed]}
+              style={({ pressed }) => [styles.teamRole, (teamLoading) && styles.disabled, pressed && styles.pressed]}
             >
               <Text style={styles.teamRoleText}>{teamLoading ? copy.loading : copy.refreshTeam}</Text>
             </Pressable>
@@ -458,9 +448,9 @@ export function BusinessSettingsScreen() {
 
             <Pressable
               accessibilityRole="button"
-              accessibilityState={{ expanded: roleEditorOpen, disabled: offline || ws.saving }}
+              accessibilityState={{ expanded: roleEditorOpen, disabled: ws.saving }}
               android_ripple={{ color: palette.primarySoft }}
-              disabled={offline || ws.saving}
+              disabled={ws.saving}
               onPress={() => { setRoleEditorOpen((open) => !open); setTeamError(''); }}
               style={({ pressed }) => [styles.teamRow, pressed && styles.pressed]}
             >
@@ -495,7 +485,7 @@ export function BusinessSettingsScreen() {
                   title={copy.createRole}
                   loading={ws.saving}
                   loadingTitle={copy.loading}
-                  disabled={roleName.trim().length < 2 || roleName.trim().length > 80 || offline || ws.saving || teamLoading}
+                  disabled={roleName.trim().length < 2 || roleName.trim().length > 80 || ws.saving || teamLoading}
                   onPress={() => void createRole()}
                 />
               </View>
@@ -514,9 +504,9 @@ export function BusinessSettingsScreen() {
 
             <Pressable
               accessibilityRole="button"
-              accessibilityState={{ expanded: inviteOpen, disabled: offline || ws.saving }}
+              accessibilityState={{ expanded: inviteOpen, disabled: ws.saving }}
               android_ripple={{ color: palette.primarySoft }}
-              disabled={offline || ws.saving}
+              disabled={ws.saving}
               onPress={() => { setInviteOpen((open) => !open); setTeamError(''); }}
               style={({ pressed }) => [styles.teamRow, pressed && styles.pressed]}
             >
@@ -554,7 +544,7 @@ export function BusinessSettingsScreen() {
                   title={copy.createMember}
                   loading={ws.saving}
                   loadingTitle={copy.loading}
-                  disabled={!inviteReady || offline || ws.saving || teamLoading}
+                  disabled={!inviteReady || ws.saving || teamLoading}
                   onPress={() => void sendInvite()}
                 />
               </View>
@@ -576,6 +566,6 @@ export function BusinessSettingsScreen() {
           </>
         ) : null}
       </View>
-    </>
+    </ScrollView>
   );
 }

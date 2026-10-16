@@ -14,7 +14,9 @@ export type NavPage =
   | 'settings'
   | 'business-settings'
   | 'analytics'
-  | 'erp';
+  | 'erp'
+  | 'chat'
+  | 'conflicts';
 
 /** Action to perform once a page opens (e.g. open the order form). */
 export type NavIntent = 'new-order' | 'record-payment';

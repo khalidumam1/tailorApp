@@ -1,7 +1,6 @@
 /**
- * Analytics — order value over time (range chips change the window), the
- * pipeline breakdown, collections this month from the real payment ledger,
- * and the top items on recent orders.
+ * Analytics — clean layout with order value chart, pipeline breakdown,
+ * collections vs outstanding, and top items.
  */
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
@@ -31,10 +30,9 @@ export function AnalyticsScreen() {
   const [collectedThisMonth, setCollectedThisMonth] = useState<number | null>(null);
   const canReadPayments = ws.can('payments:read') && ws.moduleEnabled('payments');
 
-  // Collections come from the recorded payment ledger (online only).
   useEffect(() => {
     let active = true;
-    if (!ws.session || ws.online !== true || !canReadPayments) {
+    if (!ws.session || !canReadPayments) {
       setCollectedThisMonth(null);
       return () => { active = false; };
     }
@@ -42,7 +40,7 @@ export function AnalyticsScreen() {
       .then((rows) => { if (active) setCollectedThisMonth(summarizePayments(rows).collectedThisMonth); })
       .catch(() => { if (active) setCollectedThisMonth(null); });
     return () => { active = false; };
-  }, [ws.online, ws.session, canReadPayments, ws.syncState.last_successful_sync]);
+  }, [ws.session, canReadPayments]);
 
   const stages = ws.businessConfiguration?.workflow.stages ?? [];
   const stageMap: Record<string, string> = {};
@@ -118,27 +116,27 @@ export function AnalyticsScreen() {
         />
       </View>
 
-      {/* Collections this month (ledger) against outstanding (server total) */}
+      {/* Collections vs outstanding */}
       {canReadPayments ? (
-      <View style={styles.chartCard}>
-        <View style={styles.chartHeader}>
-          <View>
-            <Text style={styles.chartLabel}>{copy.collectionsThisMonth}</Text>
-            <Text style={styles.chartValue}>
-              {collectedThisMonth === null ? '—' : formatCurrency(collected.toFixed(2), currency)}
-            </Text>
-            {collectedThisMonth === null ? <Text style={styles.listMeta}>{copy.paymentsOnline}</Text> : null}
+        <View style={styles.chartCard}>
+          <View style={styles.chartHeader}>
+            <View>
+              <Text style={styles.chartLabel}>{copy.collectionsThisMonth}</Text>
+              <Text style={styles.chartValue}>
+                {collectedThisMonth === null ? '—' : formatCurrency(collected.toFixed(2), currency)}
+              </Text>
+              {collectedThisMonth === null ? <Text style={styles.listMeta}>{copy.paymentsOnline}</Text> : null}
+            </View>
           </View>
+          {collectedThisMonth !== null && outstanding !== null ? (
+            <StackedBar
+              segments={[
+                { label: copy.collectedToday, value: collected, color: palette.success, meta: formatCurrency(collected.toFixed(2), currency) },
+                { label: copy.outstandingLabel, value: outstanding, color: palette.danger, meta: formatCurrency(outstanding.toFixed(2), currency) },
+              ]}
+            />
+          ) : null}
         </View>
-        {collectedThisMonth !== null && outstanding !== null ? (
-          <StackedBar
-            segments={[
-              { label: copy.collectedToday, value: collected, color: palette.success, meta: formatCurrency(collected.toFixed(2), currency) },
-              { label: copy.outstandingLabel, value: outstanding, color: palette.danger, meta: formatCurrency(outstanding.toFixed(2), currency) },
-            ]}
-          />
-        ) : null}
-      </View>
       ) : null}
 
       {/* Top items */}

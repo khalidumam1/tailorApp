@@ -1,6 +1,5 @@
 /**
- * Settings — Payrio-style. Language radio list, appearance toggle, business
- * info card, sign out.
+ * Settings — clean layout. Language, appearance, business info, sign out.
  */
 import { Pressable, Text, View } from 'react-native';
 import { useAppStyles } from '../theme/useAppStyles';

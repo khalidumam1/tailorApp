@@ -1,7 +1,6 @@
 /**
- * Measurements — pick a customer to see their dated measurement revisions, add
- * a new revision from a configured template, and compare any revision with the
- * previous one for the same garment.
+ * Measurements — clean list of measurement revisions per customer.
+ * Add new revisions from configured templates.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
@@ -17,7 +16,6 @@ type Revision = {
   templateName: string;
   measuredAt: string;
   values: Record<string, string>;
-  syncState: string;
 };
 
 export function MeasurementsScreen() {
@@ -28,7 +26,6 @@ export function MeasurementsScreen() {
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Revisions for the chosen customer, newest first.
   const revisions = useMemo<Revision[]>(() => ws.measurements
     .filter((record) => record.customer_id === selectedCustomerId)
     .map((record) => ({
@@ -36,7 +33,6 @@ export function MeasurementsScreen() {
       templateName: record.template_name,
       measuredAt: record.measured_at,
       values: parseValues(record.values_json),
-      syncState: record.sync_state,
     }))
     .sort((a, b) => b.measuredAt.localeCompare(a.measuredAt)), [selectedCustomerId, ws.measurements]);
 
@@ -178,8 +174,8 @@ export function MeasurementsScreen() {
             </View>
           </View>
 
-          {/* History with diff against the previous revision of the same garment */}
-          <View style={styles.sectionRow}>
+          {/* History with diff against the previous revision */}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, marginTop: 12 }}>
             <Text style={styles.sectionTitle}>{copy.history}</Text>
             <Text style={styles.sectionLink}>{interpolate(copy.totalCount, String(revisions.length))}</Text>
           </View>

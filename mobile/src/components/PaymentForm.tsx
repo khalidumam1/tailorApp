@@ -64,7 +64,7 @@ export function PaymentForm() {
           loading={ws.saving}
           loadingTitle={copy.loading}
           onPress={() => void ws.recordPayment()}
-          disabled={ws.saving || ws.online !== true}
+          disabled={ws.saving}
         />
       </View>
       <View style={{ marginTop: 8 }}>

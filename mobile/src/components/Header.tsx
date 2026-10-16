@@ -22,7 +22,6 @@ export function Header({ onNotificationsPress, onSearchPress }: HeaderProps) {
   const styles = useAppStyles();
   const { palette } = useAppTheme();
   const ws = useWorkspace();
-  const showBadge = ws.syncState.pending > 0;
 
   return (
     <View style={styles.header}>
@@ -35,10 +34,6 @@ export function Header({ onNotificationsPress, onSearchPress }: HeaderProps) {
           </View>
         </View>
         <View style={styles.headerRight}>
-          <View style={styles.connection}>
-            <View style={[styles.connectionDot, ws.online ? styles.onlineDot : styles.offlineDot]} />
-            <Text style={styles.connectionText}>{ws.online === true ? ws.copy.online : ws.copy.offline}</Text>
-          </View>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={ws.copy.notificationHistory}
@@ -47,7 +42,6 @@ export function Header({ onNotificationsPress, onSearchPress }: HeaderProps) {
             style={({ pressed }) => [styles.bellButton, pressed && styles.pressed]}
           >
             <Icon name="bell" size={20} color={palette.primaryText} />
-            {showBadge ? <View style={styles.bellBadge} /> : null}
           </Pressable>
         </View>
       </View>

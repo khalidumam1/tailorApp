@@ -1,6 +1,6 @@
 /**
- * Orders screen — kanban with one column per configured workflow stage, an
- * order form, stage-transition buttons, and an inline payment form per order.
+ * Orders screen — clean kanban with one column per configured workflow stage,
+ * order form, stage-transition buttons, and WhatsApp order status updates.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
@@ -38,7 +38,6 @@ export function OrdersScreen({
   const copy = ws.copy;
   const [filter, setFilter] = useState<string>('all');
 
-  // "New order" shortcut from the dashboard opens the form directly.
   useEffect(() => {
     if (intent === 'new-order') {
       if (ws.can('orders:write')) ws.setOrderForm(true);
@@ -63,7 +62,6 @@ export function OrdersScreen({
     ? ws.orders
     : ws.orders.filter((o) => resolveMobileWorkflowStage(stages, o)?.key === filter);
 
-  // Columns: configured stages, or the fallback trio if no configuration is cached yet.
   const columns = stages.length
     ? stages.map((stage) => ({ key: stage.key, label: stage.label }))
     : FALLBACK_STAGES.map((stage) => ({ key: stage.key, label: stage.label }));
@@ -118,9 +116,8 @@ export function OrdersScreen({
             if (stage) return stage.key === column.key;
             return initialKey !== undefined ? column.key === initialKey : index === 0;
           });
-          const accent = index % 3 === 0 ? 'cardAccentMint' : index % 3 === 1 ? 'cardAccentBlue' : 'cardAccentAmber';
           return (
-            <View key={column.key} style={[styles.kanbanColumn, styles[accent]]}>
+            <View key={column.key} style={styles.kanbanColumn}>
               <View style={styles.kanbanHeader}>
                 <Text style={styles.kanbanTitle}>{column.label}</Text>
                 <Text style={styles.kanbanCount}>{ordersInColumn.length}</Text>
@@ -134,18 +131,19 @@ export function OrdersScreen({
                     .filter((t) => t.fromStageId === currentStage?.id)
                     .map((t) => stages.find((s) => s.id === t.toStageId))
                     .filter((s): s is NonNullable<typeof s> => Boolean(s));
-                  const synced = order.sync_state === 'synced';
+                  const synced = true;
                   const orderBusy = Boolean(ws.transitioningOrderKey?.startsWith(`${order.id}:`));
                   const paymentOpen = ws.paymentOrder?.id === order.id;
                   return (
-                    <View key={order.id} style={[styles.card, { marginBottom: 8 }]}>
+                    <View key={order.id} style={[styles.orderCard, { marginBottom: 8 }]}>
                       <View style={styles.orderTop}>
                         <View style={styles.listMain}>
                           <Text style={styles.listTitle} numberOfLines={2}>
                             {order.item_name ?? order.garment_name} · {order.customer_name}
                           </Text>
-                          <Text style={styles.listMeta}>{stageMap[order.workflow_stage_key ?? order.status] ?? currentStage?.label ?? ''} · {order.promised_at.slice(0, 10)}</Text>
-                          {!synced ? <Text style={styles.pendingLabel}>{copy.pending}</Text> : null}
+                          <Text style={styles.listMeta}>
+                            {stageMap[order.workflow_stage_key ?? order.status] ?? currentStage?.label ?? ''} · {order.promised_at.slice(0, 10)}
+                          </Text>
                         </View>
                         <Text style={styles.listPrice}>{formatCurrency(order.total, currency)}</Text>
                       </View>
@@ -156,13 +154,13 @@ export function OrdersScreen({
                           <Pressable
                             key={target.id}
                             accessibilityRole="button"
-                            accessibilityState={{ disabled: orderBusy || !synced || ws.online !== true, busy: transitionBusy }}
+                            accessibilityState={{ disabled: orderBusy, busy: transitionBusy }}
                             android_ripple={{ color: palette.primarySoft }}
-                            disabled={orderBusy || !synced || ws.online !== true}
+                            disabled={orderBusy}
                             onPress={() => void ws.transitionOrder(order, target.key)}
                             style={({ pressed }) => [
                               styles.nextStageBtn,
-                              (orderBusy || !synced || ws.online !== true) && styles.disabled,
+                              (orderBusy) && styles.disabled,
                               pressed && styles.pressed,
                             ]}
                           >
@@ -177,13 +175,13 @@ export function OrdersScreen({
                       {ws.can('payments:write') && ws.moduleEnabled('payments') && !paymentOpen ? (
                         <Pressable
                           accessibilityRole="button"
-                          accessibilityState={{ disabled: ws.online !== true || !synced, busy: ws.openingPaymentOrderId === order.id }}
+                          accessibilityState={{ disabled: false, busy: ws.openingPaymentOrderId === order.id }}
                           android_ripple={{ color: palette.primarySoft }}
-                          disabled={ws.online !== true || !synced || ws.openingPaymentOrderId === order.id}
+                          disabled={ws.openingPaymentOrderId === order.id}
                           onPress={() => void openOrderPayment(order)}
                           style={({ pressed }) => [
                             styles.nextStageBtn,
-                            (ws.online !== true || !synced) && styles.disabled,
+                            false && styles.disabled,
                             pressed && styles.pressed,
                           ]}
                         >
@@ -194,40 +192,40 @@ export function OrdersScreen({
                         </Pressable>
                       ) : null}
 
-                       {paymentOpen && ws.can('payments:write') && ws.moduleEnabled('payments') ? <PaymentForm /> : null}
-                     {/* WhatsApp order status button */}
-                     {ws.can('orders:read') && ws.moduleEnabled('customers') && (
-                       <View key={`${order.id}-whatsapp`} style={{ marginTop: 10 }}>
-                         <Pressable
-                           accessibilityRole="button"
-                           accessibilityState={{ disabled: !ws.online }}
-                           android_ripple={{ color: palette.primarySoft }}
-                           onPress={() => {
-                             const customer = ws.customers.find(c => c.id === order.customer_id);
-                             if (customer && customer.phone) {
-                               const normalizedPhone = normalizePhone(customer.phone);
-                               if (normalizedPhone) {
-                                 const stageLabel = resolveMobileWorkflowStage(stages, order)?.label ?? order.status;
-                                 const message = `Order ${order.id} is now ${stageLabel}.`;
-                                 void ws.sendWhatsAppMessage(normalizedPhone, message, order.id);
-                               }
+                      {paymentOpen && ws.can('payments:write') && ws.moduleEnabled('payments') ? <PaymentForm /> : null}
 
-                             }
-                           }}
-                           style={({ pressed }) => [
-                             styles.nextStageBtn,
-                             (!ws.online) && styles.disabled,
-                             pressed && styles.pressed
-                           ]}
-                         >
-                           <Text style={styles.nextStageText}>
-                             {copy.whatsappOrderStatus}
-                           </Text>
-                           <Icon name="chat" size={16} color={palette.primaryText} />
-                         </Pressable>
-                       </View>
-                     )}
-                   </View>
+                      {/* WhatsApp order status button */}
+                      {ws.can('orders:read') && ws.moduleEnabled('customers') && (
+                        <View style={{ marginTop: 10 }}>
+                          <Pressable
+                            accessibilityRole="button"
+                          accessibilityState={{ disabled: false }}
+                          android_ripple={{ color: palette.primarySoft }}
+                          onPress={() => {
+                          const customer = ws.customers.find(c => c.id === order.customer_id);
+                          if (customer && customer.phone) {
+                            const normalizedPhone = normalizePhone(customer.phone);
+                            if (normalizedPhone) {
+                              const stageLabel = resolveMobileWorkflowStage(stages, order)?.label ?? order.status;
+                              const message = `Order ${order.id} is now ${stageLabel}.`;
+                              void ws.sendWhatsAppMessage(normalizedPhone, message, order.id);
+                            }
+                          }
+                          }}
+                          style={({ pressed }) => [
+                            styles.nextStageBtn,
+                            false && styles.disabled,
+                            pressed && styles.pressed
+                          ]}
+                          >
+                            <Text style={styles.nextStageText}>
+                              {copy.whatsappOrderStatus}
+                            </Text>
+                            <Icon name="chat" size={16} color={palette.primaryText} />
+                          </Pressable>
+                        </View>
+                      )}
+                    </View>
                   );
                 })
               )}

@@ -159,7 +159,7 @@ export function ErpScreen() {
   }, [available, activeModule]);
 
   const refresh = useCallback(async () => {
-    if (!ws.session || ws.online !== true || !available.some((item) => item.id === activeModule)) return;
+    if (!ws.session || !available.some((item) => item.id === activeModule)) return;
     setLoading(true);
     setLoadError('');
     try {
@@ -248,12 +248,12 @@ export function ErpScreen() {
     } finally {
       setLoading(false);
     }
-  }, [activeModule, available, ws.session, ws.online, ws.erpRequest, ws.moduleEnabled, ws.can, ws.copy.error,
+  }, [activeModule, available, ws.session, ws.erpRequest, ws.moduleEnabled, ws.can, ws.copy.error,
     selectedStockItemId, movementVariantId, movementLocationId, transferVariantId, transferFromLocationId, transferToLocationId,
     purchaseSupplierId, purchaseVariantId, settlementOrderId, settlementAccountId, cashAccountId, cashContraAccountId,
     cashCategoryId, cashKind, reconciliationAccountId, reconciliationId, journalDebitAccountId, journalCreditAccountId]);
 
-  useEffect(() => { void refresh(); }, [refresh, ws.syncState.last_successful_sync]);
+  useEffect(() => { void refresh(); }, [refresh]);
 
   const run = async (operation: () => Promise<unknown>, success: string, onSuccess?: () => void) => {
     setWorking(true);
@@ -664,8 +664,7 @@ export function ErpScreen() {
           </Pressable>
         ))}
       </View>
-      {ws.online !== true ? <View style={styles.card}><Text style={styles.listTitle}>Connect to use ERP</Text><Text style={styles.listMeta}>Financial and stock postings require a live connection. No offline inventory or cash adjustments will be queued.</Text></View> : null}
-      {loadError ? <Text accessibilityRole="alert" style={styles.errorBanner}>{loadError}</Text> : null}
+{loadError ? <Text accessibilityRole="alert" style={styles.errorBanner}>{loadError}</Text> : null}
       {notice ? <View style={styles.card}><Text style={{ color: palette.success }}>{notice}</Text></View> : null}
       {loading ? <View style={styles.centered}><ActivityIndicator color={palette.primary} /></View> : null}
 
@@ -694,7 +693,7 @@ export function ErpScreen() {
             <Field label="Opening quantity (optional, first-time only)" value={openingQuantity} onChangeText={setOpeningQuantity} keyboardType="decimal-pad" />
             <Field label={`Opening unit cost (${currency})`} value={openingCost} onChangeText={setOpeningCost} keyboardType="decimal-pad" />
             <Text style={styles.listMeta}>Opening balances can only be posted once. Later corrections must use an audited stock adjustment.</Text>
-            <ActionButton title="Save item" onPress={submitStockItem} loading={working} disabled={ws.online !== true || !ws.can('inventory:write')} />
+            <ActionButton title="Save item" onPress={submitStockItem} loading={working} disabled={!ws.can('inventory:write')} />
           </View>
           {stockItems.map((item) => (
             <View key={item.id} style={styles.card}>
@@ -715,7 +714,7 @@ export function ErpScreen() {
             <Field label="SKU (optional)" value={variantSku} onChangeText={setVariantSku} />
             <Field label="Opening quantity (optional)" value={variantOpeningQuantity} onChangeText={setVariantOpeningQuantity} keyboardType="decimal-pad" />
             <Field label={`Opening unit cost (${currency})`} value={variantOpeningCost} onChangeText={setVariantOpeningCost} keyboardType="decimal-pad" />
-            <ActionButton title="Save variant" onPress={submitVariant} secondary loading={working} disabled={ws.online !== true || !ws.can('inventory:write')} />
+            <ActionButton title="Save variant" onPress={submitVariant} secondary loading={working} disabled={!ws.can('inventory:write')} />
           </View> : null}
           {variantOptions.length > 0 ? <View style={styles.card}>
             <Text style={styles.sectionTitle}>Record stock movement</Text>
@@ -725,7 +724,7 @@ export function ErpScreen() {
             {movementKind === 'ADJUSTMENT' ? <><Text style={styles.fieldLabel}>Adjustment direction</Text><View style={styles.chipWrap}>{(['IN', 'OUT'] as const).map((direction) => <Pressable key={direction} onPress={() => setMovementDirection(direction)} style={[styles.chip, movementDirection === direction && styles.chipSelected]}><Text style={[styles.chipText, movementDirection === direction && styles.chipTextSelected]}>{direction === 'IN' ? 'Add stock' : 'Remove stock'}</Text></Pressable>)}</View></> : null}
             <Field label="Quantity" value={movementQuantity} onChangeText={setMovementQuantity} keyboardType="decimal-pad" />
             {(['RECEIPT', 'CUSTOMER_RETURN'].includes(movementKind) || (movementKind === 'ADJUSTMENT' && movementDirection === 'IN')) ? <Field label={movementKind === 'ADJUSTMENT' ? `Unit cost override (${currency}${adjustmentCostRequired ? '; required' : '; optional'})` : `${movementKind === 'RECEIPT' ? 'Purchase' : 'Return'} unit cost (${currency})`} value={movementCost} onChangeText={setMovementCost} keyboardType="decimal-pad" /> : null}
-            <ActionButton title="Post movement" onPress={submitMovement} loading={working} disabled={ws.online !== true || !ws.can('inventory:write')} />
+            <ActionButton title="Post movement" onPress={submitMovement} loading={working} disabled={!ws.can('inventory:write')} />
           </View> : null}
           {locations.length > 1 && variantOptions.length > 0 ? <View style={styles.card}>
             <Text style={styles.sectionTitle}>Transfer between locations</Text>
@@ -733,21 +732,21 @@ export function ErpScreen() {
             <Text style={styles.fieldLabel}>From location</Text><HorizontalPicker options={locations.map((location) => ({ id: location.id, label: location.name }))} selected={transferFromLocationId} onSelect={setTransferFromLocationId} />
             <Text style={styles.fieldLabel}>To location</Text><HorizontalPicker options={locations.map((location) => ({ id: location.id, label: location.name }))} selected={transferToLocationId} onSelect={setTransferToLocationId} />
             <Field label="Quantity to transfer" value={transferQuantity} onChangeText={setTransferQuantity} keyboardType="decimal-pad" />
-            <ActionButton title="Transfer stock" onPress={submitTransfer} loading={working} disabled={ws.online !== true || !ws.can('inventory:write')} />
+            <ActionButton title="Transfer stock" onPress={submitTransfer} loading={working} disabled={!ws.can('inventory:write')} />
           </View> : null}
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Inventory locations</Text>
             <Text style={styles.listMeta}>{locations.map((location) => `${location.name}${location.isDefault ? ' · default' : ''}`).join(' · ') || 'The first stock activity creates a default location automatically.'}</Text>
             <Field label="Location code" value={locationCode} onChangeText={setLocationCode} placeholder="e.g. SHOP-2" />
             <Field label="Location name" value={locationName} onChangeText={setLocationName} placeholder="Workshop, storage room" />
-            <ActionButton title="Add location" onPress={createInventoryLocation} secondary loading={working} disabled={ws.online !== true || !ws.can('inventory:write')} />
+            <ActionButton title="Add location" onPress={createInventoryLocation} secondary loading={working} disabled={!ws.can('inventory:write')} />
           </View>
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Recent stock history</Text>
             {inventoryMovements.slice(0, 15).map((movement) => <View key={movement.id} style={styles.card}>
               <View style={styles.listRow}><View style={{ flex: 1 }}><Text style={styles.listTitle}>{movement.variant.stockItem.name} · {movement.kind.toLowerCase().replaceAll('_', ' ')}</Text><Text style={styles.listMeta}>{movement.location.name} · {new Date(movement.occurredAt).toLocaleString()}{movement.note ? ` · ${movement.note}` : ''}</Text></View><Text style={styles.listPrice}>{movement.quantity} {movement.variant.stockItem.baseUnit}</Text></View>
-              {movement.sourceType === 'MANUAL' ? <ActionButton title={stockReversalId === movement.id ? 'Selected for reversal' : 'Reverse movement'} onPress={() => setStockReversalId((current) => current === movement.id ? '' : movement.id)} secondary disabled={working || ws.online !== true || !ws.can('inventory:write')} /> : null}
-              {stockReversalId === movement.id ? <><Field label="Reason for stock reversal" value={stockReversalReason} onChangeText={setStockReversalReason} /><ActionButton title="Confirm reversal" onPress={reverseStockMovement} loading={working} disabled={ws.online !== true || !ws.can('inventory:write') || !stockReversalReason.trim()} /><ActionButton title="Cancel" onPress={() => { setStockReversalId(''); setStockReversalReason(''); }} secondary disabled={working} /></> : null}
+              {movement.sourceType === 'MANUAL' ? <ActionButton title={stockReversalId === movement.id ? 'Selected for reversal' : 'Reverse movement'} onPress={() => setStockReversalId((current) => current === movement.id ? '' : movement.id)} secondary disabled={working || !ws.can('inventory:write')} /> : null}
+              {stockReversalId === movement.id ? <><Field label="Reason for stock reversal" value={stockReversalReason} onChangeText={setStockReversalReason} /><ActionButton title="Confirm reversal" onPress={reverseStockMovement} loading={working} disabled={!ws.can('inventory:write') || !stockReversalReason.trim()} /><ActionButton title="Cancel" onPress={() => { setStockReversalId(''); setStockReversalReason(''); }} secondary disabled={working} /></> : null}
             </View>)}
             {!inventoryMovements.length && !loading ? <Text style={styles.listMeta}>Stock receipts, adjustments and consumption will appear here.</Text> : null}
           </View>
@@ -760,10 +759,10 @@ export function ErpScreen() {
             <Text style={styles.sectionTitle}>{supplierEditingId ? 'Edit supplier' : 'Add supplier'}</Text>
             <Field label="Supplier name" value={supplierName} onChangeText={setSupplierName} />
             <Field label="Phone (optional)" value={supplierPhone} onChangeText={setSupplierPhone} keyboardType="phone-pad" />
-            <ActionButton title={supplierEditingId ? 'Save supplier changes' : 'Save supplier'} onPress={supplierEditingId ? submitSupplierUpdate : submitSupplier} loading={working} disabled={ws.online !== true || !ws.can('suppliers:write')} />
+            <ActionButton title={supplierEditingId ? 'Save supplier changes' : 'Save supplier'} onPress={supplierEditingId ? submitSupplierUpdate : submitSupplier} loading={working} disabled={!ws.can('suppliers:write')} />
             {supplierEditingId ? <ActionButton title="Cancel edit" onPress={() => { setSupplierEditingId(''); setSupplierName(''); setSupplierPhone(''); }} secondary disabled={working} /> : null}
           </View>
-          {suppliers.map((supplier) => <View key={supplier.id} style={styles.card}><View style={styles.listRow}><View style={styles.listMain}><Text style={styles.listTitle}>{supplier.name}</Text><Text style={styles.listMeta}>{supplier.code}{supplier.phone ? ` · ${supplier.phone}` : ''}</Text></View><StatusPill tone={supplier.active ? 'mint' : 'muted'}>{supplier.active ? 'Active' : 'Inactive'}</StatusPill></View><View style={styles.listRow}><ActionButton title="Ledger" onPress={() => void loadSupplierLedger(supplier.id)} secondary loading={working} disabled={ws.online !== true} /><ActionButton title="Edit" onPress={() => { setSupplierEditingId(supplier.id); setSupplierName(supplier.name); setSupplierPhone(supplier.phone ?? ''); }} secondary disabled={working || ws.online !== true || !ws.can('suppliers:write')} /><ActionButton title={supplier.active ? 'Archive' : 'Restore'} onPress={() => toggleSupplierActive(supplier)} secondary loading={working} disabled={ws.online !== true || !ws.can('suppliers:write')} /></View></View>)}
+          {suppliers.map((supplier) => <View key={supplier.id} style={styles.card}><View style={styles.listRow}><View style={styles.listMain}><Text style={styles.listTitle}>{supplier.name}</Text><Text style={styles.listMeta}>{supplier.code}{supplier.phone ? ` · ${supplier.phone}` : ''}</Text></View><StatusPill tone={supplier.active ? 'mint' : 'muted'}>{supplier.active ? 'Active' : 'Inactive'}</StatusPill></View><View style={styles.listRow}><ActionButton title="Ledger" onPress={() => void loadSupplierLedger(supplier.id)} secondary loading={working} disabled={false} /><ActionButton title="Edit" onPress={() => { setSupplierEditingId(supplier.id); setSupplierName(supplier.name); setSupplierPhone(supplier.phone ?? ''); }} secondary disabled={working || !ws.can('suppliers:write')} /><ActionButton title={supplier.active ? 'Archive' : 'Restore'} onPress={() => toggleSupplierActive(supplier)} secondary loading={working} disabled={!ws.can('suppliers:write')} /></View></View>)}
           {supplierLedger ? <View style={styles.card}><Text style={styles.sectionTitle}>{supplierLedger.supplier.code} · {supplierLedger.supplier.name}</Text><Text style={styles.listMeta}>Supplier balance: {formatMoney(supplierLedger.balance)}</Text>{supplierLedger.entries.map((entry) => <View key={entry.id} style={styles.listRow}><View style={{ flex: 1 }}><Text style={styles.listTitle}>{entry.kind} · {entry.purchaseOrderNumber ?? entry.reference ?? 'Supplier transaction'}</Text><Text style={styles.listMeta}>{new Date(entry.occurredAt).toLocaleDateString()}{entry.note ? ` · ${entry.note}` : ''}</Text></View><View><Text style={styles.listPrice}>{formatMoney(entry.amount)}</Text><Text style={styles.listMeta}>Balance {formatMoney(entry.runningBalance)}</Text></View></View>)}<ActionButton title="Close ledger" onPress={() => setSupplierLedger(null)} secondary /></View> : null}
           {!suppliers.length && !loading ? <EmptyState title="No suppliers yet" detail="Add the people and businesses that provide your materials." /> : null}
         </>
@@ -780,13 +779,13 @@ export function ErpScreen() {
             <HorizontalPicker options={variantOptions} selected={purchaseVariantId} onSelect={setPurchaseVariantId} />
             <Field label="Quantity" value={purchaseQuantity} onChangeText={setPurchaseQuantity} keyboardType="decimal-pad" />
             <Field label="Unit cost" value={purchaseCost} onChangeText={setPurchaseCost} keyboardType="decimal-pad" />
-            <ActionButton title="Create purchase order" onPress={submitPurchaseOrder} loading={working} disabled={ws.online !== true || !ws.can('purchasing:write')} />
+            <ActionButton title="Create purchase order" onPress={submitPurchaseOrder} loading={working} disabled={!ws.can('purchasing:write')} />
           </View> : null}
           {openLines.length > 0 ? <View style={styles.card}>
             <Text style={styles.sectionTitle}>Receive goods</Text>
             <HorizontalPicker options={openLines.map(({ order, line }) => ({ id: line.id, label: `${order.orderNumber} · ${line.variant.stockItem.name} (${line.remainingQuantity ?? '0.000000'} ${line.variant.stockItem.baseUnit} left)` }))} selected={receiveLineId} onSelect={setReceiveLineId} />
             <Field label="Received quantity" value={receiveQuantity} onChangeText={setReceiveQuantity} keyboardType="decimal-pad" />
-            <ActionButton title="Receive into inventory" onPress={submitReceipt} loading={working} disabled={ws.online !== true || !ws.can('purchasing:write') || !ws.moduleEnabled('inventory')} />
+            <ActionButton title="Receive into inventory" onPress={submitReceipt} loading={working} disabled={!ws.can('purchasing:write') || !ws.moduleEnabled('inventory')} />
           </View> : null}
           {ws.moduleEnabled('cashbook') && ws.can('cashbook:write') ? <View style={styles.card}>
             <Text style={styles.sectionTitle}>Supplier payment or refund</Text>
@@ -797,7 +796,7 @@ export function ErpScreen() {
             <HorizontalPicker options={cashAccounts.map((account) => ({ id: account.id, label: account.name }))} selected={settlementAccountId} onSelect={setSettlementAccountId} />
             <Field label="Amount" value={settlementAmount} onChangeText={setSettlementAmount} keyboardType="decimal-pad" />
             <Field label="Note (optional)" value={settlementNote} onChangeText={setSettlementNote} />
-            <ActionButton title={settlementKind === 'PAYMENT' ? 'Record supplier payment' : 'Record supplier refund'} onPress={submitSupplierSettlement} loading={working} disabled={ws.online !== true || !ws.can('purchasing:write') || !ws.can('cashbook:write') || !ws.moduleEnabled('cashbook') || !ws.moduleEnabled('suppliers') || !cashAccounts.length || !settlementOrders.length} />
+            <ActionButton title={settlementKind === 'PAYMENT' ? 'Record supplier payment' : 'Record supplier refund'} onPress={submitSupplierSettlement} loading={working} disabled={!ws.can('purchasing:write') || !ws.can('cashbook:write') || !ws.moduleEnabled('cashbook') || !ws.moduleEnabled('suppliers') || !cashAccounts.length || !settlementOrders.length} />
           </View> : <View style={styles.card}><Text style={styles.listTitle}>Supplier settlements need Cash & Bank</Text><Text style={styles.listMeta}>Enable Cash & Bank and grant cashbook write permission to record supplier payments or refunds.</Text></View>}
           {purchaseOrders.map((order) => <View key={order.id} style={styles.listCard}><View style={styles.listMain}><Text style={styles.listTitle}>{order.orderNumber} · {order.supplier.name}</Text><Text style={styles.listMeta}>{order.lines.map((line) => `${line.variant.stockItem.name}: ${line.receivedQuantity}/${line.orderedQuantity}`).join(' · ')}{order.receivedTotal !== undefined ? ` · received ${formatMoney(order.receivedTotal)}` : ''}</Text><Text style={styles.listMeta}>Outstanding: {formatMoney(order.outstanding)}</Text></View><View><StatusPill tone={order.status === 'RECEIVED' ? 'mint' : 'amber'}>{order.status.replaceAll('_', ' ')}</StatusPill><Text style={styles.listPrice}>{formatMoney(order.total)}</Text></View></View>)}
           {!purchaseOrders.length && !loading ? <EmptyState title="No purchases yet" detail="Create a purchase order, then receive goods as deliveries arrive." /> : null}
@@ -806,20 +805,20 @@ export function ErpScreen() {
 
       {activeModule === 'cashbook' ? (
         <>
-          {accounts.length === 0 ? <View style={styles.card}><Text style={styles.sectionTitle}>Set up cash and bank accounts</Text><Text style={styles.listMeta}>This creates the standard cash, bank and digital-wallet accounts. Existing business balances are not changed.</Text><ActionButton title="Set up accounts" onPress={() => setupChart('cashbook')} loading={working} disabled={ws.online !== true || !ws.can('cashbook:write')} /></View> : null}
+          {accounts.length === 0 ? <View style={styles.card}><Text style={styles.sectionTitle}>Set up cash and bank accounts</Text><Text style={styles.listMeta}>This creates the standard cash, bank and digital-wallet accounts. Existing business balances are not changed.</Text><ActionButton title="Set up accounts" onPress={() => setupChart('cashbook')} loading={working} disabled={!ws.can('cashbook:write')} /></View> : null}
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Accounts</Text>
-            {accounts.map((account) => <View key={account.id} style={styles.listRow}><Pressable onPress={() => setCashAccountId(account.id)} style={{ flex: 1 }}><Text style={[styles.listTitle, cashAccountId === account.id && { color: palette.primaryText }]}>{account.name}</Text><Text style={styles.listPrice}>{formatMoney(account.balance)}</Text></Pressable><ActionButton title="Edit" onPress={() => { setCashbookEditKind('ACCOUNT'); setCashbookEditId(account.id); setCashbookEditName(account.name); }} secondary disabled={working || ws.online !== true || !ws.can('cashbook:write')} /></View>)}
+            {accounts.map((account) => <View key={account.id} style={styles.listRow}><Pressable onPress={() => setCashAccountId(account.id)} style={{ flex: 1 }}><Text style={[styles.listTitle, cashAccountId === account.id && { color: palette.primaryText }]}>{account.name}</Text><Text style={styles.listPrice}>{formatMoney(account.balance)}</Text></Pressable><ActionButton title="Edit" onPress={() => { setCashbookEditKind('ACCOUNT'); setCashbookEditId(account.id); setCashbookEditName(account.name); }} secondary disabled={working || !ws.can('cashbook:write')} /></View>)}
             <Field label="Add cash / bank account" value={newCashAccountName} onChangeText={setNewCashAccountName} />
-            <ActionButton title="Add account" onPress={createCashAccount} secondary loading={working} disabled={ws.online !== true || !ws.can('cashbook:write')} />
-            {cashbookEditKind === 'ACCOUNT' ? <><Field label="Edit account name" value={cashbookEditName} onChangeText={setCashbookEditName} /><ActionButton title="Save account name" onPress={updateCashbookName} loading={working} disabled={ws.online !== true || !ws.can('cashbook:write')} /><ActionButton title="Cancel edit" onPress={() => { setCashbookEditKind(''); setCashbookEditId(''); setCashbookEditName(''); }} secondary disabled={working} /></> : null}
+            <ActionButton title="Add account" onPress={createCashAccount} secondary loading={working} disabled={!ws.can('cashbook:write')} />
+            {cashbookEditKind === 'ACCOUNT' ? <><Field label="Edit account name" value={cashbookEditName} onChangeText={setCashbookEditName} /><ActionButton title="Save account name" onPress={updateCashbookName} loading={working} disabled={!ws.can('cashbook:write')} /><ActionButton title="Cancel edit" onPress={() => { setCashbookEditKind(''); setCashbookEditId(''); setCashbookEditName(''); }} secondary disabled={working} /></> : null}
           </View>
           {selectedCashAccount ? <View style={styles.card}>
             <Text style={styles.sectionTitle}>First-time opening balance</Text>
             <Text style={styles.listMeta}>{selectedCashAccount.name}. This posts once to opening equity. If this account already has activity, use an audited transaction or journal correction instead.</Text>
             <Field label="Balance (negative for overdraft)" value={openingBalanceAmount} onChangeText={setOpeningBalanceAmount} keyboardType="decimal-pad" />
             <Field label="As of (ISO date/time)" value={openingBalanceAsOf} onChangeText={setOpeningBalanceAsOf} />
-            <ActionButton title="Record opening balance" onPress={submitOpeningBalance} loading={working} disabled={ws.online !== true || !ws.can('cashbook:write')} />
+            <ActionButton title="Record opening balance" onPress={submitOpeningBalance} loading={working} disabled={!ws.can('cashbook:write')} />
           </View> : null}
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Record cashbook activity</Text>
@@ -836,12 +835,12 @@ export function ErpScreen() {
               <Text style={styles.fieldLabel}>New category type</Text>
               <View style={styles.chipWrap}>{(['EXPENSE', 'INCOME'] as const).map((type) => <Pressable key={type} onPress={() => setCategoryType(type)} style={[styles.chip, categoryType === type && styles.chipSelected]}><Text style={[styles.chipText, categoryType === type && styles.chipTextSelected]}>{type.toLowerCase()}</Text></Pressable>)}</View>
               <Field label="New category name" value={categoryName} onChangeText={setCategoryName} />
-              <ActionButton title="Add category" onPress={createCategory} secondary loading={working} disabled={ws.online !== true || !ws.can('cashbook:write')} />
+              <ActionButton title="Add category" onPress={createCategory} secondary loading={working} disabled={!ws.can('cashbook:write')} />
               <Text style={styles.fieldLabel}>Existing categories</Text>
-              {categories.filter((category) => ['INCOME', 'EXPENSE'].includes(category.type)).map((category) => <View key={category.id} style={styles.listRow}><Text style={styles.listMeta}>{category.type.toLowerCase()} · {category.name}</Text><ActionButton title="Edit" onPress={() => { setCashbookEditKind('CATEGORY'); setCashbookEditId(category.id); setCashbookEditName(category.name); }} secondary disabled={working || ws.online !== true || !ws.can('cashbook:write')} /></View>)}
-              {cashbookEditKind === 'CATEGORY' ? <><Field label="Edit category name" value={cashbookEditName} onChangeText={setCashbookEditName} /><ActionButton title="Save category name" onPress={updateCashbookName} loading={working} disabled={ws.online !== true || !ws.can('cashbook:write')} /><ActionButton title="Cancel edit" onPress={() => { setCashbookEditKind(''); setCashbookEditId(''); setCashbookEditName(''); }} secondary disabled={working} /></> : null}
+              {categories.filter((category) => ['INCOME', 'EXPENSE'].includes(category.type)).map((category) => <View key={category.id} style={styles.listRow}><Text style={styles.listMeta}>{category.type.toLowerCase()} · {category.name}</Text><ActionButton title="Edit" onPress={() => { setCashbookEditKind('CATEGORY'); setCashbookEditId(category.id); setCashbookEditName(category.name); }} secondary disabled={working || !ws.can('cashbook:write')} /></View>)}
+              {cashbookEditKind === 'CATEGORY' ? <><Field label="Edit category name" value={cashbookEditName} onChangeText={setCashbookEditName} /><ActionButton title="Save category name" onPress={updateCashbookName} loading={working} disabled={!ws.can('cashbook:write')} /><ActionButton title="Cancel edit" onPress={() => { setCashbookEditKind(''); setCashbookEditId(''); setCashbookEditName(''); }} secondary disabled={working} /></> : null}
             </> : null}
-            <ActionButton title={cashKind === 'TRANSFER' ? 'Post transfer' : cashKind === 'EXPENSE' ? 'Record expense' : 'Record receipt'} onPress={submitCashTransaction} loading={working} disabled={ws.online !== true || !ws.can('cashbook:write')} />
+            <ActionButton title={cashKind === 'TRANSFER' ? 'Post transfer' : cashKind === 'EXPENSE' ? 'Record expense' : 'Record receipt'} onPress={submitCashTransaction} loading={working} disabled={!ws.can('cashbook:write')} />
           </View>
           {cashTransactions.map((transaction) => <View key={transaction.id} style={styles.listCard}><View style={styles.listMain}><Text style={styles.listTitle}>{transaction.memo} · {transaction.kind.toLowerCase()}</Text><Text style={styles.listMeta}>{transaction.financialAccount.name} · {transaction.contraAccount.name} · {new Date(transaction.occurredAt).toLocaleDateString()}</Text></View><Text style={styles.listPrice}>{formatMoney(transaction.amount)}</Text></View>)}
           {!cashTransactions.length && !loading ? <EmptyState title="No cashbook entries" detail="Recorded receipts, expenses and transfers will appear here." /> : null}
@@ -854,15 +853,15 @@ export function ErpScreen() {
             <Field label="Statement ends (ISO date/time)" value={reconciliationEnd} onChangeText={setReconciliationEnd} />
             <Field label="Statement opening balance" value={reconciliationOpening} onChangeText={setReconciliationOpening} keyboardType="decimal-pad" />
             <Field label="Statement closing balance" value={reconciliationClosing} onChangeText={setReconciliationClosing} keyboardType="decimal-pad" />
-            <ActionButton title="Start reconciliation" onPress={submitReconciliation} loading={working} disabled={ws.online !== true || !ws.can('cashbook:write')} />
+            <ActionButton title="Start reconciliation" onPress={submitReconciliation} loading={working} disabled={!ws.can('cashbook:write')} />
             <Text style={styles.fieldLabel}>Existing reconciliations</Text>
             {reconciliations.map((reconciliation) => <Pressable key={reconciliation.id} onPress={() => void loadReconciliationLines(reconciliation.id)} style={[styles.listRow, { paddingVertical: 6 }]}><Text style={[styles.listTitle, reconciliationId === reconciliation.id && { color: palette.primaryText }]}>{reconciliation.account.name} · {new Date(reconciliation.statementEnd).toLocaleDateString()}</Text><StatusPill tone={reconciliation.status === 'CLOSED' ? 'mint' : 'amber'}>{reconciliation.status}</StatusPill></Pressable>)}
             {selectedReconciliation ? <>
               <Text style={styles.listMeta}>Opening {formatMoney(selectedReconciliation.openingBalance)} · closing {formatMoney(selectedReconciliation.closingBalance)} · {selectedReconciliation._count.matches} matched</Text>
               {reconciliationLines.map((line) => <Pressable key={line.id} disabled={line.matched} onPress={() => setSelectedReconciliationLines((current) => current.includes(line.id) ? current.filter((id) => id !== line.id) : [...current, line.id])} style={[styles.listRow, { paddingVertical: 6, opacity: line.matched ? 0.55 : 1 }]}><View style={{ flex: 1 }}><Text style={styles.listTitle}>{line.journalEntry.memo}</Text><Text style={styles.listMeta}>{line.journalEntry.entryNumber} · {new Date(line.journalEntry.entryDate).toLocaleDateString()} · {line.matched ? 'Matched' : 'Tap to select'}</Text></View><Text style={styles.listPrice}>{formatMoney(line.signedAmount)}</Text></Pressable>)}
               {selectedReconciliation.status === 'OPEN' ? <>
-                <ActionButton title={`Match selected (${selectedReconciliationLines.length})`} onPress={matchReconciliationLines} secondary loading={working} disabled={ws.online !== true || !ws.can('cashbook:write') || !selectedReconciliationLines.length} />
-                <ActionButton title="Close reconciliation" onPress={closeReconciliation} loading={working} disabled={ws.online !== true || !ws.can('cashbook:write')} />
+                <ActionButton title={`Match selected (${selectedReconciliationLines.length})`} onPress={matchReconciliationLines} secondary loading={working} disabled={!ws.can('cashbook:write') || !selectedReconciliationLines.length} />
+                <ActionButton title="Close reconciliation" onPress={closeReconciliation} loading={working} disabled={!ws.can('cashbook:write')} />
               </> : null}
             </> : null}
           </View>
@@ -871,7 +870,7 @@ export function ErpScreen() {
 
       {activeModule === 'accounting' ? (
         <>
-          {accounts.length === 0 ? <View style={styles.card}><Text style={styles.sectionTitle}>Initialize the chart of accounts</Text><Text style={styles.listMeta}>Set up a practical starter chart. This does not add opening balances or alter existing records.</Text><ActionButton title="Set up chart" onPress={() => setupChart('accounting')} loading={working} disabled={ws.online !== true || !ws.can('accounting:manage')} /></View> : null}
+          {accounts.length === 0 ? <View style={styles.card}><Text style={styles.sectionTitle}>Initialize the chart of accounts</Text><Text style={styles.listMeta}>Set up a practical starter chart. This does not add opening balances or alter existing records.</Text><ActionButton title="Set up chart" onPress={() => setupChart('accounting')} loading={working} disabled={!ws.can('accounting:manage')} /></View> : null}
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Manage accounts</Text>
             <Text style={styles.listMeta}>Add a business-specific account category or balance-sheet account. Posted history is preserved when accounts are deactivated.</Text>
@@ -879,10 +878,10 @@ export function ErpScreen() {
             <Field label="Account name" value={accountName} onChangeText={setAccountName} />
             <Text style={styles.fieldLabel}>Account type</Text>
             <View style={styles.chipWrap}>{(['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'] as const).map((type) => <Pressable key={type} onPress={() => setAccountType(type)} style={[styles.chip, accountType === type && styles.chipSelected]}><Text style={[styles.chipText, accountType === type && styles.chipTextSelected]}>{type.toLowerCase()}</Text></Pressable>)}</View>
-            <ActionButton title="Create account" onPress={createAccountingAccount} secondary loading={working} disabled={ws.online !== true || !ws.can('accounting:manage')} />
-            {accountEditingId ? <><Field label="Rename selected account" value={accountName} onChangeText={setAccountName} /><ActionButton title="Save account name" onPress={saveAccountingAccountName} loading={working} disabled={ws.online !== true || !ws.can('accounting:manage')} /><ActionButton title="Cancel edit" onPress={() => { setAccountEditingId(''); setAccountName(''); }} secondary disabled={working} /></> : null}
+            <ActionButton title="Create account" onPress={createAccountingAccount} secondary loading={working} disabled={!ws.can('accounting:manage')} />
+            {accountEditingId ? <><Field label="Rename selected account" value={accountName} onChangeText={setAccountName} /><ActionButton title="Save account name" onPress={saveAccountingAccountName} loading={working} disabled={!ws.can('accounting:manage')} /><ActionButton title="Cancel edit" onPress={() => { setAccountEditingId(''); setAccountName(''); }} secondary disabled={working} /></> : null}
             <Text style={styles.fieldLabel}>Existing accounts</Text>
-            {accounts.map((account) => <View key={account.id} style={styles.listRow}><View style={{ flex: 1 }}><Text style={styles.listTitle}>{account.code} · {account.name}</Text><Text style={styles.listMeta}>{account.type.toLowerCase()} · {account.active === false ? 'inactive' : 'active'}{account.cashbookEnabled ? ' · cashbook' : ''}</Text></View><ActionButton title="Edit" onPress={() => { setAccountEditingId(account.id); setAccountName(account.name); }} secondary disabled={working || ws.online !== true || !ws.can('accounting:manage')} />{account.isSystem ? null : <ActionButton title={account.active === false ? 'Restore' : 'Archive'} onPress={() => toggleAccountingAccount(account)} secondary loading={working} disabled={ws.online !== true || !ws.can('accounting:manage')} />}</View>)}
+            {accounts.map((account) => <View key={account.id} style={styles.listRow}><View style={{ flex: 1 }}><Text style={styles.listTitle}>{account.code} · {account.name}</Text><Text style={styles.listMeta}>{account.type.toLowerCase()} · {account.active === false ? 'inactive' : 'active'}{account.cashbookEnabled ? ' · cashbook' : ''}</Text></View><ActionButton title="Edit" onPress={() => { setAccountEditingId(account.id); setAccountName(account.name); }} secondary disabled={working || !ws.can('accounting:manage')} />{account.isSystem ? null : <ActionButton title={account.active === false ? 'Restore' : 'Archive'} onPress={() => toggleAccountingAccount(account)} secondary loading={working} disabled={!ws.can('accounting:manage')} />}</View>)}
           </View>
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Manual journal</Text>
@@ -893,7 +892,7 @@ export function ErpScreen() {
             <Text style={styles.fieldLabel}>Credit account</Text>
             <HorizontalPicker options={accounts.filter((account) => account.active !== false).map((account) => ({ id: account.id, label: `${account.code} · ${account.name}` }))} selected={journalCreditAccountId} onSelect={setJournalCreditAccountId} />
             <Field label={`Amount (${currency})`} value={journalAmount} onChangeText={setJournalAmount} keyboardType="decimal-pad" />
-            <ActionButton title="Post balanced journal" onPress={submitManualJournal} loading={working} disabled={ws.online !== true || !ws.can('accounting:write')} />
+            <ActionButton title="Post balanced journal" onPress={submitManualJournal} loading={working} disabled={!ws.can('accounting:write')} />
           </View>
           {profitLoss ? <View style={styles.card}><Text style={styles.sectionTitle}>Profit & loss · all time</Text><View style={styles.listRow}><Text style={styles.listMeta}>Income</Text><Text style={styles.listPrice}>{formatMoney(profitLoss.totalIncome)}</Text></View><View style={styles.listRow}><Text style={styles.listMeta}>Expenses</Text><Text style={styles.listPrice}>{formatMoney(profitLoss.totalExpenses)}</Text></View><View style={styles.listRow}><Text style={styles.listTitle}>Net profit</Text><Text style={styles.listPrice}>{formatMoney(profitLoss.netProfit)}</Text></View></View> : null}
           {balanceSheet ? <View style={styles.card}><Text style={styles.sectionTitle}>Balance sheet · today</Text><View style={styles.listRow}><Text style={styles.listMeta}>Assets</Text><Text style={styles.listPrice}>{formatMoney(balanceSheet.totalAssets)}</Text></View><View style={styles.listRow}><Text style={styles.listMeta}>Liabilities & equity</Text><Text style={styles.listPrice}>{formatMoney(balanceSheet.liabilitiesAndEquity)}</Text></View><View style={styles.listRow}><Text style={styles.listMeta}>Current earnings</Text><Text style={styles.listPrice}>{formatMoney(balanceSheet.currentEarnings)}</Text></View></View> : null}
@@ -904,14 +903,14 @@ export function ErpScreen() {
             {journalEntries.map((entry) => <View key={entry.id} style={[styles.card, { marginTop: 8, marginBottom: 0 }]}>
               <View style={styles.listRow}><View style={{ flex: 1 }}><Text style={styles.listTitle}>#{entry.entryNumber} · {entry.memo}</Text><Text style={styles.listMeta}>{entry.sourceType.replaceAll('_', ' ')} · {new Date(entry.entryDate).toLocaleString()}</Text></View><StatusPill tone={entry.status === 'POSTED' ? 'mint' : 'muted'}>{entry.status}</StatusPill></View>
               {entry.lines.map((line) => <View key={line.id} style={styles.listRow}><Text style={styles.listMeta}>{line.account.code} · {line.account.name}</Text><Text style={styles.listMeta}>{Number(line.debit) ? `Dr ${formatMoney(line.debit)}` : `Cr ${formatMoney(line.credit)}`}</Text></View>)}
-              {entry.status === 'POSTED' && !entry.reversalOfId ? <ActionButton title="Reverse this entry" onPress={() => reverseJournal(entry.id)} secondary loading={working} disabled={ws.online !== true || !ws.can('accounting:write') || !reversalReason.trim()} /> : null}
+              {entry.status === 'POSTED' && !entry.reversalOfId ? <ActionButton title="Reverse this entry" onPress={() => reverseJournal(entry.id)} secondary loading={working} disabled={!ws.can('accounting:write') || !reversalReason.trim()} /> : null}
             </View>)}
             {!journalEntries.length && !loading ? <Text style={styles.listMeta}>No journal entries have been posted yet.</Text> : null}
           </View>
         </>
       ) : null}
 
-      <ActionButton title="Refresh" onPress={() => void refresh()} secondary disabled={ws.online !== true || loading || working} />
+      <ActionButton title="Refresh" onPress={() => void refresh()} secondary disabled={loading || working} />
     </View>
   );
 }

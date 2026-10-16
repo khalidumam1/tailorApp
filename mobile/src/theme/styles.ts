@@ -1,7 +1,11 @@
 /**
- * App-wide style sheet. The screen components compose these primitives
- * (Card, Chip, Pill, StatTile, etc.) plus a few screen-specific layouts.
- * Everything is derived from the palette so light / dark switch cleanly.
+ * Simple, clean style sheet for TailorApp mobile.
+ *
+ * Design principles:
+ * - Light-first, readable in bright conditions
+ * - No borders (no white lines), separation via background and spacing
+ * - Simple cards, clear typography
+ * - Standard mobile patterns
  */
 import { StyleSheet } from 'react-native';
 import { mixHex, type AppPalette } from './palette';
@@ -11,25 +15,35 @@ export type AppStyles = ReturnType<typeof createStyles>;
 export function createStyles(palette: AppPalette) {
   const dark = palette.mode === 'dark';
   return StyleSheet.create({
+    // --- Layout ---
     grow: { flex: 1 },
     safe: { flex: 1, backgroundColor: palette.background },
     workspace: { flex: 1, minHeight: 0, backgroundColor: palette.background },
     rtlLayout: { direction: 'rtl' },
     centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.background },
     centerStack: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: palette.background },
-    heading: { color: palette.text, fontSize: 22, fontWeight: '800', marginBottom: 14 },
 
-     // --- Header (Payrio-style: dark, search-forward) ---
-     header: {
-       paddingHorizontal: 16,
-       paddingTop: 10,
-       paddingBottom: 12,
-       backgroundColor: palette.background,
-     },
-    headerTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+    // --- Typography ---
+    heading: { color: palette.text, fontSize: 20, fontWeight: '700', marginBottom: 8 },
+    subheading: { color: palette.secondaryText, fontSize: 16, fontWeight: '600', marginBottom: 8 },
+    body: { color: palette.text, fontSize: 15, lineHeight: 22 },
+    caption: { color: palette.mutedText, fontSize: 13, lineHeight: 18 },
+    pageTitle: { color: palette.text, fontSize: 22, fontWeight: '800', letterSpacing: -0.5, marginBottom: 4 },
+    pageSubtitle: { color: palette.mutedText, fontSize: 14, lineHeight: 20, marginBottom: 16 },
+    sectionTitle: { color: palette.text, fontSize: 15, fontWeight: '700', marginBottom: 8 },
+    sectionLink: { color: palette.primary, fontSize: 13, fontWeight: '700' },
+
+    // --- Header ---
+    header: {
+      paddingHorizontal: 16,
+      paddingTop: 10,
+      paddingBottom: 12,
+      backgroundColor: palette.background,
+    },
+    headerTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     headerBrand: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    headerBrandName: { color: palette.text, fontSize: 18, fontWeight: '800', letterSpacing: 0.2 },
-    headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    headerBrandName: { color: palette.text, fontSize: 18, fontWeight: '800' },
+    headerRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
     searchPill: {
       flex: 1,
       flexDirection: 'row',
@@ -37,174 +51,138 @@ export function createStyles(palette: AppPalette) {
       gap: 10,
       paddingHorizontal: 14,
       paddingVertical: 11,
-      borderRadius: 16,
-      backgroundColor: palette.surface,
-      borderWidth: 1,
-      borderColor: palette.border,
+      borderRadius: 10,
+      backgroundColor: palette.surfaceMuted,
     },
-    searchPillText: { color: palette.mutedText, fontSize: 15, fontWeight: '500' },
-
+    searchPillText: { color: palette.mutedText, fontSize: 14 },
     bellButton: {
-      width: 40,
-      height: 40,
-      borderRadius: 13,
+      width: 44,
+      height: 44,
+      borderRadius: 10,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: palette.surface,
-      borderWidth: 1,
-      borderColor: palette.border,
+      backgroundColor: palette.surfaceMuted,
     },
     bellBadge: {
       position: 'absolute',
-      top: 6,
-      right: 6,
+      top: 8,
+      right: 8,
       width: 8,
       height: 8,
       borderRadius: 4,
-      backgroundColor: palette.success,
+      backgroundColor: palette.danger,
     },
     brandMark: {
       width: 36,
       height: 36,
-      overflow: 'hidden',
+      borderRadius: 10,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: 11,
       backgroundColor: palette.primary,
     },
-    brandLetter: { color: palette.onPrimary, fontSize: 17, fontWeight: '900' },
+    brandLetter: { color: palette.onPrimary, fontSize: 17, fontWeight: '800' },
     logoImage: { alignItems: 'center', justifyContent: 'center' },
 
     // --- Auth screen ---
-    authContent: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 22, paddingTop: 28, paddingBottom: 36 },
+    authContent: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24, paddingTop: 40, paddingBottom: 32 },
     authLanguageRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: 8,
-      marginBottom: 16,
+      marginBottom: 12,
     },
     authBrandMark: {
       width: 64,
       height: 64,
-      overflow: 'hidden',
+      borderRadius: 16,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: 20,
       backgroundColor: palette.primary,
-      marginBottom: 18,
-      shadowColor: palette.primary,
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: 0.32,
-      shadowRadius: 16,
-      elevation: 6,
+      marginBottom: 16,
     },
-    authBrandLetter: { color: palette.onPrimary, fontSize: 30, fontWeight: '900' },
-    authBrandName: { color: palette.text, fontSize: 24, fontWeight: '900', letterSpacing: -0.3 },
-    authTagline: { color: palette.secondaryText, fontSize: 16, marginTop: 6, marginBottom: 6, lineHeight: 22 },
-    authDescription: { color: palette.mutedText, fontSize: 15, lineHeight: 21, marginBottom: 18 },
+    authBrandLetter: { color: palette.onPrimary, fontSize: 28, fontWeight: '900' },
+    authBrandName: { color: palette.text, fontSize: 26, fontWeight: '800', textAlign: 'center' },
+    authTagline: { color: palette.secondaryText, fontSize: 15, textAlign: 'center', marginTop: 4, marginBottom: 8 },
+    authDescription: { color: palette.mutedText, fontSize: 14, textAlign: 'center', lineHeight: 20, marginBottom: 16 },
 
-     // --- Hero (Payrio-style balance card) ---
-     heroCard: {
-       borderRadius: 18,
-       paddingHorizontal: 18,
-       paddingTop: 16,
-       paddingBottom: 18,
-       marginBottom: 16,
-       backgroundColor: palette.heroBackground,
-       borderWidth: 1,
-       borderColor: palette.heroBorder,
-       shadowColor: palette.heroShadow,
-       shadowOffset: { width: 0, height: 6 },
-       shadowOpacity: dark ? 0.3 : 0.12,
-       shadowRadius: 14,
-       elevation: 3,
-     },
-     heroLabel: { color: dark ? mixHex(palette.primary, '#ffffff', 0.75) : palette.secondaryText, fontSize: 12, fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase' },
-     heroSubLabel: { color: dark ? '#8fa896' : palette.mutedText, fontSize: 12, marginTop: 2 },
-     heroAmount: { color: dark ? '#ffffff' : palette.text, fontSize: 32, fontWeight: '800', letterSpacing: -0.6, marginTop: 6 },
-     heroRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
-     heroPill: {
-       flexDirection: 'row',
-       alignItems: 'center',
-       gap: 4,
-       paddingHorizontal: 8,
-       paddingVertical: 4,
-       borderRadius: 12,
-       backgroundColor: dark ? 'rgba(122, 214, 163, 0.12)' : mixHex(palette.success, '#ffffff', 0.6),
-     },
-     heroPillText: { color: palette.success, fontSize: 11, fontWeight: '700' },
-     heroMeta: { color: dark ? '#6d856b' : palette.mutedText, fontSize: 11 },
+    // --- Hero card ---
+    heroCard: {
+      borderRadius: 16,
+      paddingHorizontal: 18,
+      paddingVertical: 20,
+      marginBottom: 16,
+      backgroundColor: palette.surface,
+    },
+    heroLabel: { color: palette.secondaryText, fontSize: 12, fontWeight: '600', letterSpacing: 0.5, textTransform: 'uppercase' },
+    heroAmount: { color: palette.text, fontSize: 30, fontWeight: '800', marginTop: 6 },
+    heroSubLabel: { color: palette.mutedText, fontSize: 12, marginTop: 2 },
+    heroRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
+    heroPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 10,
+      backgroundColor: palette.successSurface,
+    },
+    heroPillText: { color: palette.success, fontSize: 12, fontWeight: '700' },
+    heroMeta: { color: palette.mutedText, fontSize: 11 },
 
-     // --- Quick action row (Payrio-style circle/oval buttons) ---
-     quickRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
-     quickAction: {
-       flex: 1,
-       alignItems: 'center',
-       justifyContent: 'center',
-       paddingVertical: 12,
-       borderRadius: 14,
-       backgroundColor: palette.surface,
-       borderWidth: 1,
-       borderColor: palette.border,
-       gap: 4,
-     },
-     quickActionIcon: {
-       width: 32,
-       height: 32,
-       borderRadius: 10,
-       alignItems: 'center',
-       justifyContent: 'center',
-       backgroundColor: palette.primarySoft,
-     },
-     quickActionLabel: { color: palette.text, fontSize: 11, fontWeight: '600' },
+    // --- Quick actions ---
+    quickRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+    quickAction: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 14,
+      borderRadius: 12,
+      backgroundColor: palette.surfaceMuted,
+    },
+    quickActionIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: palette.primarySoft,
+    },
+    quickActionLabel: { color: palette.text, fontSize: 11, fontWeight: '700' },
 
-     // --- Section heading ---
-     sectionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 },
-     sectionTitle: { color: palette.text, fontSize: 15, fontWeight: '700', letterSpacing: -0.05 },
-     sectionLink: { color: palette.primaryText, fontSize: 12, fontWeight: '600' },
-     pageTitle: { color: palette.text, fontSize: 22, fontWeight: '800', letterSpacing: -0.2, marginBottom: 2 },
-     pageSubtitle: { color: palette.mutedText, fontSize: 12, lineHeight: 16, marginBottom: 10 },
-
-     // --- Cards / list ---
-     card: {
-       backgroundColor: palette.surface,
-       borderRadius: 14,
-       padding: 14,
-       borderWidth: 1,
-       borderColor: palette.border,
-       marginBottom: 8,
-     },
-     cardAccentMint: { borderTopWidth: 3, borderTopColor: '#7ad6a3' },
-     cardAccentAmber: { borderTopWidth: 3, borderTopColor: '#f0c073' },
-     cardAccentViolet: { borderTopWidth: 3, borderTopColor: '#a995e0' },
-     cardAccentBlue: { borderTopWidth: 3, borderTopColor: '#88b9e4' },
-     cardAccentRed: { borderTopWidth: 3, borderTopColor: '#f19386' },
-     cardAccentPrimary: { borderTopWidth: 3, borderTopColor: palette.primary },
-     listCard: {
-       backgroundColor: palette.surface,
-       borderWidth: 1,
-       borderColor: palette.border,
-       borderRadius: 14,
-       padding: 12,
-       flexDirection: 'row',
-       alignItems: 'center',
-       marginBottom: 8,
-       gap: 10,
-     },
+    // --- Cards ---
+    card: {
+      backgroundColor: palette.surface,
+      borderRadius: 12,
+      padding: 16,
+      marginBottom: 12,
+    },
+    cardAccentMint: { borderLeftWidth: 4, borderLeftColor: palette.success },
+    cardAccentAmber: { borderLeftWidth: 4, borderLeftColor: palette.warning },
+    cardAccentPrimary: { borderLeftWidth: 4, borderLeftColor: palette.primary },
+    cardAccentBlue: { borderLeftWidth: 4, borderLeftColor: palette.info },
+    cardAccentViolet: { borderLeftWidth: 4, borderLeftColor: '#a995e0' },
+    listCard: {
+      backgroundColor: palette.surface,
+      borderRadius: 12,
+      padding: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 8,
+      gap: 12,
+    },
     listMain: { flex: 1 },
-    listTitle: { color: palette.text, fontSize: 15.5, fontWeight: '800' },
+    listTitle: { color: palette.text, fontSize: 15, fontWeight: '700' },
     listMeta: { color: palette.mutedText, fontSize: 13, marginTop: 3 },
-    listPrice: { color: palette.primaryText, fontSize: 15, fontWeight: '800' },
-    listPriceMuted: { color: palette.mutedText, fontSize: 13, fontWeight: '700' },
+    listPrice: { color: palette.primary, fontSize: 15, fontWeight: '800' },
     listRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
     avatar: {
       width: 40,
       height: 40,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: 12,
+      borderRadius: 10,
       backgroundColor: palette.primarySoft,
     },
     avatarLg: {
@@ -212,88 +190,76 @@ export function createStyles(palette: AppPalette) {
       height: 48,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: 14,
+      borderRadius: 12,
       backgroundColor: palette.primarySoft,
     },
-    avatarText: { color: palette.primaryText, fontSize: 16, fontWeight: '900' },
-    avatarTextLg: { color: palette.primaryText, fontSize: 19, fontWeight: '900' },
+    avatarText: { color: palette.primaryText, fontSize: 16, fontWeight: '800' },
+    avatarTextLg: { color: palette.primaryText, fontSize: 19, fontWeight: '800' },
 
     iconDot: {
       width: 36,
       height: 36,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: 11,
+      borderRadius: 10,
       backgroundColor: palette.primarySoft,
     },
     iconDotMuted: { backgroundColor: palette.surfaceMuted },
-    iconDotMint: { backgroundColor: dark ? '#0f2a1c' : '#e8f5ee' },
-    iconDotAmber: { backgroundColor: dark ? '#2a2113' : '#fdf4e3' },
-    iconDotBlue: { backgroundColor: dark ? '#0f2236' : '#ecf3fa' },
-    iconDotViolet: { backgroundColor: dark ? '#221a3a' : '#f0eafb' },
+    iconDotMint: { backgroundColor: palette.successSurface },
+    iconDotAmber: { backgroundColor: palette.warningSurface },
+    iconDotBlue: { backgroundColor: palette.infoSurface },
+    iconDotViolet: { backgroundColor: '#f3e8ff' },
     iconDotRed: { backgroundColor: palette.dangerSurface },
 
-    // --- Status pills (Payrio-style dense indicators) ---
+    // --- Status pills ---
     statusPill: {
-      paddingHorizontal: 9,
-      paddingVertical: 4,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
       borderRadius: 8,
       alignSelf: 'flex-start',
     },
     statusPillText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase' },
-    pillMint: { backgroundColor: dark ? 'rgba(122, 214, 163, 0.16)' : mixHex(palette.success, '#ffffff', 0.7) },
+    pillMint: { backgroundColor: palette.successSurface },
     pillMintText: { color: palette.success },
-    pillAmber: { backgroundColor: dark ? 'rgba(240, 192, 115, 0.16)' : mixHex(palette.warning, '#ffffff', 0.7) },
+    pillAmber: { backgroundColor: palette.warningSurface },
     pillAmberText: { color: palette.warning },
     pillRed: { backgroundColor: palette.dangerSurface },
     pillRedText: { color: palette.danger },
     pillMuted: { backgroundColor: palette.surfaceMuted },
     pillMutedText: { color: palette.mutedText },
 
-    // --- Chips (Payrio-style dense filters) ---
-    chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
+    // --- Chips ---
+    chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
     chip: {
-      borderWidth: 1,
-      borderColor: palette.border,
-      borderRadius: 14,
+      borderRadius: 10,
       paddingHorizontal: 12,
       paddingVertical: 8,
-      backgroundColor: palette.surface,
-      overflow: 'hidden',
+      backgroundColor: palette.surfaceMuted,
     },
-    chipSelected: { backgroundColor: palette.primarySoft, borderColor: palette.primary },
-    chipPressed: { backgroundColor: palette.primarySoft, borderColor: palette.primary, opacity: 0.85, transform: [{ scale: 0.97 }] },
+    chipSelected: { backgroundColor: palette.primarySoft },
+    chipPressed: { backgroundColor: palette.primarySoft, opacity: 0.9 },
     chipText: { color: palette.secondaryText, fontSize: 13, fontWeight: '700' },
     chipTextSelected: { color: palette.primaryText },
 
-     // --- Money card (Payrio-style totals) ---
-     moneyCard: {
-       backgroundColor: palette.moneySurface,
-       borderRadius: 16,
-       padding: 16,
-       marginBottom: 16,
-       borderWidth: 1,
-       borderColor: dark ? mixHex(palette.moneySurface, '#ffffff', 0.03) : 'transparent',
-       shadowColor: palette.shadow,
-       shadowOffset: { width: 0, height: 4 },
-       shadowOpacity: 0.12,
-       shadowRadius: 10,
-       elevation: 2,
-     },
-     moneyRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 },
-     moneyLabel: { color: palette.moneyLabel, fontSize: 12 },
-     moneyValue: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-     moneySecondary: { color: dark ? mixHex(palette.moneyLabel, '#ffffff', 0.5) : palette.moneyLabel, fontSize: 11, marginTop: 1 },
-
-    // --- Kanban column (Payrio-style dense stage cards) ---
-    kanbanScroll: { paddingRight: 6, paddingBottom: 4 },
-    kanbanColumn: {
-      width: 268,
-      marginRight: 12,
+    // --- Money card ---
+    moneyCard: {
       backgroundColor: palette.surface,
-      borderRadius: 16,
-      borderWidth: 1,
-      borderColor: palette.border,
+      borderRadius: 14,
+      padding: 16,
+      marginBottom: 16,
+    },
+    moneyRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 },
+    moneyLabel: { color: palette.secondaryText, fontSize: 13 },
+    moneyValue: { color: palette.text, fontSize: 20, fontWeight: '800' },
+    moneySecondary: { color: palette.mutedText, fontSize: 11, marginTop: 1 },
+
+    // --- Kanban column ---
+    kanbanScroll: { paddingRight: 6 },
+    kanbanColumn: {
+      width: 240,
+      marginRight: 12,
+      backgroundColor: palette.surfaceMuted,
+      borderRadius: 14,
       padding: 12,
     },
     kanbanHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
@@ -309,108 +275,98 @@ export function createStyles(palette: AppPalette) {
     },
     kanbanEmpty: { color: palette.mutedText, fontSize: 13, textAlign: 'center', paddingVertical: 12 },
 
-    // --- Chart (Payrio-style area chart) ---
+    // --- Chart ---
     chartCard: {
       backgroundColor: palette.surface,
-      borderRadius: 18,
+      borderRadius: 14,
       padding: 16,
       marginBottom: 14,
-      borderWidth: 1,
-      borderColor: palette.border,
     },
     chartHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 },
     chartLabel: { color: palette.mutedText, fontSize: 12, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase' },
-    chartValue: { color: palette.text, fontSize: 26, fontWeight: '900', letterSpacing: -0.5, marginTop: 4 },
+    chartValue: { color: palette.text, fontSize: 24, fontWeight: '900', marginTop: 4 },
     chartPill: {
       paddingHorizontal: 8,
       paddingVertical: 4,
       borderRadius: 8,
-      backgroundColor: dark ? 'rgba(122, 214, 163, 0.16)' : mixHex(palette.success, '#ffffff', 0.7),
+      backgroundColor: palette.successSurface,
     },
     chartPillText: { color: palette.success, fontSize: 12, fontWeight: '800' },
 
-    // --- Bar list (Payrio-style horizontal bar list) ---
+    // --- Bar list ---
     barRow: { marginBottom: 10 },
     barLabelRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
     barLabel: { color: palette.text, fontSize: 13, fontWeight: '700' },
     barValue: { color: palette.mutedText, fontSize: 12, fontWeight: '700' },
-    barTrack: { height: 6, borderRadius: 3, backgroundColor: palette.surfaceSunken, overflow: 'hidden' },
-    barFill: { height: 6, borderRadius: 3, backgroundColor: palette.primary },
+    barTrack: { height: 8, borderRadius: 4, backgroundColor: palette.surfaceMuted, overflow: 'hidden' },
+    barFill: { height: 8, borderRadius: 4, backgroundColor: palette.primary },
 
     // --- Field / form ---
     field: { marginBottom: 12 },
     fieldLabel: { color: palette.secondaryText, fontSize: 13, fontWeight: '800', marginBottom: 6, letterSpacing: 0.2 },
     input: {
-      minHeight: 50,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: palette.borderStrong,
+      minHeight: 48,
+      borderRadius: 10,
       paddingHorizontal: 14,
       color: palette.text,
       fontSize: 15,
-      backgroundColor: palette.surface,
+      backgroundColor: palette.surfaceMuted,
     },
-    multiline: { minHeight: 80, textAlignVertical: 'top', paddingTop: 12 },
+    multiline: { minHeight: 80, textAlignVertical: 'top', paddingTop: 10 },
     inputReadonly: { backgroundColor: palette.surfaceMuted, color: palette.mutedText },
 
     // --- Buttons ---
     actionButton: {
-      minHeight: 52,
+      minHeight: 50,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: 12,
+      borderRadius: 10,
       backgroundColor: palette.primary,
       paddingHorizontal: 16,
       paddingVertical: 12,
       marginTop: 6,
-      overflow: 'hidden',
     },
     actionButtonContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
     actionButtonPressed: {
-      backgroundColor: mixHex(palette.primary, '#000000', 0.78),
+      backgroundColor: mixHex(palette.primary, '#000000', 0.85),
       opacity: 0.9,
       transform: [{ scale: 0.98 }],
     },
     actionText: { color: palette.onPrimary, fontSize: 15, fontWeight: '800', textAlign: 'center' },
-    secondaryButton: { backgroundColor: palette.surfaceMuted, borderWidth: 1, borderColor: palette.borderStrong },
+    secondaryButton: { backgroundColor: palette.surfaceMuted, borderRadius: 10 },
     secondaryButtonPressed: {
       backgroundColor: palette.primarySoft,
-      borderColor: palette.primary,
       opacity: 0.9,
       transform: [{ scale: 0.98 }],
     },
     secondaryText: { color: palette.primaryText },
     loadingButton: { opacity: 0.85 },
-    disabled: { opacity: 0.5 },
+    disabled: { opacity: 0.6 },
     pressed: { opacity: 0.7, transform: [{ scale: 0.98 }] },
     spinner: { marginTop: 12 },
     errorText: { color: palette.danger, fontSize: 14, lineHeight: 20, marginTop: 8 },
     errorBanner: {
       color: palette.danger,
       backgroundColor: palette.dangerSurface,
-      borderRadius: 12,
+      borderRadius: 10,
       padding: 12,
       fontSize: 14,
       lineHeight: 19,
       marginBottom: 12,
-      borderWidth: 1,
-      borderColor: palette.dangerBorder,
     },
     offlineHint: { color: palette.secondaryText, fontSize: 13, lineHeight: 19, marginTop: 6, marginBottom: 4 },
-    emptyCard: { backgroundColor: palette.surface, borderRadius: 16, padding: 24, borderWidth: 1, borderColor: palette.border, alignItems: 'center' },
+    emptyCard: { backgroundColor: palette.surface, borderRadius: 14, padding: 32, alignItems: 'center' },
     emptyText: { color: palette.mutedText, fontSize: 14, textAlign: 'center', lineHeight: 20 },
 
-    // --- Header bar features ---
+    // --- Connection ---
     connection: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 7,
-      paddingHorizontal: 12,
-      paddingVertical: 7,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
       backgroundColor: palette.surfaceMuted,
-      borderWidth: 1,
-      borderColor: palette.border,
-      borderRadius: 14,
+      borderRadius: 10,
     },
     connectionDot: { width: 8, height: 8, borderRadius: 4 },
     onlineDot: { backgroundColor: palette.success },
@@ -420,9 +376,7 @@ export function createStyles(palette: AppPalette) {
     // --- Order card ---
     orderCard: {
       backgroundColor: palette.surface,
-      borderWidth: 1,
-      borderColor: palette.border,
-      borderRadius: 16,
+      borderRadius: 14,
       padding: 14,
       marginBottom: 10,
     },
@@ -435,51 +389,38 @@ export function createStyles(palette: AppPalette) {
       justifyContent: 'space-between',
       paddingHorizontal: 12,
       paddingVertical: 10,
-      borderRadius: 12,
+      borderRadius: 10,
       backgroundColor: palette.primarySoft,
-      borderWidth: 1,
-      borderColor: palette.primary,
     },
     nextStageText: { color: palette.primaryText, fontSize: 13, fontWeight: '800' },
 
-     // --- Floating tab bar ---
-     tabBarWrap: {
-       position: 'absolute',
-       left: 16,
-       right: 16,
-       bottom: 18,
-     },
-     tabBar: {
-       flexDirection: 'row',
-       alignItems: 'center',
-       justifyContent: 'space-around',
-       backgroundColor: palette.glassBar,
-       borderRadius: 20,
-       paddingHorizontal: 8,
-       paddingVertical: 8,
-       borderWidth: 1,
-       borderColor: palette.glassBarBorder,
-       shadowColor: '#000000',
-       shadowOffset: { width: 0, height: 8 },
-       shadowOpacity: dark ? 0.4 : 0.12,
-       shadowRadius: 18,
-       elevation: 8,
-     },
-     tab: {
-       flex: 1,
-       alignItems: 'center',
-       justifyContent: 'center',
-       paddingVertical: 6,
-       paddingHorizontal: 3,
-       borderRadius: 14,
-       gap: 2,
-     },
-     tabActive: { backgroundColor: palette.primarySoft },
-     tabPressed: { opacity: 0.85, transform: [{ scale: 0.98 }] },
-     tabLabel: { color: palette.glassBarText, fontSize: 10, fontWeight: '600' },
-     tabLabelActive: { color: palette.glassBarTextActive, fontWeight: '700' },
+    // --- Bottom tab bar ---
+    tabBarWrap: {
+      height: 60,
+      backgroundColor: palette.background,
+      paddingBottom: 24,
+    },
+    tabBar: {
+      flexDirection: 'row',
+      justifyContent: 'space-around',
+      alignItems: 'center',
+      height: 60,
+      backgroundColor: palette.background,
+    },
+    tab: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 4,
+      paddingHorizontal: 4,
+      gap: 4,
+    },
+    tabActive: {},
+    tabPressed: { opacity: 0.8 },
+    tabLabel: { color: palette.mutedText, fontSize: 10, fontWeight: '700' },
+    tabLabelActive: { color: palette.primary, fontWeight: '800' },
 
-    // --- Customer cards (Payrio-style stats row) ---
+    // --- Customer stats ---
     customerStats: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
     customerStatPill: {
       flexDirection: 'row',
@@ -494,77 +435,72 @@ export function createStyles(palette: AppPalette) {
     customerActions: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 },
     customerAction: { color: palette.primaryText, fontSize: 13, fontWeight: '800' },
 
+    // --- WhatsApp ---
     whatsappDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#25D366' },
     whatsappDotOff: { backgroundColor: palette.mutedText },
 
     // --- Team rows ---
-    teamRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: palette.border },
+    teamRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 },
     teamMain: { flex: 1 },
     teamName: { color: palette.text, fontSize: 14, fontWeight: '800' },
     teamMeta: { color: palette.mutedText, fontSize: 12, marginTop: 2 },
     teamRole: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: palette.primarySoft },
     teamRoleText: { color: palette.primaryText, fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.4 },
 
-    // --- Toggle (Payrio-style) ---
-    toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: palette.border },
+    // --- Toggle ---
+    toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, paddingHorizontal: 4 },
     toggleLabel: { color: palette.text, fontSize: 14, fontWeight: '700', flex: 1 },
     toggleHint: { color: palette.mutedText, fontSize: 12, marginTop: 2 },
     toggleSwitch: { width: 44, height: 26, borderRadius: 14, padding: 3, justifyContent: 'center' },
     toggleSwitchOn: { backgroundColor: palette.success, alignItems: 'flex-end' },
-    toggleSwitchOff: { backgroundColor: palette.surfaceSunken, alignItems: 'flex-start' },
+    toggleSwitchOff: { backgroundColor: palette.surfaceMuted, alignItems: 'flex-start' },
     toggleKnob: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#ffffff' },
 
-    // --- Form footer (Payrio-style save bar) ---
+    // --- Form footer ---
     formFooter: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
       paddingTop: 14,
-      borderTopWidth: 1,
-      borderTopColor: palette.border,
       marginTop: 14,
     },
     formFooterText: { color: palette.mutedText, fontSize: 13, flex: 1 },
 
-    // --- Plan comparison cards (Payrio-style pricing) ---
+    // --- Plan cards ---
     planRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
     planCard: {
       flex: 1,
       backgroundColor: palette.surface,
-      borderRadius: 16,
+      borderRadius: 12,
       padding: 14,
-      borderWidth: 1,
-      borderColor: palette.border,
     },
-    planCardActive: { borderColor: palette.primary, borderWidth: 2 },
+    planCardActive: { backgroundColor: palette.primarySoft },
     planName: { color: palette.text, fontSize: 14, fontWeight: '800' },
     planPrice: { color: palette.text, fontSize: 18, fontWeight: '900', marginTop: 4 },
     planMeta: { color: palette.mutedText, fontSize: 12, marginTop: 6 },
 
-    // --- Activity row (Payrio-style messaging activity) ---
-    activityIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: 'rgba(37, 211, 102, 0.18)' },
+    // --- Activity row ---
+    activityIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: '#e0f2e9' },
     activityPreview: { color: palette.mutedText, fontSize: 12, marginTop: 2, fontStyle: 'italic' },
 
-    // --- WhatsApp message preview ---
-    wpIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(37, 211, 102, 0.18)' },
+    // --- WhatsApp preview ---
+    wpIcon: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: '#e0f2e9' },
     wpIconText: { color: '#25D366', fontSize: 16, fontWeight: '900' },
 
-    // --- Sync banner (Payrio-style) ---
+    // --- Sync banner ---
     syncCard: {
       backgroundColor: palette.successSurface,
-      borderWidth: 1,
-      borderColor: palette.successBorder,
-      borderRadius: 14,
+      borderRadius: 10,
       padding: 12,
       flexDirection: 'row',
       alignItems: 'center',
-      marginBottom: 14,
+      marginBottom: 12,
     },
     syncCopy: { flex: 1, paddingRight: 8 },
     syncTitle: { color: palette.success, fontSize: 14, fontWeight: '800' },
     syncMeta: { color: palette.secondaryText, fontSize: 12, marginTop: 2 },
 
-    // --- Lang chip / radio (auth + settings) ---
+    // --- Language row ---
     languageRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -572,35 +508,30 @@ export function createStyles(palette: AppPalette) {
       gap: 8,
       paddingVertical: 10,
       paddingHorizontal: 12,
-      borderRadius: 12,
+      borderRadius: 10,
     },
-    languageRowPressed: { backgroundColor: palette.primarySoft, opacity: 0.85 },
+    languageRowPressed: { backgroundColor: palette.primarySoft, opacity: 0.9 },
     languageChip: {
       backgroundColor: palette.surface,
-      borderRadius: 14,
+      borderRadius: 10,
       paddingHorizontal: 12,
       paddingVertical: 8,
-      borderWidth: 1,
-      borderColor: palette.border,
-      overflow: 'hidden',
     },
-    languageChipSelected: { backgroundColor: palette.primarySoft, borderColor: palette.primary },
+    languageChipSelected: { backgroundColor: palette.primarySoft },
     languageChipText: { color: palette.secondaryText, fontSize: 13, fontWeight: '700' },
     radio: { color: palette.primaryText, fontSize: 16 },
 
-    // --- Theme toggle (Payrio-style compact) ---
+    // --- Theme toggle ---
     themeToggle: {
       minHeight: 46,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
       gap: 9,
-      borderWidth: 1,
-      borderColor: palette.border,
-      borderRadius: 14,
+      borderRadius: 10,
       paddingHorizontal: 14,
       paddingVertical: 10,
-      backgroundColor: palette.surface,
+      backgroundColor: palette.surfaceMuted,
     },
     themeToggleCompact: { width: 44, minHeight: 44, paddingHorizontal: 0, paddingVertical: 0 },
     themeToggleText: { color: palette.primaryText, fontSize: 14, fontWeight: '700' },
@@ -611,16 +542,53 @@ export function createStyles(palette: AppPalette) {
     supportLink: { color: palette.primaryText, fontSize: 13, fontWeight: '700', textDecorationLine: 'underline' },
 
     // --- Layout helpers ---
-    content: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 6, paddingBottom: 120 },
+    content: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 4, paddingBottom: 20 },
     splitRow: { flexDirection: 'row', gap: 10 },
     halfField: { flex: 1 },
-    pageHeadingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12 },
+    pageHeadingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12 },
     backRow: { flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', paddingVertical: 8, paddingRight: 12, marginBottom: 8 },
     backText: { color: palette.primaryText, fontSize: 15, fontWeight: '800' },
     pendingLabel: { color: palette.warning, fontSize: 13, fontWeight: '700', marginBottom: 4 },
     syncBadge: { color: palette.mutedText, fontWeight: '900' },
 
-    // --- TwoFields (for new order / new measurement) ---
+    // --- Page ---
+    page: { flex: 1, backgroundColor: palette.background },
+
+    // --- Chat ---
+    chatList: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 8, gap: 10 },
+    chatBubble: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+    chatBubbleUser: { flexDirection: 'row-reverse', alignItems: 'flex-end' },
+    chatBubbleInner: {
+      maxWidth: '80%',
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 14,
+      backgroundColor: palette.surface,
+    },
+    chatBubbleText: { color: palette.text, fontSize: 14, lineHeight: 20 },
+    chatBubbleTextUser: { color: palette.onPrimary },
+    typingRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingBottom: 6 },
+    typingText: { color: palette.mutedText, fontSize: 13, fontStyle: 'italic' },
+
+    // --- Chat input ---
+    chatInputWrap: { paddingHorizontal: 16, paddingBottom: 8, backgroundColor: palette.background },
+    chatInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: palette.surfaceMuted, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 },
+    chatInput: { flex: 1, color: palette.text, fontSize: 14 },
+    sendButton: { backgroundColor: palette.primary, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
+    sendButtonDisabled: { backgroundColor: palette.surfaceMuted },
+    sendButtonText: { color: palette.onPrimary, fontSize: 14, fontWeight: '800' },
+
+    // --- Conflict resolution ---
+    summaryRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+    summaryCard: { flex: 1, backgroundColor: palette.surface, borderRadius: 12, padding: 16, alignItems: 'center' },
+    summaryLabel: { color: palette.mutedText, fontSize: 12, fontWeight: '700', marginBottom: 4 },
+    summaryValue: { color: palette.text, fontSize: 22, fontWeight: '800' },
+    conflictCard: { backgroundColor: palette.surface, borderRadius: 12, padding: 16, marginBottom: 10 },
+    conflictMain: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+    conflictTitle: { color: palette.text, fontSize: 15, fontWeight: '800' },
+    conflictMessage: { color: palette.mutedText, fontSize: 13, marginBottom: 10 },
+    conflictActions: { flexDirection: 'row', gap: 8 },
+
     twoFields: { flexDirection: 'row', gap: 10 },
   });
 }

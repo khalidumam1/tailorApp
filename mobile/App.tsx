@@ -1,13 +1,13 @@
 /**
- * TailorApp mobile shell.
+ * TailorApp mobile shell — simple, clean layout.
  *
- * Composes the theme provider, the workspace provider, and the navigation.
- * Five root tabs (Home · Orders · Payments · Activity · More) sit in the
- * floating tab bar. Every other page is pushed onto a back stack and opened
- * with a back control (or the Android back button).
+ * Top header with brand + search + notifications.
+ * Content area scrolls vertically.
+ * Standard bottom tab bar (fixed, not floating glass).
+ * Deeper pages push onto a back stack.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, BackHandler, Pressable, ScrollView, Text, View } from 'react-native';
+import { BackHandler, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import {
@@ -37,6 +37,8 @@ import { SettingsScreen } from './src/screens/SettingsScreen';
 import { BusinessSettingsScreen } from './src/screens/BusinessSettingsScreen';
 import { AnalyticsScreen } from './src/screens/AnalyticsScreen';
 import { ErpScreen } from './src/screens/ErpScreen';
+import { ChatScreen } from './src/screens/ChatScreen';
+import { ConflictResolutionScreen } from './src/screens/ConflictResolutionScreen';
 import { ActionButton } from './src/theme/primitives';
 
 const TAB_PAGES: TabKey[] = ['home', 'orders', 'payments', 'activity', 'more'];
@@ -76,21 +78,26 @@ function AppShell() {
       || (permissions.has('cashbook:read') && modules.has('cashbook'))
       || (permissions.has('accounting:read') && modules.has('accounting'))) access.add('erp');
     if (access.has('analytics') || access.has('notifications') || access.has('measurements')) access.add('activity');
+    if (permissions.has('orders:read')) access.add('chat');
+    if (permissions.has('orders:read') || permissions.has('inventory:read') || permissions.has('cashbook:read') || permissions.has('accounting:read')) access.add('conflicts');
     return access;
   }, [ws.businessConfiguration?.enabledModules, ws.session?.permissions]);
-  // stack[0] is always a root tab; deeper entries are pushed pages.
+
   const [stack, setStack] = useState<NavPage[]>(['home']);
   const [intent, setIntent] = useState<NavIntent | null>(null);
 
   const navigate = useCallback<Navigate>((target, nextIntent) => {
-    if (!pageAccess.has(target)) return;
+    if (!pageAccess.has(target)) {
+      ws.setError(ws.copy.error);
+      return;
+    }
     setIntent(nextIntent ?? null);
     setStack((current) => {
       if ((TAB_PAGES as NavPage[]).includes(target)) return [target];
       if (current[current.length - 1] === target) return current;
       return [...current, target];
     });
-  }, [pageAccess]);
+  }, [pageAccess, ws]);
 
   const goBack = useCallback(() => {
     setStack((current) => (current.length > 1 ? current.slice(0, -1) : current));
@@ -98,7 +105,6 @@ function AppShell() {
 
   const clearIntent = useCallback(() => setIntent(null), []);
 
-  // Android back button: pop a pushed page before leaving the app.
   const canGoBack = stack.length > 1;
   useEffect(() => {
     if (!canGoBack) return undefined;
@@ -109,37 +115,13 @@ function AppShell() {
     return () => subscription.remove();
   }, [canGoBack, goBack]);
 
-  // Clear per-page errors whenever the page changes.
   const page = stack[stack.length - 1];
-  useEffect(() => { ws.setError(''); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { ws.setError(''); }, [page]);
   useEffect(() => {
     const root = stack[0] ?? 'home';
     if (!pageAccess.has(root)) setStack(['home']);
     else if (!pageAccess.has(page)) setStack([root]);
   }, [pageAccess, page, stack]);
-
-  if (ws.booting) {
-    return (
-      <SafeAreaView style={styles.centered}>
-        <StatusBar style={themeMode === 'dark' ? 'light' : 'dark'} />
-        <ActivityIndicator color={palette.primary} size="large" />
-        <Text style={styles.pageSubtitle}>{ws.copy.loading}</Text>
-      </SafeAreaView>
-    );
-  }
-
-  if (!ws.localReady) {
-    return (
-      <SafeAreaView style={styles.centered}>
-        <StatusBar style={themeMode === 'dark' ? 'light' : 'dark'} />
-        <Text style={styles.heading}>{ws.copy.startupFailed}</Text>
-        <Text accessibilityRole="alert" style={styles.errorText}>
-          {ws.bootError || ws.copy.error}
-        </Text>
-        <ActionButton title={ws.copy.retry} onPress={ws.retryBoot} />
-      </SafeAreaView>
-    );
-  }
 
   if (!ws.session) {
     return <LoginScreen />;
@@ -197,12 +179,18 @@ function AppShell() {
     case 'erp':
       content = <ErpScreen />;
       break;
+    case 'chat':
+      content = <ChatScreen />;
+      break;
+    case 'conflicts':
+      content = <ConflictResolutionScreen />;
+      break;
     default:
       content = null;
   }
 
   return (
-    <SafeAreaView style={[styles.safe, ws.rtl && styles.rtlLayout]} edges={['top']}>
+    <SafeAreaView style={[styles.safe, ws.rtl && styles.rtlLayout]} edges={['top', 'bottom']}>
       <StatusBar style={themeMode === 'dark' ? 'light' : 'dark'} />
       <Header
         onNotificationsPress={() => navigate('notifications')}
@@ -229,12 +217,12 @@ function AppShell() {
           {ws.error ? <Text accessibilityRole="alert" style={styles.errorBanner}>{ws.error}</Text> : null}
           {content}
         </ScrollView>
-        <TabBar
-          tabs={tabs}
-          active={stack[0] as TabKey}
-          onChange={(next) => navigate(next)}
-        />
       </View>
+      <TabBar
+        tabs={tabs}
+        active={stack[0] as TabKey}
+        onChange={(next) => navigate(next)}
+      />
     </SafeAreaView>
   );
 }

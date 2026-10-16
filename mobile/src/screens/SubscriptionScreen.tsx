@@ -1,6 +1,6 @@
 /**
- * Subscription & billing — Payrio-style with a hero current-plan card, a
- * horizontal scroll of plan comparison cards and a payment history list.
+ * Subscription & billing — clean layout with current plan card,
+ * plan comparison, payment history, and renewal request.
  */
 import { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, Share, Text, View } from 'react-native';
@@ -23,14 +23,10 @@ export function SubscriptionScreen() {
   const currentPlan = billing?.subscription;
   const plans = billing?.plans ?? [];
   const cycle = ws.subscriptionCycle;
-  // Plan options and the renewal form are revealed by "Manage plan" (or upgrade),
-  // and always shown when there is no current plan to manage.
   const [showManage, setShowManage] = useState(false);
   const plansVisible = showManage || !currentPlan;
   const currency = ws.businessConfiguration?.business.currency;
 
-  // The billing API returns no PDF link for the mobile app, so the invoice
-  // details are shared as text (the receipt PDF needs the web app).
   const shareInvoice = () => {
     const latest = billing?.payments.find((payment) => payment.invoiceNumber) ?? billing?.payments[0];
     if (!latest) {
@@ -48,7 +44,7 @@ export function SubscriptionScreen() {
   };
 
   return (
-    <>
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
       <View style={styles.pageHeadingRow}>
         <View>
           <Text style={styles.pageTitle}>{copy.subscriptionTitle}</Text>
@@ -113,7 +109,7 @@ export function SubscriptionScreen() {
       {/* Plan comparison row */}
       {plansVisible && plans.length > 0 ? (
         <>
-          <View style={styles.sectionRow}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, marginTop: 4 }}>
             <Text style={styles.sectionTitle}>{copy.changePlan}</Text>
             <View style={styles.connection}>
               <Text style={styles.connectionText}>{cycle === 'MONTHLY' ? copy.monthly : copy.yearly}</Text>
@@ -153,7 +149,7 @@ export function SubscriptionScreen() {
       ) : null}
 
       {/* Payment history */}
-      <View style={styles.sectionRow}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, marginTop: 16 }}>
         <Text style={styles.sectionTitle}>{copy.subscriptionHistory}</Text>
       </View>
       {billing?.payments.length ? (
@@ -254,6 +250,6 @@ export function SubscriptionScreen() {
       ) : null}
 
       {ws.error ? <Text accessibilityRole="alert" style={styles.errorBanner}>{ws.error}</Text> : null}
-    </>
+    </ScrollView>
   );
 }

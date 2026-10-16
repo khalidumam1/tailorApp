@@ -1,7 +1,6 @@
 /**
  * Activity — combined hub for analytics, WhatsApp delivery, measurements.
- * The Payrio "Activity" tab gives the user a single place to check the
- * pulse of the shop without leaving the main navigation.
+ * Simple sub-tab navigation.
  */
 import { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
@@ -52,8 +51,6 @@ export function ActivityScreen() {
           );
         })}
       </View>
-      {/* The inner screens include their own page headings; that is the
-          intended visual when a single activity sub-tab is in focus. */}
       {activeTab === 'analytics' ? <AnalyticsScreen /> : null}
       {activeTab === 'whatsapp' ? <NotificationsScreen /> : null}
       {activeTab === 'measurements' ? <MeasurementsScreen /> : null}

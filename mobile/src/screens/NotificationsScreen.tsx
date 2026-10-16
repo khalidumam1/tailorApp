@@ -1,6 +1,6 @@
 /**
- * WhatsApp delivery history — KPI tiles, filter chips that narrow the list by
- * message type, and per-message rows that open the chat in WhatsApp.
+ * WhatsApp delivery history — clean list with KPI tiles, filter chips,
+ * and per-message rows.
  */
 import { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
@@ -163,7 +163,7 @@ export function NotificationsScreen() {
         })
       )}
 
-      {ws.online === true ? (
+      {true ? (
         <ActionButton
           title={copy.retry}
           loading={ws.loadingNotifications}

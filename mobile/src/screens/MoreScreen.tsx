@@ -1,7 +1,6 @@
 /**
- * More — hub for screens that don't have their own tab. Each row opens its
- * page with a back control; rows are shown only when the signed-in user has
- * the permission and the business module is enabled.
+ * More — clean hub for screens that don't have their own tab.
+ * Each row opens its page with a back control.
  */
 import { Pressable, Text, View } from 'react-native';
 import { useAppStyles } from '../theme/useAppStyles';

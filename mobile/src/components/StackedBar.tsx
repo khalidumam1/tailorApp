@@ -13,7 +13,7 @@ export function StackedBar({ segments }: { segments: Segment[] }) {
   const total = Math.max(1, segments.reduce((sum, s) => sum + s.value, 0));
   return (
     <View>
-      <View style={{ flexDirection: 'row', height: 12, borderRadius: 6, overflow: 'hidden', backgroundColor: palette.surfaceSunken }}>
+        <View style={{ flexDirection: 'row', height: 12, borderRadius: 6, overflow: 'hidden', backgroundColor: palette.surfaceMuted }}>
         {segments.map((seg, i) => (
           <View key={i} style={{ width: `${(seg.value / total) * 100}%`, backgroundColor: seg.color }} />
         ))}

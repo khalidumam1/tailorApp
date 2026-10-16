@@ -1,18 +1,14 @@
 /**
- * Payrio-inspired dark theme for TailorApp.
+ * Simple, clean theme for TailorApp mobile.
  *
- * The mobile app now defaults to a deep near-black surface with a hero emerald
- * card, large numeric hero amounts and high-contrast typography — the same
- * language Payrio uses for finance apps. A light variant is still available
- * via the toggle in Settings for users who prefer a bright workshop.
+ * Light-first design: shopkeepers work in bright workshop conditions.
+ * Clean cards, subtle borders, clear typography. No glassmorphism,
+ * no excessive gradients, no childish colors.
  *
- * The primary colour is always the brand's configurable `primaryColor`; this
- * palette only defines the surface, text and semantic tokens around it.
+ * The primary colour is driven by the brand's configurable `primaryColor`.
  */
 import {
   accessibleTextColor,
-  applicationBrandingSchema,
-  DEFAULT_APPLICATION_BRANDING,
   type ApplicationBranding,
 } from '@tailor/shared';
 import * as SecureStore from 'expo-secure-store';
@@ -34,7 +30,6 @@ export type AppPalette = {
   background: string;
   surface: string;
   surfaceMuted: string;
-  surfaceSunken: string;
   border: string;
   borderStrong: string;
   text: string;
@@ -57,16 +52,6 @@ export type AppPalette = {
   info: string;
   infoSurface: string;
   shadow: string;
-  moneySurface: string;
-  moneyLabel: string;
-  // The hero card and analytics hero both rely on these tokens:
-  heroBackground: string;
-  heroBorder: string;
-  heroShadow: string;
-  glassBar: string;
-  glassBarBorder: string;
-  glassBarText: string;
-  glassBarTextActive: string;
 };
 
 export type AppThemeValue = {
@@ -77,11 +62,10 @@ export type AppThemeValue = {
   setThemeMode: (mode: ThemeMode) => void;
 };
 
-const LANGUAGE_KEY = 'tailorapp.language.v1';
 const THEME_KEY = 'tailorapp.theme.v1';
 const BRANDING_CACHE_KEY = 'tailorapp.application-branding.v1';
 
-export { LANGUAGE_KEY, THEME_KEY, BRANDING_CACHE_KEY };
+export { THEME_KEY, BRANDING_CACHE_KEY };
 
 export function mixHex(foreground: string, background: string, foregroundWeight: number): string {
   const toChannels = (color: string) => [1, 3, 5].map((index) => Number.parseInt(color.slice(index, index + 2), 16));
@@ -99,70 +83,49 @@ export function mixHex(foreground: string, background: string, foregroundWeight:
 
 export function createPalette(branding: ApplicationBranding, mode: ThemeMode): AppPalette {
   const dark = mode === 'dark';
-  // The dark surface is a near-black with a green undertone; the hero card is
-  // a slightly lighter emerald so the user's brand colour reads against it.
-  const darkBackground = '#0a1310';
-  const darkSurface = '#121e18';
-  const darkSurfaceMuted = '#0f1a14';
-  const darkSurfaceSunken = '#070d0a';
-  const darkHero = '#163024';
-  const darkBorder = '#22332a';
-  const darkBorderStrong = '#324a3c';
-  const darkText = '#e7f1eb';
-  const darkSecondary = '#9eb3a6';
-  const darkMuted = '#6f8678';
 
-   return {
-     mode,
-     background: dark ? darkBackground : '#f4f6f4',
-     surface: dark ? darkSurface : '#ffffff',
-     surfaceMuted: dark ? darkSurfaceMuted : '#f8faf9',
-     surfaceSunken: dark ? darkSurfaceSunken : '#eef2ef',
-     border: dark ? darkBorder : '#e3e9e5',
-     borderStrong: dark ? darkBorderStrong : '#d8e2dc',
-     text: dark ? mixHex(darkText, '#ffffff', 0.9) : '#182a25',
-     secondaryText: dark ? darkSecondary : '#56675d',
-     mutedText: dark ? mixHex(darkMuted, '#ffffff', 0.8) : '#6e7d76',
-     primary: branding.primaryColor,
-     primaryText: dark
-       ? mixHex(branding.primaryColor, '#ffffff', 0.65)
-       : mixHex('#0e1a16', branding.primaryColor, 0.32),
-     onPrimary: accessibleTextColor(branding.primaryColor),
-     primarySoft: dark
-       ? mixHex(branding.primaryColor, '#0c1a14', 0.18)
-       : mixHex(branding.primaryColor, '#ffffff', 0.08),
-     accent: branding.accentColor,
-     success: dark ? '#6cc08f' : '#1b6c4c',
-     successSurface: dark ? '#0f2a1c' : '#e8f5ee',
-     successBorder: dark ? '#1f4830' : '#cae5d6',
-     warning: dark ? '#e6b866' : '#8a6413',
-     warningSurface: dark ? '#2a2113' : '#fdf4e3',
-     warningBorder: dark ? '#4a3b1d' : '#f0e0bb',
-     danger: dark ? '#d97a6f' : '#9b4034',
-     dangerSurface: dark ? '#2c1815' : '#fdeeeb',
-     dangerBorder: dark ? '#52281f' : '#f3d6cf',
-     info: dark ? '#7aa3ce' : '#2d5f8a',
-     infoSurface: dark ? '#0f2236' : '#ecf3fa',
-     shadow: dark ? '#000000' : '#18372b',
-     moneySurface: dark ? '#163024' : '#17362e',
-     moneyLabel: dark ? '#8fa896' : '#c4d9ce',
-     heroBackground: dark
-       ? `linear-gradient(140deg, ${mixHex(branding.primaryColor, darkHero, 0.65)} 0%, ${darkHero} 80%)`
-       : mixHex(branding.primaryColor, '#ffffff', 0.04),
-     heroBorder: dark ? mixHex(branding.primaryColor, '#0a1310', 0.5) : mixHex(branding.primaryColor, '#ffffff', 0.35),
-     heroShadow: dark ? '#000000' : mixHex(branding.primaryColor, '#000000', 0.15),
-     glassBar: dark ? 'rgba(12, 20, 16, 0.9)' : 'rgba(250, 250, 250, 0.92)',
-     glassBarBorder: dark ? '#22332a' : '#e3e9e5',
-     glassBarText: dark ? '#8fa896' : '#6e7d76',
-     glassBarTextActive: dark ? mixHex(branding.primaryColor, '#ffffff', 0.6) : mixHex('#0e1a16', branding.primaryColor, 0.3),
-   };
+  return {
+    mode,
+    background: dark ? '#0f1720' : '#f8faf5',
+    surface: dark ? '#1e293b' : '#ffffff',
+    surfaceMuted: dark ? '#334155' : '#f1f5f0',
+    border: dark ? '#475569' : '#e2e8e0',
+    borderStrong: dark ? '#64748b' : '#cbd5c1',
+    text: dark ? '#f8fafc' : '#0f172a',
+    secondaryText: dark ? '#cbd5e1' : '#475569',
+    mutedText: dark ? '#94a3b8' : '#6b7b70',
+    primary: branding.primaryColor,
+    primaryText: dark
+      ? mixHex(branding.primaryColor, '#ffffff', 0.6)
+      : mixHex('#0f172a', branding.primaryColor, 0.35),
+    onPrimary: accessibleTextColor(branding.primaryColor),
+    primarySoft: dark
+      ? mixHex(branding.primaryColor, '#0f1720', 0.15)
+      : mixHex(branding.primaryColor, '#ffffff', 0.12),
+    accent: branding.accentColor,
+    success: dark ? '#4ade80' : '#15803d',
+    successSurface: dark ? '#064e3b' : '#f0fdf4',
+    successBorder: dark ? '#1f2937' : '#bbf7d0',
+    warning: dark ? '#fbbf24' : '#92400e',
+    warningSurface: dark ? '#451a03' : '#fefce8',
+    warningBorder: dark ? '#3f3f1f' : '#fef3c7',
+    danger: dark ? '#fb7185' : '#b91c1c',
+    dangerSurface: dark ? '#450a0a' : '#fef2f2',
+    dangerBorder: dark ? '#7f1d1d' : '#fee2e2',
+    info: dark ? '#38bdf8' : '#0369a1',
+    infoSurface: dark ? '#0c4a6e' : '#eff6ff',
+    shadow: dark ? '#000000' : '#000000',
+  };
 }
 
-const defaultPalette = createPalette(DEFAULT_APPLICATION_BRANDING, 'dark');
+const defaultPalette = createPalette(
+  { brandName: 'TailorApp', primaryColor: '#0f766e', accentColor: '#d97706', defaultTheme: 'light', logoUrl: '' } as ApplicationBranding,
+  'light',
+);
 
 const AppThemeContext = createContext<AppThemeValue>({
-  branding: DEFAULT_APPLICATION_BRANDING,
-  themeMode: 'dark',
+  branding: { brandName: 'TailorApp', primaryColor: '#0f766e', accentColor: '#d97706', defaultTheme: 'light', logoUrl: '' } as ApplicationBranding,
+  themeMode: 'light',
   palette: defaultPalette,
   toggleTheme: () => undefined,
   setThemeMode: () => undefined,
@@ -173,7 +136,9 @@ export function useAppTheme(): AppThemeValue {
 }
 
 export function MobileBrandingProvider({ children }: { children: ReactNode }) {
-  const [branding, setBranding] = useState<ApplicationBranding>(DEFAULT_APPLICATION_BRANDING);
+  const [branding, setBranding] = useState<ApplicationBranding>(
+    { brandName: 'TailorApp', primaryColor: '#0f766e', accentColor: '#d97706', defaultTheme: 'light', logoUrl: '' } as ApplicationBranding,
+  );
   const [themeOverride, setThemeOverride] = useState<ThemeMode | null>(null);
   const themeChosen = useRef(false);
 
@@ -204,7 +169,7 @@ export function MobileBrandingProvider({ children }: { children: ReactNode }) {
           setBranding(latest);
           await SecureStore.setItemAsync(BRANDING_CACHE_KEY, JSON.stringify(latest)).catch(() => undefined);
         } catch {
-          // Branding is public and non-critical; use the cached or built-in identity offline.
+          // Branding is public and non-critical.
         }
       })().finally(() => {
         brandingRequest = null;
@@ -223,10 +188,12 @@ export function MobileBrandingProvider({ children }: { children: ReactNode }) {
       }
       if (savedBranding) {
         try {
-          const parsed = applicationBrandingSchema.safeParse(JSON.parse(savedBranding) as unknown);
-          if (parsed.success) setBranding(parsed.data);
+          const parsed = JSON.parse(savedBranding) as unknown;
+          if (parsed && typeof parsed === 'object' && 'brandName' in parsed) {
+            setBranding(parsed as ApplicationBranding);
+          }
         } catch {
-          // Ignore corrupt local branding; the server/default remains authoritative.
+          // Ignore corrupt local branding.
         }
       }
       void refreshBranding();

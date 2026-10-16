@@ -1,8 +1,6 @@
 /**
- * Floating 5-tab glass tab bar (Payrio-style). It is fixed to the bottom of
- * the workspace with horizontal padding and a soft shadow so it sits above
- * the scroll content. The label is part of every tab; the active tab uses
- * the primary soft pill background.
+ * Standard bottom tab bar — simple, clean, fixed at bottom.
+ * No glassmorphism, no floating effect, just a clean navigation bar.
  */
 import { Pressable, Text, View } from 'react-native';
 import { Icon, type IconName } from '../Icons';
@@ -27,7 +25,7 @@ export function TabBar({ tabs, active, onChange }: TabBarProps) {
   const styles = useAppStyles();
   const { palette } = useAppTheme();
   return (
-    <View pointerEvents="box-none" style={styles.tabBarWrap}>
+    <View style={styles.tabBarWrap}>
       <View style={styles.tabBar}>
         {tabs.map((tab) => {
           const isActive = tab.key === active;
@@ -39,9 +37,9 @@ export function TabBar({ tabs, active, onChange }: TabBarProps) {
               accessibilityLabel={tab.label}
               android_ripple={{ color: palette.primarySoft, borderless: true }}
               onPress={() => onChange(tab.key)}
-              style={({ pressed }) => [styles.tab, isActive && styles.tabActive, pressed && styles.tabPressed]}
+              style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}
             >
-              <Icon name={tab.icon} size={22} color={isActive ? palette.glassBarTextActive : palette.glassBarText} />
+              <Icon name={tab.icon} size={22} color={isActive ? palette.primary : palette.mutedText} />
               <Text numberOfLines={1} style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
                 {tab.label}
               </Text>

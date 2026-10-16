@@ -1,10 +1,12 @@
 /**
- * Payments ledger — hero balance card, quick actions (record payment, send
- * receipt, share list), a segment control, and the real payment ledger.
- * Recording a payment opens an order picker and the inline payment form.
+ * Payments ledger — clean layout with hero money card, quick actions,
+ * segment control, payment list, and receipt sending/export.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, Share, Text, View } from 'react-native';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { formatCurrency } from '../local';
 import { useAppStyles } from '../theme/useAppStyles';
 import { useAppTheme } from '../theme/palette';
@@ -47,10 +49,9 @@ export function PaymentsScreen({
     }
   }, [intent, onIntentHandled]);
 
-  // Reload the ledger when online and after each sync (a payment triggers a sync).
   useEffect(() => {
     let active = true;
-    if (!ws.session || ws.online !== true || !canReadLedger) {
+    if (!ws.session || !canReadLedger) {
       setRows(null);
       return () => { active = false; };
     }
@@ -61,12 +62,10 @@ export function PaymentsScreen({
       .catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : copy.error); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [ws.online, ws.session, canReadLedger, ws.syncState.last_successful_sync, copy.error]);
+  }, [ws.session, canReadLedger, copy.error]);
 
   const ledger = rows ?? [];
   const ledgerSummary = summarizePayments(ledger);
-  // Server totals (all-time outstanding, today's collections) when available;
-  // otherwise the figures come from the loaded ledger, or are shown as unknown.
   const serverOutstanding = ws.dashboard.outstanding;
   const serverCollectedToday = ws.dashboard.collectedToday;
   const outstandingText = serverOutstanding !== undefined && serverOutstanding !== null
@@ -81,56 +80,45 @@ export function PaymentsScreen({
     return true;
   });
 
-  // Orders that can take a payment: synced orders, newest first.
   const payableOrders = useMemo(
     () => ws.orders
-      .filter((order) => order.sync_state === 'synced' && Number(order.total) > 0)
+      .filter((order) => Number(order.total) > 0)
       .sort((a, b) => b.promised_at.localeCompare(a.promised_at)),
     [ws.orders],
   );
 
-   const sendReceipt = async (row: PaymentRow) => {
-     const phone = row.customerPhone ?? ws.customers.find((c) => c.id === row.customerId)?.phone ?? null;
-     if (!phone) {
-       Alert.alert(copy.sendReceiptBtn, copy.noPhoneNumber);
-       return;
-     }
-     const normalizedPhone = normalizePhone(phone);
-     if (!normalizedPhone) {
-       Alert.alert(copy.sendReceiptBtn, copy.invalidNumber);
-       return;
-     }
-     
-     const message = receiptMessage({
-       businessName: ws.session?.business.name ?? '',
-       receiptLabel: copy.receipt,
-       receiptNumber: row.receiptNumber,
-       amount: formatCurrency(row.amount.toFixed(2), currency),
-       date: new Date(row.createdAt).toLocaleDateString(),
-       customerName: row.customerName,
-     });
-     
-     try {
-       await ws.sendWhatsAppMessage(normalizedPhone, message, null);
-       // Optionally show a success message
+  const sendReceipt = async (row: PaymentRow) => {
+    const phone = row.customerPhone ?? ws.customers.find((c) => c.id === row.customerId)?.phone ?? null;
+    if (!phone) {
+      Alert.alert(copy.sendReceiptBtn, copy.noPhoneNumber);
+      return;
+    }
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) {
+      Alert.alert(copy.sendReceiptBtn, copy.invalidNumber);
+      return;
+    }
 
-       // Alert.alert(copy.sendReceiptBtn, copy.whatsappReceiptSent);
-     } catch (error) {
-       Alert.alert(copy.sendReceiptBtn, copy.error);
-     }
-   };
+    const message = receiptMessage({
+      businessName: ws.session?.business.name ?? '',
+      receiptLabel: copy.receipt,
+      receiptNumber: row.receiptNumber,
+      amount: formatCurrency(row.amount.toFixed(2), currency),
+      date: new Date(row.createdAt).toLocaleDateString(),
+      customerName: row.customerName,
+    });
 
-   const sendLatestReceipt = async () => {
-     const latest = ledger.find((row) => row.kind === 'PAYMENT');
-     if (!latest) {
-       Alert.alert(copy.sendReceiptBtn, copy.noPaymentsToSend);
-       return;
-     }
-     await sendReceipt(latest);
-   };
+    try {
+      await ws.sendWhatsAppMessage(normalizedPhone, message, null);
+    } catch (error) {
+      Alert.alert(copy.sendReceiptBtn, copy.error);
+    }
+  };
 
-  const shareList = () => {
-    const lines = filtered.map((row) => `${row.receiptNumber} · ${row.customerName} · ${row.kind === 'REVERSAL' ? '-' : '+'}${formatCurrency(row.amount.toFixed(2), currency)} · ${new Date(row.createdAt).toLocaleDateString()}`);
+  const exportPayments = () => {
+    const lines = filtered.map((row) =>
+      `${row.receiptNumber} · ${row.customerName} · ${row.kind === 'REVERSAL' ? '-' : '+'}${formatCurrency(row.amount.toFixed(2), currency)} · ${new Date(row.createdAt).toLocaleDateString()}`
+    );
     const message = [
       `${copy.paymentsLedger} — ${ws.session?.business.name ?? ''}`,
       `${copy.collectedToday}: ${collectedTodayText}`,
@@ -141,6 +129,74 @@ export function PaymentsScreen({
     void Share.share({ message }).catch(() => Alert.alert(copy.error));
   };
 
+  const exportPdf = useCallback(async () => {
+    try {
+      const pdfDoc = await PDFDocument.create();
+      const page = pdfDoc.addPage([595, 842]);
+      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+      const businessName = ws.session?.business.name ?? '';
+      const lines = filtered.map((row) => ({
+        receiptNumber: row.receiptNumber,
+        customerName: row.customerName,
+        signed: row.kind === 'REVERSAL' ? -1 : 1,
+        amount: formatCurrency(row.amount.toFixed(2), currency),
+        date: new Date(row.createdAt).toLocaleDateString(),
+      }));
+
+      let y = 842 - 60;
+      page.drawText(`${copy.paymentsLedger}`, { x: 60, y, size: 20, font: boldFont, color: rgb(0, 0, 0) });
+      y -= 30;
+      page.drawText(`${businessName}`, { x: 60, y, size: 12, font, color: rgb(0.3, 0.3, 0.3) });
+      y -= 30;
+      page.drawText(`${copy.collectedToday}: ${collectedTodayText}`, { x: 60, y, size: 12, font, color: rgb(0.3, 0.3, 0.3) });
+      y -= 20;
+      page.drawText(`${copy.outstandingLabel}: ${outstandingText}`, { x: 60, y, size: 12, font, color: rgb(0.3, 0.3, 0.3) });
+      y -= 40;
+
+      // Header row
+      page.drawText('Receipt', { x: 60, y, size: 10, font: boldFont, color: rgb(0, 0, 0) });
+      page.drawText('Customer', { x: 200, y, size: 10, font: boldFont, color: rgb(0, 0, 0) });
+      page.drawText('Amount', { x: 420, y, size: 10, font: boldFont, color: rgb(0, 0, 0) });
+      page.drawText('Date', { x: 500, y, size: 10, font: boldFont, color: rgb(0, 0, 0) });
+      y -= 20;
+
+      for (const line of lines) {
+        if (y < 80) {
+          page.drawText('...', { x: 60, y, size: 10, font, color: rgb(0.5, 0.5, 0.5) });
+          break;
+        }
+        const signed = line.signed < 0 ? '−' : '+';
+        page.drawText(line.receiptNumber, { x: 60, y, size: 10, font, color: rgb(0, 0, 0) });
+        page.drawText(line.customerName, { x: 200, y, size: 10, font, color: rgb(0, 0, 0) });
+        page.drawText(`${signed} ${line.amount}`, { x: 420, y, size: 10, font, color: rgb(0, 0, 0) });
+        page.drawText(line.date, { x: 500, y, size: 10, font, color: rgb(0, 0, 0) });
+        y -= 20;
+      }
+
+      const pdfBytes = await pdfDoc.save();
+      const file = new FileSystem.File(FileSystem.Paths.document, 'payments-ledger.pdf');
+      const stream = file.writableStream();
+      const writer = stream.getWriter();
+      writer.write(pdfBytes);
+      await writer.close();
+      const fileUri = (file as any).uri as string;
+      await Sharing.shareAsync(fileUri, { mimeType: 'application/pdf', dialogTitle: copy.paymentsLedger });
+    } catch (error) {
+      Alert.alert(copy.error, error instanceof Error ? error.message : String(error));
+    }
+  }, [filtered, copy, ws.session?.business.name, collectedTodayText, outstandingText]);
+
+  const sendLatestReceipt = async () => {
+    const latest = ledger.find((row) => row.kind === 'PAYMENT');
+    if (!latest) {
+      Alert.alert(copy.sendReceiptBtn, copy.noPaymentsToSend);
+      return;
+    }
+    await sendReceipt(latest);
+  };
+
   const quickActions: Array<{ icon: IconName; label: string; onPress: () => void; disabled?: boolean }> = [
     {
       icon: 'wallet',
@@ -149,7 +205,8 @@ export function PaymentsScreen({
       disabled: !canRecord,
     },
     { icon: 'send', label: copy.sendReceiptBtn, onPress: sendLatestReceipt, disabled: ledger.length === 0 },
-    { icon: 'download', label: copy.shareList, onPress: shareList, disabled: ledger.length === 0 },
+    { icon: 'download', label: copy.shareList, onPress: exportPayments, disabled: ledger.length === 0 },
+    { icon: 'download', label: copy.exportPdfBtn, onPress: exportPdf, disabled: ledger.length === 0 },
   ];
 
   return (
@@ -202,9 +259,7 @@ export function PaymentsScreen({
           ) : (
             <>
               <Text style={styles.sectionTitle}>{copy.pickOrderForPayment}</Text>
-              {ws.online !== true ? (
-                <Text style={styles.errorText}>{copy.paymentOnline}</Text>
-              ) : payableOrders.length === 0 ? (
+              {payableOrders.length === 0 ? (
                 <Text style={styles.listMeta}>{copy.noPayableOrders}</Text>
               ) : (
                 payableOrders.slice(0, 30).map((order) => (
@@ -256,9 +311,7 @@ export function PaymentsScreen({
         })}
       </View>
 
-      {ws.online !== true ? (
-        <EmptyState title={copy.paymentsOnline} />
-      ) : loading ? (
+      {loading ? (
         <View style={{ padding: 24, alignItems: 'center' }}>
           <ActivityIndicator color={palette.primary} />
         </View>
