@@ -30,7 +30,9 @@ jobs:
       TEST_DATABASE_URL: postgresql://tailor:ci-test-password@localhost:5432/tailor?schema=public
       ALLOW_SHARED_TEST_DATABASE: "true"
       RUN_DB_TESTS: "true"
-      NODE_ENV: test
+      # NOTE: NODE_ENV stays unset at job level. With NODE_ENV=test, Vite
+      # bundles the development React build (~1.6x larger), which broke the
+      # bundle budget and never matched production. Test steps opt in below.
     steps:
       - uses: actions/checkout@v4
       # F-011: the four @tailor/shared copies must stay byte-identical.
@@ -70,12 +72,20 @@ jobs:
       # commands so they surface as check annotations (readable via the API).
       - name: Test backend
         shell: bash
+        env:
+          NODE_ENV: test
         run: |
           set -o pipefail
           npm test 2>&1 | sed -u -E -e 's/.*not ok [0-9]+ - (.*)/::error::FAIL: \1/' -e 's/^ +error: (.*)/::error::  error: \1/' -e 's/.*(#[[:space:]]*(fail|pass|tests)[[:space:]]+[0-9]+.*)/::error::SUMMARY \1/' -e 's/.*((Error|TypeError|ReferenceError) \[[A-Z_]+\].*)/::error::CRASH: \1/' -e 's/.*(AssertionError.*)/::error::ASSERT: \1/' -e 's/.*(Cannot find module[^,]*)/::error::MODULE: \1/' -e 's/^ +(actual|expected|operator): (.*)/::error::  \1: \2/'
       - run: npm run test --workspace @tailor/web
+        env:
+          NODE_ENV: test
       - run: npm run test --workspace @tailor/mobile
+        env:
+          NODE_ENV: test
       - run: npm run build
+        env:
+          NODE_ENV: production
       - name: Check web bundle budget
         shell: bash
         run: |
