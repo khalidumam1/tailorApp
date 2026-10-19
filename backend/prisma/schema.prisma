@@ -41,11 +41,6 @@ enum PaymentKind {
   REVERSAL
 }
 
-enum SyncOperationStatus {
-  APPLIED
-  CONFLICT
-}
-
 enum WhatsAppNotificationKind {
   ORDER_CREATED
   PAYMENT_RECEIVED
@@ -199,7 +194,6 @@ model Business {
   subscriptionEvents    SubscriptionEvent[]
   auditEvents           AuditEvent[]
   settings              BusinessSetting[]
-  syncOperations        SyncOperation[]
   template              BusinessTemplate?       @relation(fields: [templateId], references: [id], onDelete: Restrict)
   configuration         BusinessConfiguration?
   customFields          CustomFieldDefinition[]
@@ -337,7 +331,6 @@ model User {
   workflowChanges               OrderWorkflowHistory[]
   recordedPayments              Payment[]                 @relation("PaymentRecorder")
   auditEvents                   AuditEvent[]
-  syncOperations                SyncOperation[]
   reviewedSubscriptionPayments  SubscriptionPayment[]     @relation("SubscriptionPaymentReviewer")
   submittedSubscriptionPayments SubscriptionPayment[]     @relation("SubscriptionPaymentSubmitter")
   subscriptionEvents            SubscriptionEvent[]
@@ -370,7 +363,6 @@ model Membership {
   user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   role           Role            @relation(fields: [roleId, businessId], references: [id, businessId], onDelete: Restrict)
   refreshTokens  RefreshToken[]
-  syncOperations SyncOperation[]
 
   @@unique([businessId, userId])
   @@unique([id, userId])
@@ -868,25 +860,6 @@ model BusinessSetting {
   @@unique([businessId, key])
 }
 
-model SyncOperation {
-  id                String              @id @default(uuid()) @db.Uuid
-  businessId        String              @db.Uuid
-  userId            String              @db.Uuid
-  clientOperationId String              @db.VarChar(100)
-  entityType        String              @db.VarChar(40)
-  entityId          String              @db.Uuid
-  baseVersion       Int?
-  status            SyncOperationStatus
-  request           Json
-  response          Json?
-  createdAt         DateTime            @default(now()) @db.Timestamptz(3)
-  business          Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  user              User                @relation(fields: [userId], references: [id], onDelete: Restrict)
-  membership        Membership          @relation(fields: [businessId, userId], references: [businessId, userId], onDelete: Restrict)
-
-  @@unique([businessId, clientOperationId])
-  @@index([businessId, createdAt])
-}
 
 model StockItem {
   id             String         @id @default(uuid()) @db.Uuid

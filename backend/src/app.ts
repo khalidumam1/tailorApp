@@ -21,7 +21,6 @@ import paymentRoutes from './routes/payment.routes.js';
 import reportRoutes from './routes/report.routes.js';
 import auditRoutes from './routes/audit.routes.js';
 import platformRoutes from './routes/platform.routes.js';
-import syncRoutes from './routes/sync.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
 import whatsappWebhookRoutes from './routes/whatsapp-webhook.routes.js';
 import subscriptionRoutes from './routes/subscription.routes.js';
@@ -177,7 +176,6 @@ app.use('/api/v1/cashbook', cashbookRoutes);
 app.use('/api/v1/catalog', catalogRoutes);
 app.use('/api/v1/platform/billing', platformBillingRoutes);
 app.use('/api/v1/subscriptions', subscriptionRoutes);
-app.use('/api/v1/sync', syncRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/webhooks/whatsapp', whatsappWebhookRoutes);
 

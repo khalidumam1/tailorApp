@@ -123,13 +123,6 @@ export const paymentQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
-export const syncOperationSchema = z.object({
-  clientOperationId: z.string().uuid(),
-  entityType: z.enum(['customer', 'measurement', 'order', 'catalog_item']),
-  entityId: z.string().uuid(),
-  baseVersion: z.number().int().positive().optional(),
-  payload: z.record(z.string(), z.unknown()),
-});
 
 export const paginationSchema = z.object({
   cursor: z.string().optional(),
@@ -142,7 +135,6 @@ export type CreateMeasurementRevisionInput = z.infer<typeof createMeasurementRev
 export type CreateGarmentTemplateInput = z.infer<typeof createGarmentTemplateSchema>;
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 export type CreatePaymentInput = z.infer<typeof createPaymentSchema>;
-export type SyncOperationInput = z.infer<typeof syncOperationSchema>;
 
 const brandingAssetUrlSchema = z.string().trim().max(2048).refine((value) => {
   if (!value) return true;

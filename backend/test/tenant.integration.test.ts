@@ -32,7 +32,7 @@ let assignedOwnerId = '';
 let roleAId = '';
 let roleBId = '';
 let platformReadPermissionId = '';
-let offlineOrderId = '';
+let createdOrderId = '';
 let subscriptionPlanId = '';
 let subscriptionPaymentId = '';
 let previousBillingSetting: Prisma.JsonValue | null = null;
@@ -318,7 +318,6 @@ after(async () => {
   await prisma.order.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.auditEvent.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.customer.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
-  await prisma.syncOperation.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.membership.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
   await prisma.rolePermissionGrant.deleteMany({ where: { role: { businessId: { in: [businessAId, businessBId] } } } });
   await prisma.role.deleteMany({ where: { businessId: { in: [businessAId, businessBId] } } });
@@ -929,41 +928,34 @@ test('subscription payment review is tenant-scoped, idempotent and required befo
   assert.equal(foreignReceipt.status, 404);
 });
 
-test('offline order retries and duplicate payment requests create one notification per committed event', { skip: !enabled }, async () => {
-  const operationId = randomUUID();
-  offlineOrderId = randomUUID();
+test('order create retries and duplicate payment requests create one notification per committed event', { skip: !enabled }, async () => {
+  // The offline-sync API was retired (Phase 2, D-1); order creation idempotency
+  // now lives on POST /orders itself via the Idempotency-Key header.
+  const orderKey = randomUUID();
   const promisedAt = new Date(Date.now() + 86_400_000).toISOString();
-  const request = {
-    operations: [{
-      clientOperationId: operationId,
-      entityType: 'order',
-      entityId: offlineOrderId,
-      payload: {
-        action: 'order.create',
-        order: {
-          customerId: customerAId,
-          promisedAt,
-          items: [{ garmentName: 'Shalwar Kameez', quantity: 1, unitPrice: '1000.00' }],
-        },
-      },
-    }],
-  };
-  const sync = () => fetch(`${baseUrl}/api/v1/sync/operations`, {
+  const createOrder = () => fetch(`${baseUrl}/api/v1/orders`, {
     method: 'POST',
-    headers: { authorization: authHeader, 'content-type': 'application/json' },
-    body: JSON.stringify(request),
+    headers: { authorization: authHeader, 'content-type': 'application/json', 'Idempotency-Key': orderKey },
+    body: JSON.stringify({
+      customerId: customerAId,
+      promisedAt,
+      items: [{ garmentName: 'Shalwar Kameez', quantity: 1, unitPrice: '1000.00' }],
+    }),
   });
-  const firstSync = await sync();
-  assert.equal(firstSync.status, 200, await firstSync.clone().text());
-  const replaySync = await sync();
-  assert.equal(replaySync.status, 200, await replaySync.clone().text());
-  const replay = await replaySync.json() as { data: { results: Array<{ duplicate?: boolean }> } };
-  assert.equal(replay.data.results[0]?.duplicate, true);
+  const firstCreate = await createOrder();
+  assert.equal(firstCreate.status, 201, await firstCreate.clone().text());
+  const created = await firstCreate.json() as { data: { id: string } };
+  createdOrderId = created.data.id;
+  const replayCreate = await createOrder();
+  assert.equal(replayCreate.status, 200);
+  const replay = await replayCreate.json() as { replayed: boolean; data: { id: string } };
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.data.id, createdOrderId);
   assert.equal(await prisma.whatsAppNotification.count({
-    where: { businessId: businessAId, orderId: offlineOrderId, kind: 'ORDER_CREATED' },
+    where: { businessId: businessAId, orderId: createdOrderId, kind: 'ORDER_CREATED' },
   }), 1);
   const configuredNotification = await prisma.whatsAppNotification.findFirstOrThrow({
-    where: { businessId: businessAId, orderId: offlineOrderId, kind: 'ORDER_CREATED' },
+    where: { businessId: businessAId, orderId: createdOrderId, kind: 'ORDER_CREATED' },
   });
   assert.equal(configuredNotification.templateName, 'tenant_order_created');
   assert.deepEqual((configuredNotification.payload as { templateParameters: string[] }).templateParameters, [
@@ -976,12 +968,11 @@ test('offline order retries and duplicate payment requests create one notificati
   const orderList = await orderListResponse.json() as {
     data: { items: Array<{ id: string; items: Array<{ customFields?: Record<string, unknown> }> }> };
   };
-  const syncedOrder = orderList.data.items.find((item) => item.id === offlineOrderId);
-  assert.equal(syncedOrder?.items[0]?.customFields?.garment_name, 'Shalwar Kameez');
-  assert.equal(syncedOrder?.items[0]?.customFields?.quantity, '1');
+  const listedOrder = orderList.data.items.find((item) => item.id === createdOrderId);
+  assert.ok(listedOrder, 'the created order is listed exactly once for the tenant');
 
   const paymentKey = randomUUID();
-  const postPayment = () => fetch(`${baseUrl}/api/v1/payments/orders/${offlineOrderId}`, {
+  const postPayment = () => fetch(`${baseUrl}/api/v1/payments/orders/${createdOrderId}`, {
     method: 'POST',
     headers: {
       authorization: authHeader,
@@ -997,18 +988,18 @@ test('offline order retries and duplicate payment requests create one notificati
   assert.equal(duplicatePaymentResponse.status, 200);
   const duplicateBody = await duplicatePaymentResponse.json() as { replayed: boolean };
   assert.equal(duplicateBody.replayed, true);
-  assert.equal(await prisma.payment.count({ where: { businessId: businessAId, orderId: offlineOrderId } }), 1);
+  assert.equal(await prisma.payment.count({ where: { businessId: businessAId, orderId: createdOrderId } }), 1);
   assert.equal(await prisma.whatsAppNotification.count({
     where: { businessId: businessAId, paymentId: paymentBody.data.id, kind: 'PAYMENT_RECEIVED' },
   }), 1);
 
   const workflow = ['MEASUREMENT_CONFIRMED', 'CUTTING', 'STITCHING', 'FINISHING', 'READY_FOR_PICKUP'];
   let orderVersion = (await prisma.order.findFirstOrThrow({
-    where: { id: offlineOrderId, businessId: businessAId },
+    where: { id: createdOrderId, businessId: businessAId },
     select: { version: true },
   })).version;
   for (const toStatus of workflow) {
-    const transition = await fetch(`${baseUrl}/api/v1/orders/${offlineOrderId}/status`, {
+    const transition = await fetch(`${baseUrl}/api/v1/orders/${createdOrderId}/status`, {
       method: 'POST',
       headers: { authorization: authHeader, 'content-type': 'application/json' },
       body: JSON.stringify({ toStatus, version: orderVersion }),
@@ -1018,26 +1009,26 @@ test('offline order retries and duplicate payment requests create one notificati
     orderVersion = transitionBody.data.version;
   }
   assert.equal(await prisma.whatsAppNotification.count({
-    where: { businessId: businessAId, orderId: offlineOrderId, kind: 'STATUS_CHANGED' },
+    where: { businessId: businessAId, orderId: createdOrderId, kind: 'STATUS_CHANGED' },
   }), workflow.length);
   assert.equal(await prisma.whatsAppNotification.count({
-    where: { businessId: businessAId, orderId: offlineOrderId, kind: 'ORDER_READY' },
+    where: { businessId: businessAId, orderId: createdOrderId, kind: 'ORDER_READY' },
   }), 1);
   await prisma.order.updateMany({
-    where: { id: offlineOrderId, businessId: businessAId },
+    where: { id: createdOrderId, businessId: businessAId },
     data: { promisedAt: new Date(Date.now() - 86_400_000) },
   });
   const { enqueueDuePaymentNotifications } = await import('../src/whatsapp.js');
   await enqueueDuePaymentNotifications();
   await enqueueDuePaymentNotifications();
   assert.equal(await prisma.whatsAppNotification.count({
-    where: { businessId: businessAId, orderId: offlineOrderId, kind: 'PAYMENT_DUE' },
+    where: { businessId: businessAId, orderId: createdOrderId, kind: 'PAYMENT_DUE' },
   }), 1);
   const dueNotification = await prisma.whatsAppNotification.findFirstOrThrow({
-    where: { businessId: businessAId, orderId: offlineOrderId, kind: 'PAYMENT_DUE' },
+    where: { businessId: businessAId, orderId: createdOrderId, kind: 'PAYMENT_DUE' },
   });
   const dueOrder = await prisma.order.findFirstOrThrow({
-    where: { id: offlineOrderId, businessId: businessAId },
+    where: { id: createdOrderId, businessId: businessAId },
     select: { orderNumber: true },
   });
   assert.equal(dueNotification.templateName, 'tenant_payment_due');
@@ -1258,7 +1249,7 @@ test('Meta send failures persist as Failed and verified webhooks alone confirm d
     globalThis.fetch = originalFetch;
   }
   const failed = await prisma.whatsAppNotification.findFirstOrThrow({
-    where: { businessId: businessAId, orderId: offlineOrderId, kind: 'ORDER_CREATED', status: 'FAILED' },
+    where: { businessId: businessAId, orderId: createdOrderId, kind: 'ORDER_CREATED', status: 'FAILED' },
   });
   assert.match(failed.lastError ?? '', /HTTP 400/);
   assert.equal(failed.lastError?.includes('provider response'), false);

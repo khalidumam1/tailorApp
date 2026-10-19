@@ -164,7 +164,6 @@ after(async () => {
       await tx.financialAccount.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
       await tx.customFieldValue.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
       await tx.customFieldDefinition.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
-      await tx.syncOperation.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
       await tx.orderWorkflowHistory.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
       await tx.orderStatusHistory.deleteMany({ where: { order: { businessId: { in: createdBusinessIds } } } });
       await tx.orderItem.deleteMany({ where: { businessId: { in: createdBusinessIds } } });
@@ -438,55 +437,6 @@ test('all five business templates work through scoped configuration, catalog, or
     assert.equal(catalogListResponse.status, 200);
     const catalogList = await responseData<{ items: Array<{ id: string }> }>(catalogListResponse);
     assert.ok(catalogList.items.some(({ id }) => id === catalogItem.id));
-
-    if (index === 0) {
-      const clientOperationId = randomUUID();
-      const syncedItemId = randomUUID();
-      const operation = {
-        clientOperationId,
-        entityType: 'catalog_item',
-        entityId: syncedItemId,
-        payload: {
-          action: 'catalog.create',
-          item: {
-            typeKey: itemType.key,
-            name: `${itemType.label} Offline Acceptance Sample`,
-            description: 'Catalog item created through the idempotent sync outbox',
-            unit: 'piece',
-            unitPrice: '18000.00',
-            customFields: customFieldInput(catalogFields),
-          },
-        },
-      };
-      const syncBatch = { operations: [operation] };
-      const firstSyncResponse = await apiRequest('/api/v1/sync/operations', ownerToken, 'POST', syncBatch);
-      assert.equal(firstSyncResponse.status, 200, 'catalog.create outbox operation is applied');
-      const firstSync = await responseData<{ results: Array<{
-        status: string;
-        response: { id: string; typeKey: string; name: string };
-        duplicate?: boolean;
-      }> }>(firstSyncResponse);
-      assert.equal(firstSync.results[0]?.status, 'APPLIED');
-      assert.equal(firstSync.results[0]?.response.id, syncedItemId);
-      assert.equal(firstSync.results[0]?.duplicate, undefined);
-
-      const replayResponse = await apiRequest('/api/v1/sync/operations', ownerToken, 'POST', syncBatch);
-      assert.equal(replayResponse.status, 200, 'replaying the same catalog.create operation succeeds idempotently');
-      const replay = await responseData<{ results: Array<{
-        status: string;
-        response: { id: string; typeKey: string; name: string };
-        duplicate?: boolean;
-      }> }>(replayResponse);
-      assert.equal(replay.results[0]?.duplicate, true);
-      assert.equal(replay.results[0]?.response.id, firstSync.results[0]?.response.id);
-      assert.equal(replay.results[0]?.response.name, firstSync.results[0]?.response.name);
-      assert.equal(await prisma.syncOperation.count({
-        where: { businessId: business.id, clientOperationId },
-      }), 1);
-      assert.equal(await prisma.businessItem.count({
-        where: { businessId: business.id, id: syncedItemId },
-      }), 1);
-    }
 
     const orderFields = fieldsFor(effectiveConfiguration.fields, 'orders', ['order', 'job']);
     const orderItemFields = fieldsFor(effectiveConfiguration.fields, 'orders', ['item', 'order-item']);
