@@ -47,5 +47,5 @@ test('customer to order to payment', async ({ page }) => {
   await page.getByLabel(/Amount/).fill('1500');
   await page.getByRole('button', { name: 'Post payment' }).click();
   await expect(page.getByRole('button', { name: 'Post payment' })).toBeHidden();
-  await expect(orderCard.first().getByRole('button', { name: /Download invoice/ })).toBeVisible();
+  await expect(orderCard.first().getByRole('button', { name: 'Invoice PDF' })).toBeVisible();
 });
