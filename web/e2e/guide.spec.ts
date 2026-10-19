@@ -25,6 +25,10 @@ test.describe('user guide (Phase 3 task 3.1)', () => {
   });
 
   test('contextual ? Guide link jumps from Orders to the orders page', async ({ page }) => {
+    page.on('pageerror', (error) => console.log('PAGEERROR:', String(error).slice(0, 300)));
+    console.log('DASHBOARD-BUTTONS:', JSON.stringify(
+      (await page.getByRole('button').allTextContents()).map((text) => text.trim()).slice(0, 40),
+    ));
     await page.getByRole('button', { name: 'Orders', exact: true }).click();
     await page.getByRole('button', { name: '? Guide' }).click();
     await expect(page.locator('.guide-article')).toContainText('Orders and jobs');
