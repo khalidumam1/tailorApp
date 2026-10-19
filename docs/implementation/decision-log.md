@@ -1,0 +1,25 @@
+# Bizora — Decision Log
+
+Decisions needed from the owner. Implementation phases start after approval of the
+three-phase plan; individual decisions gate the tasks noted. `OPEN` = awaiting owner.
+
+| ID | Decision | Options | Recommendation | Gates | Status |
+| --- | --- | --- | --- | --- | --- |
+| D-1 | Offline sync direction (F-004) | (a) Wire mobile outbox to existing sync API; (b) retire sync backend + model; (c) leave as-is | (b) now if shops have reliable connectivity, (a) if offline work is a selling point. (c) is not acceptable long-term. | Phase 2 task 2.3 | OPEN |
+| D-2 | Permanent deletion policy (F-002) | Which entities may ever be hard-deleted (e.g. never-used businesses, test tenants, unused templates), retention period before delete is offered, confirmation style (type-name vs checkbox+count) | Archive-first everywhere; permanent delete only for entities with zero financial history, SUPER_ADMIN-only, after 30-day archive, with typed confirmation. Financial records: never. | Phase 1 task 1.3 | OPEN |
+| D-3 | Password-reset delivery (F-001) | (a) Transactional email provider; (b) admin-initiated reset only (owner/platform sets a temporary password); (c) both; (d) WhatsApp-delivered reset code (infrastructure partially exists) | (c) if an email provider exists, else (b)+(d). (b) alone is the minimum viable fix and needs no external service. | Phase 1 task 1.1 | OPEN |
+| D-4 | Employee scope (G-001) | Login-less worker records + wage tracking in scope? | Defer unless owners ask for it; current staff=system users covers access control. | Phase 2 task 2.6 | OPEN |
+| D-5 | File uploads (G-002) | Add storage for payment proofs / expense receipts? Which storage (S3-compatible, local)? | Only with D-3/D-4 priorities settled; adds storage, scanning and retention obligations. | Phase 2 task 2.6 | OPEN |
+| D-6 | Brand defaults (F-015) | Set "Bizora" as default brand name/title/app name (runtime branding already configurable)? | Yes — defaults should match the sold product name. | Phase 1 task 1.9 | OPEN |
+| D-7 | Subscription enforcement default | Keep `enforcementEnabled` opt-in per platform setting, or on for new deployments? | Keep opt-in; flipping default affects existing tenants' access unexpectedly. | Phase 1 task 1.7 (test both modes) | OPEN |
+| D-8 | Web refactor appetite (F-009) | (a) Code-split only (lazy views); (b) also split `main.tsx` into view modules incrementally | (a) in Phase 2; (b) opportunistically when a view is touched. No big-bang rewrite. | Phase 2 task 2.4 | OPEN |
+| D-9 | User-guide languages | English only; English + Roman Urdu; + Urdu script (mobile already supports all three) | English + Roman Urdu side-by-side, matching the owner's requirement; reuse mobile i18n patterns. | Phase 3 tasks 3.1–3.2 | OPEN |
+| D-10 | Database verification environment (S-001/S-002/S-004) | Rely on GitHub CI (Postgres service) as the DB evidence path, and/or provide a local/staging Postgres + staging deployment for rehearsal | CI as the always-on evidence; a staging rehearsal before release (Phase 3 task 3.5). This sandbox cannot download Prisma engines or run Postgres. | Phase 1 task 1.7, Phase 3 | OPEN |
+
+## Resolved during audit (no owner input needed)
+
+- Stack unchanged (Express/Prisma/React/Expo) — no compelling reason to replace; tenant
+  isolation and money handling are already well-built on it.
+- Screenshots in `docs/screenshots/` are stale vs current UI — Phase 3 recaptures; they are
+  not used as evidence of current behaviour anywhere in this plan.
+- `tools/demo-api` and `tools/preview-api` remain dev-only fixtures, never product code.
