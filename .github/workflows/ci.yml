@@ -43,7 +43,28 @@ jobs:
       - run: npm ci
       - run: npm run db:generate
       - run: npm run db:migrate
-      - run: npm run typecheck
+      # Per-workspace typechecks; tsc errors are echoed as ::error workflow
+      # commands so they surface as check annotations (readable via the API).
+      - name: Typecheck shared
+        shell: bash
+        run: |
+          set -o pipefail
+          { npm run build --workspace @tailor/shared && npm run typecheck --workspace @tailor/shared; } 2>&1 | sed -u -E 's/^([^[:space:]()]+)\(([0-9]+),([0-9]+)\): error (TS[0-9]+): (.*)/::error file=\1,line=\2,col=\3::\4: \5/'
+      - name: Typecheck api
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck --workspace @tailor/api 2>&1 | sed -u -E 's/^([^[:space:]()]+)\(([0-9]+),([0-9]+)\): error (TS[0-9]+): (.*)/::error file=\1,line=\2,col=\3::\4: \5/'
+      - name: Typecheck web
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck --workspace @tailor/web 2>&1 | sed -u -E 's/^([^[:space:]()]+)\(([0-9]+),([0-9]+)\): error (TS[0-9]+): (.*)/::error file=\1,line=\2,col=\3::\4: \5/'
+      - name: Typecheck mobile
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck --workspace @tailor/mobile 2>&1 | sed -u -E 's/^([^[:space:]()]+)\(([0-9]+),([0-9]+)\): error (TS[0-9]+): (.*)/::error file=\1,line=\2,col=\3::\4: \5/'
       - run: npm run lint --workspace @tailor/web
       - run: npm test
       - run: npm run test --workspace @tailor/web
