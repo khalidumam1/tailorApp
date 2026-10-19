@@ -39,3 +39,15 @@ three-phase plan; individual decisions gate the tasks noted. `OPEN` = awaiting o
   F-009's < 300 kB target therefore remains open under D-8.
 - D-4/D-5 never approved → task 2.6 (G-001/G-002/G-004) skipped entirely, per plan.
 - D-6 still open → Phase 1 task 1.9 (brand defaults) remains parked.
+
+## Phase 3 execution notes (2026-10-19)
+
+- D-9: followed the recorded default — English guide with a Roman Urdu summary
+  on every page (mobile already ships full Urdu; the guide can add it later
+  without restructuring). D-9 itself remains OPEN for owner confirmation.
+- D-10: CI's Postgres service remained the DB evidence path (isolated `e2e`
+  schema for browser tests; guarded `tailor` database for the DB suite). No
+  staging environment was provided; a staging rehearsal is still recommended
+  before production rollout, together with the device/emulator smoke test.
+- New findings from E2E: F-018 (seed order-counter bug) fixed in Phase 3; the
+  business-help audience mix-up was fixed the same day (see findings register).

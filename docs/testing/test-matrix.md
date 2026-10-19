@@ -12,7 +12,7 @@ Baseline measured 2026-10-19 in the audit sandbox (Node 22.22.3). Legend: ✅ pa
 | Mobile logic (erp-mapping, logic, storage-keys, android-build-config) | `mobile/src/data/__tests__/` | 31 tests | ✅ 31 / ❌ 0 / ⏭️ 0 | `npm run test --workspace @tailor/mobile`. |
 | Mobile live-API contract tests | `mobile/src/data/__tests__/live-api.test.ts` | 18 tests | ⏭️ excluded from default run (`test:live`) | Needs a running API + DB. |
 | Web tests | — | 0 | — | None exist (F-008). Phase 1 adds Vitest smoke suite. |
-| E2E / browser | — | 0 | — | None exist. Phase 3 adds Playwright critical journeys. |
+| E2E / browser | `web/e2e/` (Playwright, Chromium) | 9 (1 setup + 8 tests) | ✅ 9/9 in CI (runs 39233433526, 39233848872) | Sign-in/rejection, guide search + contextual link, customer→order→payment→Invoice PDF journey, authorization negatives. Runs against an isolated `e2e` Postgres schema with CI-only seeded accounts; local runs impossible in this sandbox (no browser binaries) — specs are typechecked and listed locally instead. Caught two real bugs on its first runs: F-018 (seed order counter) and the business-help audience mix-up. |
 | Typecheck | root `npm run typecheck` | shared ✅, web ✅, mobile ✅ | backend ⏭️ locally | Backend `tsc` reports 610 lines of "Prisma namespace" errors from the ungenerated client stub — environmental, CI green. |
 | Builds | web `vite build` ✅ (584 kB single chunk — F-009) | mobile export not run in sandbox | — | Android APK via EAS (BUILD_APK_GUIDE.md). |
 | Dependency audit | `npm audit` | api/web/shared: ✅ 0 vulns | full tree: 15 high (Expo/Metro build tooling — F-014) | CI audits api/web/shared only. |
@@ -22,24 +22,24 @@ Baseline measured 2026-10-19 in the audit sandbox (Node 22.22.3). Legend: ✅ pa
 
 | Workflow | Unit | API/Integration | Web/Mobile UI | E2E | Phase to complete |
 | --- | --- | --- | --- | --- | --- |
-| Sign-in, scope/business selection, refresh rotation, logout | partial (mobile api tests) | ✅ CI | manual | P3 | Mostly covered; E2E in P3 |
+| Sign-in, scope/business selection, refresh rotation, logout | partial (mobile api tests) | ✅ CI | ✅ Playwright (sign-in, wrong-password, scope picker → Tailor Demo) | ✅ | E2E added in Phase 3 |
 | Password reset / admin reset (F-001) | — | P1 | P1 | P3 | Phase 1 builds it |
-| Customer create/edit/archive/restore (F-003) | ✅ | ✅ CI (create/edit) | manual | P3 | Restore arrives P1 |
+| Customer create/edit/archive/restore (F-003) | ✅ | ✅ CI (create/edit) | ✅ Playwright (create in journey) | ✅ journey | Archive/restore covered by CI DB suite |
 | Measurements revisions | ✅ | ✅ CI | manual | — | — |
-| Order create, workflow transitions, cancellations | ✅ | ✅ CI | manual | P3 | S-002 dual-status check P1 |
-| Payments, reversals, receipts (PDF), ledger | ✅ | ✅ CI | manual | P3 | — |
+| Order create, workflow transitions, cancellations | ✅ | ✅ CI | ✅ Playwright (create in journey) | ✅ journey | Transitions/cancellations covered by CI DB suite |
+| Payments, reversals, receipts (PDF), ledger | ✅ | ✅ CI | ✅ Playwright (record payment, Invoice PDF action) | ✅ journey | Reversals/ledger rows covered by CI DB suite |
 | Alterations (F-006) | — | create only | — | — | Phase 2 builds it |
 | Catalog/items + custom fields | ✅ | ✅ CI | manual | — | — |
 | Inventory movements, costing, reorder | ✅ | partial (CI) | manual | — | S-004 cross-check P1 |
 | Suppliers, purchasing, settlements | ✅ (erp-finance) | partial (CI) | manual | — | S-004 P1 |
 | Cashbook, journals, trial balance/P&L/balance sheet | ✅ | partial (CI) | manual | — | S-004 P1 |
-| Subscriptions: submit → review → activate/expire (S-001) | partial | ✅ CI (review) | manual | P3 | Lifecycle matrix P1 |
+| Subscriptions: submit → review → activate/expire (S-001) | partial | ✅ CI (review) | manual | ⏭️ browser-level skipped | Lifecycle covered by CI DB suite; no browser E2E (residual QA debt, Phase 3 report §3) |
 | Platform: businesses, owners, members, staff, templates, plans, branding | partial | ✅ CI | manual | P3 | Deletion matrix P1 |
-| Platform archive/restore/permanent delete (F-002) | — | P1 | P1 | P3 | Phase 1 builds it |
+| Platform archive/restore/permanent delete (F-002) | — | ✅ CI | manual | ⏭️ browser-level skipped | Covered by CI DB suite; business-token → platform 403 is E2E-covered |
 | WhatsApp notifications (queue, retry, opt-out, webhook) | ✅ (4) | partial | manual | — | Needs Meta test number for live proof — external blocker, stays manual |
 | Offline sync (F-004) | ✅ | ✅ CI | n/a (no client) | per D-1 | Phase 2 decision |
 | Exports & order invoice (F-007) | — | P2 | P2 | — | Phase 2 builds it |
-| User guide links/steps (Phase 3) | — | — | P3 checklist | P3 | Every step verified vs real UI |
+| User guide links/steps (Phase 3) | — | — | ✅ coverage checklist + 114 button names verified | ✅ Playwright (search, open page, empty state, contextual ? Guide) | Screenshots deferred — see `docs/screenshots/README.md` |
 
 ## Rules
 

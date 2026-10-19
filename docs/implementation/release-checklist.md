@@ -4,25 +4,25 @@ Status legend: ✅ verified with evidence · ⏳ pending · ⛔ blocked/deferred
 Final numbers are filled from the last green CI run on the release candidate commit.
 
 ## Code & CI gates
-- [ ] CI green on the release commit (typechecks, lint, unit + DB suites, builds, bundle budget, audit, E2E) — record run id:
-- [ ] `npm run build` passes for shared/api/web; mobile typecheck + tests pass.
-- [ ] Web bundle: entry chunk ≤ 510,000 B budget (`tools/check-web-bundle.mjs`); lazy chunks for ERP, chat, team, structure editors, HelpGuide.
-- [ ] Shared-contract drift check green (F-011); guide freshness check green (compiled guide matches `docs/user-guide/`).
-- [ ] `npm audit` api/web/shared: 0 vulnerabilities. Mobile toolchain: see Known issues (F-014).
+- [x] CI green on the release commit (typechecks, lint, unit + DB suites, builds, bundle budget, audit, E2E) — runs **39233433526** and **39233848872** (PR #27 head; re-verify once more after the final docs commit)
+- [x] `npm run build` passes for shared/api/web; mobile typecheck + tests pass (mobile 31/31, web Vitest 14/14 locally).
+- [x] Web bundle: entry chunk **503,083 B** ≤ 510,000 B budget (`tools/check-web-bundle.mjs`); lazy chunks for ERP (68,501 B), chat, team, structure editors, HelpGuide (38,438 B).
+- [x] Shared-contract drift check green (F-011); guide freshness check green (compiled guide matches `docs/user-guide/`).
+- [x] `npm audit` api/web/shared: 0 vulnerabilities. Mobile toolchain: see Known issues (F-014).
 
 ## Data safety
-- [ ] Migrations rehearsed on the seeded CI database (fresh deploy into an empty schema, `prisma migrate deploy`) — same run as E2E.
-- [ ] Backup/restore drill: `pg_dump` of the populated e2e schema restored into a throwaway database, row counts verified, duration recorded in the Phase 3 report.
-- [ ] Rollback note per migration exists (Phase 1/2 reports); migrations are forward-only — rollback = restore from backup, never down-migrations against production data.
-- [ ] No production database touched by any test: CI uses the throwaway `tailor` database (public + `e2e` schemas) only.
+- [x] Migrations rehearsed on the seeded CI database (fresh deploy into an empty `e2e` schema, `prisma migrate deploy`) — runs on every CI execution.
+- [x] Backup/restore drill: `pg_dump` of the populated e2e schema restored into a throwaway database, user/order row counts asserted > 0, DB dropped; CI step ≈ 1 s (run 39233848872). Deleting/backing up anything outside CI's throwaway database: never done.
+- [x] Rollback note per migration exists (Phase 1/2 reports); migrations are forward-only — rollback = restore from backup, never down-migrations against production data.
+- [x] No production database touched by any test: CI uses the throwaway `tailor` database (public + `e2e` schemas) only.
 
 ## Security
-- [ ] Tenant isolation: backend DB suite negatives + E2E API negatives (anonymous 401; business token cannot open platform routes).
-- [ ] Admin-only password reset (D-3) live in web + mobile; forced change on next sign-in.
-- [ ] No secrets in repo, logs or screenshots; e2e accounts are CI-only throwaways.
+- [x] Tenant isolation: backend DB suite negatives + E2E API negatives (anonymous 401 on customers/orders/platform/exports; business token cannot open platform routes).
+- [x] Admin-only password reset (D-3) live in web + mobile; forced change on next sign-in.
+- [x] No secrets in repo, logs or screenshots; e2e accounts are CI-only throwaways seeded into an isolated schema.
 
 ## Product
-- [ ] Guide coverage checklist complete (`docs/user-guide/coverage-checklist.md`); every nav item mapped; button names re-verified after UI renames.
+- [x] Guide coverage checklist complete (`docs/user-guide/coverage-checklist.md`); every nav item mapped; 114 button names verified verbatim (re-verify after any UI rename).
 - [ ] Screenshots: recaptured from a seeded demo tenant per `docs/screenshots/README.md` — ⛔ DEFERRED (needs a browser/device session; stale set retired, none fabricated).
 - [ ] Mobile emulator smoke (incl. offline guide) — ⛔ DEFERRED (no emulator in this environment; guide content is bundled, so it works offline by construction; verify on device before rollout).
 
@@ -33,5 +33,5 @@ Final numbers are filled from the last green CI run on the release candidate com
 - D-4/D-5/D-6/D-10: open owner decisions (see decision log); affected features remain as documented (G-001/G-002/G-004 skipped in Phase 2; task 1.9 brand defaults parked).
 
 ## Sign-off
-- [ ] Phase completion reports filed: `phase-1-completion-report.md`, `phase-2-completion-report.md`, `phase-3-completion-report.md`.
-- [ ] Owner sign-off recorded (PR comment/approval).
+- [x] Phase completion reports filed: `phase-1-completion-report.md`, `phase-2-completion-report.md`, `phase-3-completion-report.md`.
+- [ ] Owner sign-off recorded (PR comment/approval) — **pending: PR #27 awaits owner review/merge.**
