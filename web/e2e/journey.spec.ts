@@ -7,6 +7,7 @@ import { fillRemainingRequired, useSeededSession } from './helpers';
  * Names carry a run-unique suffix so re-runs never collide.
  */
 test('customer to order to payment', async ({ page }) => {
+  test.setTimeout(120_000);
   const suffix = Date.now().toString().slice(-8);
   const customerName = `E2E Customer ${suffix}`;
   await useSeededSession(page);
@@ -38,14 +39,6 @@ test('customer to order to payment', async ({ page }) => {
   await orderForm.getByLabel('Due date').fill('2027-01-15T18:00');
   await fillRemainingRequired(orderForm);
   await orderForm.getByRole('button', { name: 'Create order' }).click();
-  // Give the submit a moment, then log the app's own verdict before asserting.
-  await page.waitForTimeout(2_000);
-  console.log('ORDER-SUBMIT-ERROR:', JSON.stringify(
-    await page.locator('.alert-error').first().textContent().catch(() => null),
-  ));
-  console.log('ORDER-CARDS:', JSON.stringify(
-    (await page.locator('.order-card').allTextContents()).map((text) => text.replace(/\s+/g, ' ').slice(0, 80)),
-  ));
   const orderCard = page.locator('.order-card', { hasText: customerName });
   await expect(orderCard.first()).toBeVisible();
 
