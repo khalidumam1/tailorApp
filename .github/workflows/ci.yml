@@ -157,6 +157,27 @@ jobs:
           npm run test:e2e --workspace @tailor/web > /tmp/e2e-tests.log 2>&1 || fail "playwright"
           cat /tmp/e2e-tests.log
           grep -E "[0-9]+ (passed|failed|skipped)" /tmp/e2e-tests.log | sed -u -E 's/^/::error::E2E SUMMARY: /' || true
+      # Phase 3 task 3.5: timed backup/restore drill. Dumps the populated
+      # e2e schema, restores it into a throwaway database, verifies the
+      # seeded + E2E-created rows survived, then drops it. Also serves as
+      # the migration rehearsal evidence: every run already deployed all
+      # migrations into this previously-empty schema (db:migrate above).
+      - name: Backup/restore drill (timed)
+        shell: bash
+        env:
+          PGPASSWORD: ci-test-password
+        run: |
+          set -euo pipefail
+          START=$SECONDS
+          pg_dump -h localhost -U tailor -d tailor -n e2e -Fc -f /tmp/e2e-backup.dump
+          psql -h localhost -U tailor -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE tailor_restore'
+          pg_restore -h localhost -U tailor -d tailor_restore --no-owner /tmp/e2e-backup.dump
+          USERS=$(psql -h localhost -U tailor -d tailor_restore -tAc 'SELECT count(*) FROM e2e."User"')
+          ORDERS=$(psql -h localhost -U tailor -d tailor_restore -tAc 'SELECT count(*) FROM e2e."Order"')
+          echo "Restore drill OK: users=$USERS orders=$ORDERS elapsed=$((SECONDS - START))s"
+          test "$USERS" -gt 0
+          test "$ORDERS" -gt 0
+          psql -h localhost -U tailor -d postgres -v ON_ERROR_STOP=1 -c 'DROP DATABASE tailor_restore'
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v4
