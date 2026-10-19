@@ -38,6 +38,10 @@ jobs:
       # F-011: the four @tailor/shared copies must stay byte-identical.
       - name: Check shared contract drift
         run: node tools/check-shared-drift.mjs
+      - name: Check user-guide content is compiled
+        run: |
+          node tools/build-guide.mjs
+          git diff --exit-code -- web/src/guide-content.ts mobile/src/guide-content.ts
       - uses: actions/setup-node@v4
         with:
           node-version: 24

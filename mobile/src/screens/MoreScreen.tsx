@@ -26,6 +26,7 @@ export function MoreScreen({ onNavigate }: { onNavigate: Navigate }) {
     { id: 'erp', label: 'Operations & finance', hint: 'Inventory, purchasing, cash and accounting', icon: 'building', tone: 'mint', visible: (ws.moduleEnabled('inventory') && ws.can('inventory:read')) || (ws.moduleEnabled('suppliers') && ws.can('suppliers:read')) || (ws.moduleEnabled('purchasing') && ws.can('purchasing:read')) || (ws.moduleEnabled('cashbook') && ws.can('cashbook:read')) || (ws.moduleEnabled('accounting') && ws.can('accounting:read')) },
     { id: 'subscription', label: copy.subscription, hint: copy.subscriptionTitle, icon: 'subscription', tone: 'blue', visible: ws.can('subscriptions:read') },
     { id: 'business-settings', label: copy.businessSettings, hint: copy.customizeWorkspace, icon: 'settings', tone: 'red', visible: ws.can('settings:manage') },
+    { id: 'guide', label: 'Help / User Guide', hint: 'Tutorials, glossary and FAQ', icon: 'notifications', tone: 'violet', visible: true },
     { id: 'settings', label: copy.settings, hint: copy.appearance, icon: 'palette', tone: 'primary', visible: true },
   ];
 

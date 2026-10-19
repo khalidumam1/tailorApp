@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { StrictMode } from 'react';
 import ReactDOM from 'react-dom/client';
 import {
@@ -52,14 +52,16 @@ import {
 // initial bundle. The platform console lives in this file and stays in the
 // entry chunk; splitting it out is the incremental refactor noted in D-8.
 const ErpWorkspace = lazy(() => import('./ErpWorkspace').then((module) => ({ default: module.ErpWorkspace })));
+const HelpGuide = lazy(() => import('./HelpGuide').then((module) => ({ default: module.HelpGuide })));
 const ChatAssistant = lazy(() => import('./ChatAssistant'));
 const BusinessStructureEditors = lazy(() => import('./BusinessStructureEditors').then((module) => ({ default: module.BusinessStructureEditors })));
 const BusinessTeamAdmin = lazy(() => import('./BusinessTeamAdmin').then((module) => ({ default: module.BusinessTeamAdmin })));
 import { AreaChart, BarList, ColumnChart, DonutChart, paletteColor, Sparkline } from './Charts';
 import { Icon, type IconName } from './Icons';
+
 import './styles.css';
 
-type View = 'dashboard' | 'orders' | 'catalog' | 'customers' | 'measurements' | 'payments' | 'notifications' | 'subscription' | 'configuration' | 'erp';
+type View = 'dashboard' | 'orders' | 'catalog' | 'customers' | 'measurements' | 'payments' | 'notifications' | 'subscription' | 'configuration' | 'erp' | 'help';
 type PlatformView =
   | 'overview'
   | 'businesses'
@@ -67,6 +69,7 @@ type PlatformView =
   | 'staff'
   | 'audit'
   | 'health'
+  | 'guide'
   | 'billing'
   | 'plans'
   | 'paymentQueue'
@@ -189,12 +192,13 @@ const navigation: Array<{ view: View; label: string; permission?: string; module
   { view: 'erp', label: 'Operations & finance' },
   { view: 'subscription', label: 'Subscription & billing', permission: 'subscriptions:read' },
   { view: 'configuration', label: 'Business settings', permission: 'settings:manage' },
+  { view: 'help', label: 'Help / User Guide' },
 ];
 
 /** Sidebar sections — keeps the primary workspace separate from administration. */
 const navigationGroups: Array<{ label: string; views: View[] }> = [
   { label: 'Workspace', views: ['dashboard', 'orders', 'catalog', 'customers', 'measurements', 'payments', 'notifications', 'erp'] },
-  { label: 'Administration', views: ['subscription', 'configuration'] },
+  { label: 'Administration', views: ['subscription', 'configuration', 'help'] },
 ];
 
 function downloadBlob(blob: Blob, filename: string): void {
@@ -689,6 +693,13 @@ function App() {
   const paymentAttemptRef = useRef<{ orderId: string; amount: string; method: string; idempotencyKey: string } | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [platformView, setPlatformView] = useState<PlatformView>(() => initialStoredSession?.platformView ?? 'overview');
+  const [guideTopic, setGuideTopic] = useState('quick-start');
+  const openGuide = (pageId: string) => {
+    setGuideTopic(pageId);
+    setError(null);
+    if (currentUser?.context.scope === 'platform') setPlatformView('guide');
+    else setView('help');
+  };
   const [settingsTab, setSettingsTab] = useState<'branding' | 'billing'>('branding');
   const [platformReloadToken, setPlatformReloadToken] = useState(0);
   const [platformBusinesses, setPlatformBusinesses] = useState<import('./api').PlatformBusiness[]>([]);
@@ -1200,7 +1211,7 @@ function App() {
     // `overview` and `settings` are composite screens: they are available when
     // the signed-in account holds *any* platform grant (overview) or any of the
     // settings grants, and each card inside them is gated individually.
-    const viewPermissions: Record<Exclude<PlatformView, 'overview' | 'settings'>, string> = {
+    const viewPermissions: Record<Exclude<PlatformView, 'overview' | 'settings' | 'guide'>, string> = {
       businesses: 'platform:businesses:read',
       templates: 'platform:templates:manage',
       staff: 'platform:staff:manage',
@@ -1214,7 +1225,9 @@ function App() {
       reports: 'platform:reports:read',
     };
     const settingsPermissions = ['platform:application:manage', 'platform:billing:settings'];
-    const isPermitted = platformView === 'overview'
+    const isPermitted = platformView === 'guide'
+      ? true
+      : platformView === 'overview'
       ? currentUser.context.platformPermissions.length > 0
       : platformView === 'settings'
         ? settingsPermissions.some((permission) => currentUser.context.platformPermissions.includes(permission))
@@ -2828,6 +2841,7 @@ function App() {
       },
       { view: 'staff', label: 'Platform staff', permission: 'platform:staff:manage' },
       { view: 'audit', label: 'Audit history', permission: 'platform:audit:read' },
+      { view: 'guide', label: 'User Guide' },
       { view: 'health', label: 'System health', permission: 'platform:system:health' },
     ];
     const platformNavItem = (view: PlatformView) => platformNavigation.find((item) => item.view === view);
@@ -2921,7 +2935,7 @@ function App() {
                         aria-current={platformView === item.view ? 'page' : undefined}
                         onClick={() => { setPlatformView(item.view); setError(null); }}
                       >
-                        <span className="platform-nav-icon"><Icon name={item.view === 'overview' ? 'dashboard' : item.view} /></span>
+                        <span className="platform-nav-icon"><Icon name={item.view === 'overview' ? 'dashboard' : item.view === 'guide' ? 'notifications' : item.view} /></span>
                         <span className="nav-label">{item.label}</span>
                         {item.view === 'paymentQueue' && billingDashboard && billingDashboard.pendingPayments > 0 && (
                           <span className="nav-badge">{billingDashboard.pendingPayments}</span>
@@ -2947,6 +2961,10 @@ function App() {
                 </span>
               </div>
             )}
+        {platformView === 'guide' && (
+          <Suspense fallback={<div className="panel" role="status">Loading guide…</div>}><HelpGuide audience="platform" topic={guideTopic} onTopicChange={setGuideTopic} /></Suspense>
+        )}
+
         {platformView === 'overview' && (
           <section className="content-stack" aria-label="Platform overview">
             <div className="page-head">
@@ -3770,7 +3788,7 @@ function App() {
                     aria-current={view === item.view ? 'page' : undefined}
                     onClick={() => { setView(item.view); setError(null); }}
                   >
-                    <span className="nav-icon"><Icon name={item.view === 'erp' ? 'reports' : item.view} /></span>
+                    <span className="nav-icon"><Icon name={item.view === 'erp' ? 'reports' : item.view === 'help' ? 'notifications' : item.view} /></span>
                     <span className="nav-label">{item.label}</span>
                     {item.view === 'orders' && dashboard && dashboard.overdue > 0 && <span className="nav-badge">{dashboard.overdue}</span>}
                   </button>
@@ -3990,6 +4008,7 @@ function App() {
                 <button className="button button-secondary" type="submit">Search</button>
               </form>
               {!showArchivedCustomers && <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadExport('customers')}>Export CSV</button>}
+              <button className="button button-quiet" onClick={() => openGuide('customers')}>? Guide</button>
             </div>
             {permissions.has('customers:write') && (
               <form className="panel form-panel" onSubmit={addCustomer}>
@@ -4146,6 +4165,7 @@ function App() {
                 <button className="button button-secondary" type="submit">Search</button>
               </form>
               <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadExport('orders')}>Export CSV</button>
+              <button className="button button-quiet" onClick={() => openGuide('orders')}>? Guide</button>
             </div>
             {businessConfiguration && (
               <section className="panel template-preview">
@@ -4313,6 +4333,10 @@ function App() {
           </section>
         )}
 
+        {view === 'help' && (
+          <Suspense fallback={<div className="panel" role="status">Loading guide…</div>}><HelpGuide audience="platform" topic={guideTopic} onTopicChange={setGuideTopic} /></Suspense>
+        )}
+
         {view === 'measurements' && (
           <section className="content-stack">
             <div className="section-heading"><div><h2>Measurement book</h2><p className="muted">Each save creates a dated revision. Earlier measurements stay in history.</p></div></div>
@@ -4359,6 +4383,7 @@ function App() {
         {view === 'payments' && (
           <section className="content-stack">
             <div className="section-heading"><div><h2>Payment ledger</h2><p className="muted">Posted payments and corrections are permanent ledger entries.</p></div>
+              <button className="button button-quiet" onClick={() => openGuide('payments')}>? Guide</button>
               <div className="row-actions">
                 <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadExport('payments')}>Export payments CSV</button>
                 {permissions.has('cashbook:read') && <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadExport('ledger')}>Export ledger CSV</button>}

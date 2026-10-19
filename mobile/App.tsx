@@ -31,6 +31,7 @@ import { CatalogScreen } from './src/screens/CatalogScreen';
 import { PaymentsScreen } from './src/screens/PaymentsScreen';
 import { ActivityScreen } from './src/screens/ActivityScreen';
 import { MoreScreen } from './src/screens/MoreScreen';
+import { GuideScreen } from './src/screens/GuideScreen';
 import { MeasurementsScreen } from './src/screens/MeasurementsScreen';
 import { NotificationsScreen } from './src/screens/NotificationsScreen';
 import { SubscriptionScreen } from './src/screens/SubscriptionScreen';
@@ -184,6 +185,9 @@ function AppShell() {
       break;
     case 'chat':
       content = <ChatScreen />;
+      break;
+    case 'guide':
+      content = <GuideScreen />;
       break;
     default:
       content = null;

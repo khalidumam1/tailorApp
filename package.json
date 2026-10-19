@@ -20,7 +20,8 @@
     "test:db": "npm run test:db --workspace @tailor/api",
     "build": "npm run build --workspace @tailor/shared && npm run build --workspace @tailor/api && npm run build --workspace @tailor/web",
     "check:shared-drift": "node tools/check-shared-drift.mjs",
-    "sync:shared": "node tools/sync-shared.mjs && node tools/check-shared-drift.mjs"
+    "sync:shared": "node tools/sync-shared.mjs && node tools/check-shared-drift.mjs",
+    "build:guide": "node tools/build-guide.mjs"
   },
   "overrides": {
     "body-parser": "1.20.8",
