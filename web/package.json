@@ -12,6 +12,8 @@
     "preview": "vite preview",
     "typecheck": "node scripts/build-shared.mjs && tsc --noEmit",
     "test": "vitest run",
+    "test:e2e": "playwright test",
+    "typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",
     "lint": "eslint src"
   },
   "dependencies": {
@@ -20,6 +22,7 @@
     "react-dom": "19.2.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@types/react": "19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "6.1.1",
