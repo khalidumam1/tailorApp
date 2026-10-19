@@ -1,5 +1,7 @@
 # UI/UX audit — designing for a shopkeeper who struggles to read
 
+> **Historical document (archived 2026-10-19).** Preserved as the record of its audit/fix cycle; some statements are superseded by the phase reports in `docs/implementation/`. See `README.md` for current status.
+
 **Context:** this app is used by tailors/shop owners in Karachi, some of whom are
 not confident readers (the app already ships English, Urdu script, and Roman
 Urdu for this reason). The goal: a professional, good-looking product that

@@ -4,9 +4,11 @@ TypeScript project for tailoring businesses in Karachi. PostgreSQL is authoritat
 
 ## Implementation status
 
-The migration from the starter prototype now includes a versioned Express API with authentication, membership-derived tenant authorization, customer/measurement/order/payment/report routes, append-only audit records, business billing screens and APIs, and a permissioned platform console for business onboarding, staff, subscriptions, manual-payment review, plans, billing settings, reports, audit and health. Subscription periods, payment review, receipts, settings and history are represented in Prisma and the committed migration.
+The product (Bizora) includes a versioned Express API with authentication, membership-derived tenant authorization, customer/measurement/order/payment/report routes, append-only audit records, business billing screens and APIs, and a permissioned platform console for business onboarding, staff, subscriptions, manual-payment review, plans, billing settings, reports, audit and health. Subscription periods, payment review, receipts, settings and history are represented in Prisma and the committed migrations.
 
-**This is not production-ready.** Business employee/role administration, password-reset delivery, alteration-management UI, mobile sign-in and tailor workflows, mobile SQLite outbox/retry/conflict-resolution integration, operational monitoring and recovery automation still need implementation and live deployment verification. The backend now exposes tenant-scoped sync push/pull endpoints; the Expo app does not yet sync queued work. See [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md).
+Shipped since the original prototype status was written: business staff/role administration, admin-initiated password reset with forced first change (web + mobile), customer/order/business archive-and-restore, alterations workflow (API + web + mobile UI), CSV exports and order invoice PDFs, per-account login throttling, tenant-timezone reporting, mobile sign-in with the full tailor workflow, ESLint + automated web/mobile/backend test suites, and a CI pipeline (isolated Postgres) that applies all migrations and runs every suite on each pull request.
+
+Retired: the offline-sync API (`/api/v1/sync`) was removed by owner decision — no shipped client ever used it. Still not production-verified: live WhatsApp delivery (needs a Meta test number), large-scale performance, and any deployment rehearsal. Operational monitoring/recovery automation remains future work. Current authority for status is the phase reports: [Phase 1](docs/implementation/phase-1-completion-report.md) and [Phase 2](docs/implementation/phase-2-completion-report.md), with strategy in [docs/implementation/three-phase-plan.md](docs/implementation/three-phase-plan.md).
 
 ## Workspace
 
@@ -223,7 +225,7 @@ auditable internal entries and do not claim an external refund was sent.
 
 The configurable grace period is snapshotted onto each new subscription period.
 After it ends, server-side authorization blocks business write workflows and
-offline sync while retaining sign-in, billing/payment submission, support details
+business write workflows while retaining sign-in, billing/payment submission, support details
 and read access to business data. Plan features and customer, staff and monthly
 order limits are checked by the API. Platform expiry alerts use the configured
 reminder window; no external email/SMS reminder provider is configured.
@@ -256,7 +258,7 @@ reverse-proxy hops.
 
 WhatsApp uses one platform-managed sender for all businesses. Notification jobs
 are persisted transactionally after online order/payment/status changes or
-successful offline order synchronization. Messages require recorded customer
+successful order creation. Messages require recorded customer
 consent; phone numbers are stored in E.164 format, and customer opt-outs are
 honored. The business web/mobile workspaces provide tenant-scoped delivery
 history. Configure the Meta sender, approved templates, document headers, and

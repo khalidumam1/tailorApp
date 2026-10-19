@@ -1,5 +1,7 @@
 # Audit & fix report — refresh-to-login bug + full-stack integration check
 
+> **Historical document (archived 2026-10-19).** Preserved as the record of its audit/fix cycle; some statements are superseded by the phase reports in `docs/implementation/`. See `README.md` for current status.
+
 Date: 2026-10-15 · Branch: `arena/4bdc6491-tailorapp`
 
 ## 1. The reported bug: "refreshing redirects me to the login screen"

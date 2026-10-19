@@ -1,5 +1,7 @@
 # ERP architecture audit and implementation status
 
+> **Historical document (archived 2026-10-19).** Preserved as the record of its audit/fix cycle; some statements are superseded by the phase reports in `docs/implementation/`. See `README.md` for current status.
+
 - **Initial audit:** 2026-10-13
 - **Implementation update:** 2026-10-14
 - **Repository:** `khalidumam1/tailorApp`

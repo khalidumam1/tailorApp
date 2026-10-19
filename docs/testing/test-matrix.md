@@ -50,3 +50,39 @@ Baseline measured 2026-10-19 in the audit sandbox (Node 22.22.3). Legend: ✅ pa
   until the owner provides a staging environment (D-10).
 - Browser/device verification is labelled separately from static/build verification;
   fixture-API runs (`tools/preview-api`) verify web UI behaviour only, never persistence.
+
+## Web ↔ mobile parity matrix (Phase 2 task 2.5, refreshed 2026-10-19 after Phases 1–2)
+
+Legend: ✅ both · 🌐 web-only (reason) · 📱 mobile-only (reason) · — absent.
+"Platform console remains web-only" is a documented product decision; mobile
+platform-scope sign-in shows a clear message instead of a broken workspace.
+
+| Feature | Web | Mobile | Notes |
+| --- | --- | --- | --- |
+| Sign-in / scope selection / session restore | ✅ | ✅ | |
+| Forced + voluntary password change | ✅ | ✅ | Phase 1 (F-017) |
+| Business staff password reset | ✅ | ✅ | Settings → Team (F-001) |
+| Customers CRUD + measurements link | ✅ | ✅ | |
+| Customer archive/restore | ✅ | ✅ | Phase 1 (F-003) |
+| Orders, workflow transitions, payments | ✅ | ✅ | |
+| Order archive/restore | ✅ | ✅ | Phase 1 |
+| Alterations (add, done, reopen) | ✅ | ✅ | Phase 2 (F-006) |
+| CSV exports (customers/orders/payments/ledger) | ✅ | ✅ | Phase 2 (F-007); server-generated both sides |
+| Order invoice PDF | ✅ | ✅ | Phase 2; payment section gated by payments:read |
+| Payment receipts PDF + WhatsApp send | ✅ | ✅ | Mobile also builds a local ledger PDF |
+| Catalog, inventory, suppliers, purchasing | ✅ (ERP) | ✅ (ERP screen) | |
+| Cashbook + accounting reports | ✅ (ERP) | ✅ (ERP screen) | |
+| WhatsApp notification history | ✅ | ✅ | |
+| Subscription view + payment submission | ✅ | ✅ | |
+| Business settings, branding, modules, workflow | ✅ | ✅ | |
+| Roles & staff management | ✅ | ✅ | |
+| Platform console (businesses, templates, plans, staff, billing, audit) | 🌐 | — | Web-only by design; mobile platform sign-in shows an explanatory message |
+| Order-form draft persistence | ✅ | — | Mobile forms are single-session flows; web refresh-restore added in Phase 2 (F-016) |
+| Chat assistant | ✅ | ✅ | Mobile ChatScreen |
+| Offline-sync API | — | — | Retired in Phase 2 (D-1, F-004); no client ever used it |
+
+Destructive-action confirmation audit (Phase 2): every archive/remove/
+deactivate/reverse/cancel action on web and mobile either asks for explicit
+confirmation (window.confirm / Alert with destructive style) or requires a
+reason in a deliberate form (subscription status, inventory reversal, member
+removal). Financial records are never deleted — corrections are reversals.

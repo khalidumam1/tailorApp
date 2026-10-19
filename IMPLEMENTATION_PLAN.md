@@ -1,5 +1,12 @@
 # Tailor Management System Implementation Plan
 
+> **Historical document (archived 2026-10-19).** This plan records the original
+> build-out checkpoints, including features later changed by owner decisions
+> (e.g. the offline-sync API it describes was retired in Phase 2, decision D-1).
+> For current status see `README.md`, `docs/implementation/three-phase-plan.md`
+> and the phase completion reports in `docs/implementation/`. Statements below
+> are preserved as history, not as a description of the shipped product.
+
 ## Architecture
 
 - Three independently installable application roots: `backend` (Express REST API), `web` (React/Vite), and `mobile` (Expo), each with its own lockfile and CI. The top-level npm workspace remains for cross-app development; backend and web carry local shared Zod contract copies so each can be split into a repository.
