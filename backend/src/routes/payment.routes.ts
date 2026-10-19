@@ -350,7 +350,7 @@ router.get('/:paymentId/receipt.pdf', requireBusinessPermission('payments:read')
   const payment = await prisma.payment.findFirst({
     where: { id: paymentId, businessId },
     include: {
-      business: { select: { name: true } },
+      business: { select: { name: true, timezone: true } },
       order: {
         include: {
           customer: { select: { name: true } },
