@@ -724,23 +724,6 @@ async function seed() {
         },
       });
     }
-    // The demo orders occupy KARACHI-000001/-000002; keep the API order
-    // counter ahead of the highest seeded number (derived, so adding
-    // another demo order later cannot reintroduce the collision).
-    const highestSeededOrder = await tx.order.findFirst({
-      where: { businessId: business.id },
-      orderBy: { orderNumber: 'desc' },
-      select: { orderNumber: true },
-    });
-    const seededSequence = highestSeededOrder
-      ? Number(highestSeededOrder.orderNumber.split('-').pop() ?? 0)
-      : 0;
-    if (seededSequence > 0) {
-      await tx.business.updateMany({
-        where: { id: business.id, orderSequence: { lt: seededSequence } },
-        data: { orderSequence: seededSequence },
-      });
-    }
     await tx.order.updateMany({
       where: { id: order.id, businessId: business.id, status: 'NEW', workflowStageId: null },
       data: { workflowStageId: tailorInitialStage.id, workflowStageKey: tailorInitialStage.key },
@@ -904,6 +887,24 @@ async function seed() {
         idempotencyKey: 'demo-advance-0002',
       },
     });
+
+    // The demo orders occupy KARACHI-000001/-000002; keep the API order
+    // counter ahead of the highest seeded number (derived, so adding
+    // another demo order later cannot reintroduce the collision).
+    const highestSeededOrder = await tx.order.findFirst({
+      where: { businessId: business.id },
+      orderBy: { orderNumber: 'desc' },
+      select: { orderNumber: true },
+    });
+    const seededSequence = highestSeededOrder
+      ? Number(highestSeededOrder.orderNumber.split('-').pop() ?? 0)
+      : 0;
+    if (seededSequence > 0) {
+      await tx.business.updateMany({
+        where: { id: business.id, orderSequence: { lt: seededSequence } },
+        data: { orderSequence: seededSequence },
+      });
+    }
 
     return {
       businesses: ['Tailor Demo', ...demoConfigurations.map((definition) => definition.name)],
