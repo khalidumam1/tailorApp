@@ -78,3 +78,23 @@ client or run PostgreSQL. Statuses below reflect that run.
 Phase 2/3 findings (F-004 sync retirement, F-006 alterations UI, F-007 exports,
 F-009 web bundle split, F-010 docs refresh, F-014 toolchain, F-015 brand
 defaults via 1.9/D-6, F-016 form drafts) are untouched by Phase 1, as planned.
+
+## Resolution status — Phase 2 (2026-10-19)
+
+Same verification model as Phase 1: local static/unit evidence in the phase
+report; DB-backed evidence from GitHub CI on the pull request.
+
+| ID | Task | Fix shipped | Verification |
+| --- | --- | --- | --- |
+| F-004 | 2.3 | Offline-sync backend retired per D-1: `/api/v1/sync` unmounted and `sync.routes.ts` deleted, `SyncOperation` model/enum dropped (migration `20261020100000_retire_offline_sync`), `syncOperationSchema` removed from all shared copies. Callers rewritten: app test now asserts the retired route returns the standard 404; acceptance/tenant sync flows re-based onto `POST /orders` Idempotency-Key replay; shared-schema sync test removed. Dangling-reference grep across backend/web/mobile/shared is clean (only the intentional 404 assertion remains). | Local: shared tests 5/5, drift check, parse scans. CI: migrations + full suite (see Phase 2 report). |
+| F-006 | 2.1 | Alterations workflow completed: `GET /orders/:id/alterations`, `PATCH /orders/:id/alterations/:id` (OPEN/DONE, audited as alteration.completed/reopened, tenant-checked), shared `updateAlterationSchema`; web order-card panel and mobile order-card section (add, mark done, reopen); dashboard OPEN count decrements on completion. | DB lifecycle + tenant-isolation tests in CI; web api tests; local typechecks/builds. |
+| F-007 | 2.2 | Exports & invoice: `GET /exports/{customers,orders,payments,ledger}.csv` (tenant-scoped, read-permission + module gates, tenant-local date ranges, 5000-row cap with `X-Export-Truncated`), shared CSV writer with spreadsheet formula-injection defence; `GET /orders/:id/invoice.pdf` with payment section only for payments:read holders. Exact integer-cents invoice arithmetic (`domain/invoice.ts`). Web + mobile entry points incl. share-sheet downloads. | Unit tests 6/6 local (csv + invoice), web api tests, tenant CSV/invoice DB tests in CI (content, tenant isolation, 404 foreign invoice). |
+| F-009 | 2.4 (partial) | React.lazy splitting for ERP workspace, chat assistant, BusinessStructureEditors, BusinessTeamAdmin: entry chunk 584 kB → 502 kB (147 → 130 kB gzip). CI bundle budget guards the baseline (510 kB ratchet, `tools/check-web-bundle.mjs`). **The < 300 kB target is not met**: the remainder is `main.tsx` itself (platform console interleaved in one App component); extracting it is the D-8(b) incremental refactor, deliberately not attempted as a big-bang change without browser verification. F-009 stays open with this remainder scoped. | Local production build measured; CI budget step. |
+| F-016 | 2.4 | Web order-form drafts persist per user+business in localStorage, restored with a notice, cleared when the form is emptied/submitted; corrupt drafts ignored. | Local typecheck/build; interactive browser verification still recommended (no browser in sandbox). |
+| F-010 | 2.7 | README status rewritten to the shipped product; `IMPLEMENTATION_PLAN.md`, `AUDIT_FIX_REPORT.md`, `UI_UX_AUDIT.md`, `ERP_ARCHITECTURE_AUDIT.md` banner-marked as historical archives. Screenshots remain stale (recapture is Phase 3). | Doc review against code. |
+| F-002 (UI part) | 2.5 | Parity matrix refreshed in `docs/testing/test-matrix.md`; destructive-action confirmation audit (all confirmed or reason-gated; financials reversal-only). Platform console stays web-only by design (documented in the matrix). | Matrix + audit recorded; no code gaps found to fix. |
+
+Phase 2 conditional features (task 2.6: G-001 employee/wages, G-002 payment-proof
+uploads, G-004 notification centre) were **not built** — decisions D-4/D-5 remain
+OPEN and the plan allows them only with separate approval. Recorded in the
+decision log.

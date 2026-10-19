@@ -29,3 +29,13 @@ three-phase plan; individual decisions gate the tasks noted. `OPEN` = awaiting o
 - 2026-10-19: Owner approved **Phase 1 only**; Phases 2–3 return for approval after the
   Phase 1 completion report. D-1 = retire sync (Phase 2). D-2 = archive-only.
   D-3 = admin-initiated password reset only. D-6 remains OPEN → task 1.9 parked.
+
+## Phase 2 execution notes (2026-10-19)
+
+- D-1 executed: sync backend retired (task 2.3). No client ever called it.
+- D-8: followed the recorded default (a) code-split only. ERP/settings/chat are
+  lazy chunks; the platform console remains in the entry chunk (502 kB) because
+  extracting it from the single App component is the (b) incremental refactor.
+  F-009's < 300 kB target therefore remains open under D-8.
+- D-4/D-5 never approved → task 2.6 (G-001/G-002/G-004) skipped entirely, per plan.
+- D-6 still open → Phase 1 task 1.9 (brand defaults) remains parked.
