@@ -1117,6 +1117,51 @@ test('alteration lifecycle: create, list, complete, reopen with tenant isolation
   assert.equal(cleanup.status, 200);
 });
 
+test('csv exports are tenant-scoped and the order invoice pdf renders', { skip: !enabled }, async () => {
+  const csv = async (path: string) => {
+    const response = await fetch(`${baseUrl}${path}`, { headers: { authorization: authHeader } });
+    assert.equal(response.status, 200, path);
+    assert.match(response.headers.get('content-type') ?? '', /text\/csv/);
+    return response.text();
+  };
+
+  const customersCsv = await csv('/api/v1/exports/customers.csv');
+  assert.ok(customersCsv.startsWith('"Name","Phone"'), 'customers export has a header row');
+  assert.ok(customersCsv.includes('A Customer'), 'own customer is exported');
+  assert.ok(!customersCsv.includes('B Customer'), 'foreign tenant customer is never exported');
+
+  const ordersCsv = await csv('/api/v1/exports/orders.csv');
+  assert.ok(ordersCsv.includes('Shalwar Kameez'), 'order items are exported');
+  assert.ok(!ordersCsv.includes('B Customer'), 'foreign tenant orders are never exported');
+
+  const emptyRange = await csv('/api/v1/exports/orders.csv?from=2999-01-01&to=2999-12-31');
+  assert.equal(emptyRange.trim().split('\r\n').length, 1, 'out-of-range export contains only the header');
+
+  const badRange = await fetch(`${baseUrl}/api/v1/exports/orders.csv?from=2026-02-01&to=2026-01-01`, {
+    headers: { authorization: authHeader },
+  });
+  assert.equal(badRange.status, 400, 'reversed date ranges are rejected');
+
+  const paymentsCsv = await csv('/api/v1/exports/payments.csv');
+  assert.ok(paymentsCsv.includes('250.00'), 'recorded payment is exported');
+
+  const ledgerCsv = await csv('/api/v1/exports/ledger.csv');
+  assert.ok(ledgerCsv.startsWith('"Date","Kind","Account","Contra account"'), 'ledger export has a header row');
+
+  const invoiceResponse = await fetch(`${baseUrl}/api/v1/orders/${createdOrderId}/invoice.pdf`, {
+    headers: { authorization: authHeader },
+  });
+  assert.equal(invoiceResponse.status, 200);
+  assert.match(invoiceResponse.headers.get('content-type') ?? '', /application\/pdf/);
+  const invoiceBytes = Buffer.from(await invoiceResponse.arrayBuffer());
+  assert.equal(invoiceBytes.subarray(0, 4).toString('latin1'), '%PDF', 'invoice is a real PDF document');
+
+  const foreignInvoice = await fetch(`${baseUrl}/api/v1/orders/${orderBId}/invoice.pdf`, {
+    headers: { authorization: authHeader },
+  });
+  assert.equal(foreignInvoice.status, 404, 'invoice for a foreign tenant order is not served');
+});
+
 test('subscription expiry reminders use configured business contact, idempotency and generic history fields', { skip: !enabled }, async () => {
   const existingBillingSetting = await prisma.platformSetting.findUnique({ where: { key: 'billing' } });
   await prisma.platformSetting.upsert({

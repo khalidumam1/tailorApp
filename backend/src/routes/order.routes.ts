@@ -13,6 +13,9 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { calculateNetPaid, calculateOutstanding } from '../domain/finance.js';
+import { buildInvoice } from '../domain/invoice.js';
+import { generateInvoicePdf } from '../domain/invoice-pdf.js';
+import { businessLocalDateString } from '../domain/business-time.js';
 import { ensureDefaultAccounts, postJournal } from '../domain/accounting.js';
 import { getOrCreateDefaultLocation, postInventoryMovement } from '../domain/inventory.js';
 import { customFieldValueData, validateCustomFieldValues, withBuiltInOrderItemFields } from '../domain/custom-fields.js';
@@ -950,6 +953,58 @@ router.get('/:orderId', requireBusinessPermission('orders:read'), asyncHandler(a
       outstanding: calculateOutstanding(order.total, payments).toFixed(2),
     },
   });
+}));
+
+router.get('/:orderId/invoice.pdf', requireBusinessPermission('orders:read'), asyncHandler(async (req, res) => {
+  const { businessId } = getContext(req);
+  const orderId = idSchema.parse(req.params.orderId);
+  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId);
+  const canReadPayments = req.auth?.permissions.includes('payments:read') === true
+    && moduleAccess.enabledModules.includes('payments');
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, businessId, deletedAt: null },
+    include: {
+      customer: { select: { name: true, phone: true } },
+      items: true,
+      business: { select: { name: true, currency: true, timezone: true } },
+    },
+  });
+  if (!order) throw new HttpError(404, 'Order not found', 'ORDER_NOT_FOUND');
+  const payments = canReadPayments
+    ? await prisma.payment.findMany({ where: { businessId, orderId }, orderBy: { createdAt: 'asc' } })
+    : null;
+  const invoice = buildInvoice({
+    items: order.items.map((item) => ({
+      name: item.itemName ?? item.garmentName ?? 'Item',
+      quantity: item.quantity,
+      unitPrice: item.unitPrice.toString(),
+    })),
+    total: order.total.toString(),
+    payments: (payments ?? []).map((payment) => ({ kind: payment.kind, amount: payment.amount.toString() })),
+  });
+  const pdf = await generateInvoicePdf({
+    ...invoice,
+    businessName: order.business.name,
+    currency: order.business.currency,
+    orderNumber: order.orderNumber,
+    customerName: order.customer.name,
+    customerPhone: order.customer.phone,
+    issuedAt: businessLocalDateString(order.business.timezone, new Date()),
+    promisedAt: businessLocalDateString(order.business.timezone, order.promisedAt),
+    payments: payments
+      ? payments.map((payment) => ({
+        receiptNumber: payment.receiptNumber,
+        kind: payment.kind,
+        method: payment.method,
+        amount: payment.amount.toString(),
+        date: businessLocalDateString(order.business.timezone, payment.createdAt),
+      }))
+      : null,
+  });
+  res.status(200)
+    .type('application/pdf')
+    .setHeader('content-disposition', `attachment; filename="invoice-${order.orderNumber}.pdf"`)
+    .send(pdf);
 }));
 
 const archiveOrderSchema = z.object({ version: z.number().int().positive() }).strict();

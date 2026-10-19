@@ -13,6 +13,7 @@ import { useWorkspace, resolveMobileWorkflowStage } from '../hooks/useWorkspace'
 import { computeDashboardSummary } from '../data/analytics';
 import type { LocalOrder } from '../local';
 import type { AlterationTask } from '../hooks/useWorkspace';
+import { shareDownloadedFile } from '../data/downloads';
 import { normalizePhone } from '../data/messaging';
 
 import { AreaChart } from '../components/AreaChart';
@@ -100,6 +101,15 @@ export function OrdersScreen({
           <Text style={styles.pageTitle}>{ws.term('orders', copy.orders)}</Text>
           <Text style={styles.pageSubtitle}>{filtered.length} {ws.term('orders', copy.orders).toLowerCase()}</Text>
         </View>
+        {ws.can('orders:read') ? (
+          <ActionButton
+            title="Export CSV"
+            secondary
+            onPress={() => void ws.downloadServerExport('orders', { archived: showArchived })
+              .then((file) => shareDownloadedFile(file.filename, file.bytes, file.mimeType))
+              .catch(() => { /* workspace banner shows the error */ })}
+          />
+        ) : null}
         {ws.can('orders:write') ? (
           <ActionButton
             title={`＋ ${copy.newOrder}`}
@@ -245,6 +255,19 @@ export function OrdersScreen({
                             {ws.openingPaymentOrderId === order.id ? copy.loading : copy.recordPayment}
                           </Text>
                           <Icon name="wallet" size={16} color={palette.primaryText} />
+                        </Pressable>
+                      ) : null}
+
+                      {ws.can('orders:read') ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          android_ripple={{ color: palette.primarySoft }}
+                          onPress={() => void ws.downloadOrderInvoice(order)
+                            .then((file) => shareDownloadedFile(file.filename, file.bytes, file.mimeType))
+                            .catch(() => { /* workspace banner shows the error */ })}
+                          style={({ pressed }) => [styles.nextStageBtn, pressed && styles.pressed]}
+                        >
+                          <Text style={styles.nextStageText}>Invoice PDF</Text>
                         </Pressable>
                       ) : null}
 

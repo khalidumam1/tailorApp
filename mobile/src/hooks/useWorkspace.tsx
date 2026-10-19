@@ -27,6 +27,7 @@ import * as SecureStore from 'expo-secure-store';
 import {
   ApiError,
   API_BASE_URL,
+  apiDownloadRequest,
   apiRequest,
   clearSession,
   createSession,
@@ -320,6 +321,8 @@ export type WorkspaceContextValue = {
   fetchAlterations: (orderId: string) => Promise<AlterationTask[]>;
   createAlteration: (orderId: string, description: string) => Promise<AlterationTask>;
   setAlterationStatus: (orderId: string, alterationId: string, status: 'OPEN' | 'DONE') => Promise<AlterationTask>;
+  downloadServerExport: (kind: 'customers' | 'orders' | 'payments' | 'ledger', options?: { archived?: boolean }) => Promise<{ bytes: Uint8Array; filename: string; mimeType: string }>;
+  downloadOrderInvoice: (order: LocalOrder) => Promise<{ bytes: Uint8Array; filename: string; mimeType: string }>;
   fetchRoles: () => Promise<BusinessRole[]>;
   fetchBusinessPermissions: () => Promise<BusinessPermission[]>;
   fetchBusinessStaff: () => Promise<BusinessMember[]>;
@@ -1409,6 +1412,24 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     });
   }, [erpRequest]);
 
+  const downloadServerExport = useCallback(async (
+    kind: 'customers' | 'orders' | 'payments' | 'ledger',
+    options?: { archived?: boolean },
+  ): Promise<{ bytes: Uint8Array; filename: string; mimeType: string }> => {
+    if (!session) throw new Error(copy.settingsOnline);
+    const query = kind === 'orders' && options?.archived ? '?archived=true' : '';
+    const result = await apiDownloadRequest(session, `/api/v1/exports/${kind}.csv${query}`, updateSession);
+    return { bytes: result.bytes, filename: `${kind}.csv`, mimeType: 'text/csv' };
+  }, [copy.settingsOnline, session, updateSession]);
+
+  const downloadOrderInvoice = useCallback(async (
+    order: LocalOrder,
+  ): Promise<{ bytes: Uint8Array; filename: string; mimeType: string }> => {
+    if (!session) throw new Error(copy.settingsOnline);
+    const result = await apiDownloadRequest(session, `/api/v1/orders/${order.id}/invoice.pdf`, updateSession);
+    return { bytes: result.bytes, filename: `invoice-${order.order_number ?? order.id}.pdf`, mimeType: 'application/pdf' };
+  }, [copy.settingsOnline, session, updateSession]);
+
   const fetchRoles = useCallback(async (): Promise<BusinessRole[]> => {
     if (!session) throw new Error(copy.settingsOnline);
     const response = await apiRequest<{ data?: { items?: BusinessRole[] } }>(session, '/api/v1/business/roles', {}, updateSession);
@@ -1645,6 +1666,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     fetchAlterations,
     createAlteration,
     setAlterationStatus,
+    downloadServerExport,
+    downloadOrderInvoice,
     fetchRoles,
     fetchBusinessPermissions,
     fetchBusinessStaff,
@@ -1678,7 +1701,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     refreshNotificationHistory, refreshSubscriptionBilling, email, password,
     authBusy, shopChoices, cancelOrderPayment, saveBusinessConfiguration,
     completePasswordChange, resetStaffPassword, archiveCustomer, restoreCustomer,
-    fetchArchivedCustomers, archiveOrder, restoreOrder, fetchArchivedOrders, fetchAlterations, createAlteration, setAlterationStatus, fetchRoles,
+    fetchArchivedCustomers, archiveOrder, restoreOrder, fetchArchivedOrders, fetchAlterations, createAlteration, setAlterationStatus, downloadServerExport, downloadOrderInvoice, fetchRoles,
     fetchBusinessPermissions, fetchBusinessStaff, createBusinessRole, inviteStaffMember,
   ]);
 

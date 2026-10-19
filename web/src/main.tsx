@@ -192,6 +192,17 @@ const navigationGroups: Array<{ label: string; views: View[] }> = [
   { label: 'Administration', views: ['subscription', 'configuration'] },
 ];
 
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function money(value: string | undefined, currency = 'PKR'): string {
   if (value === undefined) return '—';
   return new Intl.NumberFormat('en', { style: 'currency', currency, maximumFractionDigits: 2 }).format(Number(value));
@@ -1598,6 +1609,30 @@ function App() {
         ? `Alteration for order ${order.orderNumber} marked done.`
         : `Alteration for order ${order.orderNumber} reopened.`);
       void withSession(api.dashboard).then(setDashboard).catch(() => undefined);
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function downloadExport(kind: 'customers' | 'orders' | 'payments' | 'ledger') {
+    setWorking(true); setError(null);
+    try {
+      const blob = await withSession((token) => (kind === 'customers'
+        ? api.exportCustomersCsv(token)
+        : kind === 'orders'
+          ? api.exportOrdersCsv(token, showArchivedOrders)
+          : kind === 'payments'
+            ? api.exportPaymentsCsv(token)
+            : api.exportLedgerCsv(token)));
+      downloadBlob(blob, `${kind}.csv`);
+      setNotice(`${kind[0].toUpperCase()}${kind.slice(1)} export downloaded as CSV.`);
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function downloadInvoice(order: Order) {
+    setWorking(true); setError(null);
+    try {
+      const blob = await withSession((token) => api.orderInvoice(token, order.id));
+      downloadBlob(blob, `invoice-${order.orderNumber}.pdf`);
+      setNotice(`Invoice for order ${order.orderNumber} downloaded.`);
     } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
   }
 
@@ -3894,6 +3929,7 @@ function App() {
                 <input id="customer-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name or phone" />
                 <button className="button button-secondary" type="submit">Search</button>
               </form>
+              {!showArchivedCustomers && <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadExport('customers')}>Export CSV</button>}
             </div>
             {permissions.has('customers:write') && (
               <form className="panel form-panel" onSubmit={addCustomer}>
@@ -4049,6 +4085,7 @@ function App() {
                 <input id="order-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Order number or customer" />
                 <button className="button button-secondary" type="submit">Search</button>
               </form>
+              <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadExport('orders')}>Export CSV</button>
             </div>
             {businessConfiguration && (
               <section className="panel template-preview">
@@ -4170,6 +4207,9 @@ function App() {
                               onClick={() => void changeWorkflowStage(order, stage.key)}
                             >{isTransitioningThis ? `Moving to ${stage.label}…` : `Move to ${stage.label}`}</button> : null;
                           })}
+                        {!showArchivedOrders && permissions.has('orders:read') && (
+                          <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadInvoice(order)}>Invoice PDF</button>
+                        )}
                         {!showArchivedOrders && permissions.has('payments:write') && moduleEnabled('payments') && Number(order.outstanding ?? 0) > 0 && (
                           <button className="button button-secondary" onClick={() => { setPaymentOrderId(order.id); setPaymentAmount(order.outstanding ?? ''); }}>Record payment</button>
                         )}
@@ -4258,7 +4298,12 @@ function App() {
 
         {view === 'payments' && (
           <section className="content-stack">
-            <div className="section-heading"><div><h2>Payment ledger</h2><p className="muted">Posted payments and corrections are permanent ledger entries.</p></div></div>
+            <div className="section-heading"><div><h2>Payment ledger</h2><p className="muted">Posted payments and corrections are permanent ledger entries.</p></div>
+              <div className="row-actions">
+                <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadExport('payments')}>Export payments CSV</button>
+                {permissions.has('cashbook:read') && <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadExport('ledger')}>Export ledger CSV</button>}
+              </div>
+            </div>
             {payments.length ? (
               <div className="table-wrap">
                 <table><thead><tr><th>Receipt</th><th>Customer / order</th><th>Type</th><th>Method</th><th>Amount</th><th></th></tr></thead>

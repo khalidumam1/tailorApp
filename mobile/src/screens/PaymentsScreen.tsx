@@ -16,6 +16,7 @@ import { useWorkspace } from '../hooks/useWorkspace';
 import { loadPayments, summarizePayments, type PaymentRow } from '../data/payments';
 
 import { receiptMessage, whatsappUrl, normalizePhone } from '../data/messaging';
+import { shareDownloadedFile } from '../data/downloads';
 import { interpolate } from '../i18n';
 import { PaymentForm } from '../components/PaymentForm';
 
@@ -207,6 +208,22 @@ export function PaymentsScreen({
     { icon: 'send', label: copy.sendReceiptBtn, onPress: sendLatestReceipt, disabled: ledger.length === 0 },
     { icon: 'download', label: copy.shareList, onPress: exportPayments, disabled: ledger.length === 0 },
     { icon: 'download', label: copy.exportPdfBtn, onPress: exportPdf, disabled: ledger.length === 0 },
+    {
+      icon: 'download',
+      label: 'Payments CSV',
+      onPress: () => void ws.downloadServerExport('payments')
+        .then((file) => shareDownloadedFile(file.filename, file.bytes, file.mimeType))
+        .catch((error) => Alert.alert(copy.error, error instanceof Error ? error.message : String(error))),
+      disabled: !ws.can('payments:read'),
+    },
+    {
+      icon: 'download',
+      label: 'Ledger CSV',
+      onPress: () => void ws.downloadServerExport('ledger')
+        .then((file) => shareDownloadedFile(file.filename, file.bytes, file.mimeType))
+        .catch((error) => Alert.alert(copy.error, error instanceof Error ? error.message : String(error))),
+      disabled: !ws.can('cashbook:read'),
+    },
   ];
 
   return (

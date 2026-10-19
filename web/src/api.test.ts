@@ -157,6 +157,46 @@ describe('customers archive/restore queries (task 1.2)', () => {
   });
 });
 
+describe('exports and invoice downloads (task 2.2)', () => {
+  it('requests the orders export with the archived flag only when asked', async () => {
+    stubFetch(() => new Response('a,b', { status: 200, headers: { 'content-type': 'text/csv' } }));
+    await api.exportOrdersCsv('token-1', true);
+    expect(fetchCalls[0].url).toBe('/api/v1/exports/orders.csv?archived=true');
+    await api.exportOrdersCsv('token-1');
+    expect(fetchCalls[1].url).toBe('/api/v1/exports/orders.csv');
+  });
+
+  it('requests the order invoice pdf', async () => {
+    stubFetch(() => new Response('%PDF-fake', { status: 200, headers: { 'content-type': 'application/pdf' } }));
+    const blob = await api.orderInvoice('token-1', CUSTOMER_ID);
+    expect(fetchCalls[0].url).toBe(`/api/v1/orders/${CUSTOMER_ID}/invoice.pdf`);
+    expect(await blob.text()).toContain('%PDF');
+  });
+});
+
+describe('alterations (task 2.1)', () => {
+  const alteration = {
+    id: CUSTOMER_ID,
+    orderId: CUSTOMER_ID,
+    description: 'Shorten sleeves',
+    status: 'OPEN',
+    dueAt: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+  };
+
+  it('lists, creates and completes alterations', async () => {
+    stubFetch((call) => (call.init?.method === 'PATCH' || call.init?.method === 'POST'
+      ? okData({ ...alteration, status: 'DONE' })
+      : okData({ items: [alteration] })));
+    const list = await api.alterations('token-1', CUSTOMER_ID);
+    expect(list.items).toHaveLength(1);
+    await api.setAlterationStatus('token-1', CUSTOMER_ID, CUSTOMER_ID, 'DONE');
+    const patch = fetchCalls[1];
+    expect(patch.init?.method).toBe('PATCH');
+    expect(JSON.parse(String(patch.init?.body))).toEqual({ status: 'DONE' });
+  });
+});
+
 describe('parseNotificationTemplates', () => {
   it('accepts known template keys and rejects unknown ones', () => {
     expect(parseNotificationTemplates({

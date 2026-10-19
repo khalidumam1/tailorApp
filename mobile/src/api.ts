@@ -593,6 +593,52 @@ export async function apiRequest<T = unknown>(
   return body as T;
 }
 
+/**
+ * Authenticated raw-body request for file downloads (CSV exports, invoice
+ * PDFs). Mirrors apiRequest's session handling — refresh before expiry, one
+ * 401 retry — but returns the response bytes instead of parsed JSON. Error
+ * responses are still JSON and surface as ApiError.
+ */
+export async function apiDownloadRequest(
+  session: Session,
+  path: string,
+  onSessionUpdate?: (session: Session) => void,
+): Promise<{ bytes: Uint8Array; contentType: string }> {
+  if (!path.startsWith('/api/v1/') || path.startsWith('//') || path.includes('\\')) {
+    throw new Error('API requests must use a safe, same-origin versioned path');
+  }
+  const generation = sessionGeneration;
+  if (invalidatedRefreshTokens.has(session.refreshToken)) throw inactiveSessionError();
+  let currentSession = session;
+  if (currentSession.accessExpiresAt <= Date.now() + 15_000) {
+    currentSession = await refreshForRequest(currentSession, generation, onSessionUpdate);
+  }
+  if (generation !== sessionGeneration || invalidatedRefreshTokens.has(currentSession.refreshToken)) {
+    throw inactiveSessionError();
+  }
+  const send = (active: Session) => fetchWithTimeout(`${API_BASE_URL}${path}`, {
+    headers: { authorization: `Bearer ${active.accessToken}` },
+  });
+  let response = await send(currentSession);
+  if (response.status === 401) {
+    currentSession = await refreshForRequest(currentSession, generation, onSessionUpdate);
+    if (generation !== sessionGeneration) throw inactiveSessionError();
+    response = await send(currentSession);
+    if (response.status === 401) {
+      const expiredBody = await responseBody(response);
+      throw expiredSessionError(responseError(expiredBody, response));
+    }
+  }
+  if (!response.ok) {
+    const body = await responseBody(response);
+    throw responseError(body, response);
+  }
+  return {
+    bytes: new Uint8Array(await response.arrayBuffer()),
+    contentType: response.headers.get('content-type') ?? 'application/octet-stream',
+  };
+}
+
 export async function fetchApplicationBranding(): Promise<ApplicationBranding> {
   const response = await fetchWithTimeout(`${API_BASE_URL}${APPLICATION_BRANDING_ROUTE}`);
   const body = await responseBody(response);

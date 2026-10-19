@@ -1324,6 +1324,21 @@ export const api = {
       body: { version: order.version },
     });
   },
+  orderInvoice(token: string, orderId: string) {
+    return requestPdf(`/orders/${orderId}/invoice.pdf`, token);
+  },
+  exportCustomersCsv(token: string) {
+    return requestCsv('/exports/customers.csv', token);
+  },
+  exportOrdersCsv(token: string, archived = false) {
+    return requestCsv(`/exports/orders.csv${archived ? '?archived=true' : ''}`, token);
+  },
+  exportPaymentsCsv(token: string) {
+    return requestCsv('/exports/payments.csv', token);
+  },
+  exportLedgerCsv(token: string) {
+    return requestCsv('/exports/ledger.csv', token);
+  },
   createOrder(token: string, input: OrderInput, idempotencyKey: string = crypto.randomUUID()) {
     return request('/orders', orderSchema.omit({ paid: true, outstanding: true }), {
       token,
