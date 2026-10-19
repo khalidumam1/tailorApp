@@ -55,8 +55,13 @@ export async function signIn(page: Page, email: string, password: string, scope:
       if (await radio.count()) await radio.check();
       const select = page.locator('select[aria-label="Business workspace"]');
       if (await select.count()) {
-        const firstValue = await select.locator('option').first().getAttribute('value');
-        if (firstValue) await select.selectOption(firstValue);
+        // The seeded owner belongs to every demo business; the suite is
+        // written against the tailor tenant, so pick it by name.
+        const tailor = select.locator('option', { hasText: 'Tailor Demo' });
+        const target = (await tailor.count())
+          ? await tailor.first().getAttribute('value')
+          : await select.locator('option').first().getAttribute('value');
+        if (target) await select.selectOption(target);
       }
     }
     await page.locator('#password').fill(password);
