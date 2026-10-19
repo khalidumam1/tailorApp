@@ -131,13 +131,10 @@ jobs:
           annotate_tail() { tail -15 "$1" 2>/dev/null | emit_annotated; }
           fail() {
             echo "::error::E2E PHASE FAILED: $1"
-            # Playwright failures first (annotations surface ~10 lines):
-            # failing test lines, then error snippets, then server tails.
-            grep -E "✘" /tmp/e2e-tests.log 2>/dev/null | head -4 | emit_annotated || true
-            awk '/Error:/{c++} c==1&&/Error:/{p=5} p{print; p--}' /tmp/e2e-tests.log 2>/dev/null | head -5 | emit_annotated || true
-            grep -E "Locator:|Received:|Call log" /tmp/e2e-tests.log 2>/dev/null | head -3 | emit_annotated || true
-            # The received ARIA tree: exactly what was (not) on the page.
-            grep -hE "^\s+- (button|heading|navigation|paragraph|article|main|complementary)" /tmp/e2e-tests.log 2>/dev/null | sort -u | head -12 | emit_annotated || true
+            # One multi-line annotation carrying the Playwright tail
+            # (single-line annotations kept getting truncated away).
+            echo "::error::E2E-TESTS-TAIL $(tail -70 /tmp/e2e-tests.log 2>/dev/null | perl -0777 -pe 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+            echo "::error::E2E-API-TAIL $(tail -5 /tmp/e2e-api.log 2>/dev/null | cut -c1-200 | perl -0777 -pe 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
             exit 1
           }
           NODE_ENV=test npm run db:migrate > /tmp/e2e-setup.log 2>&1 || fail "migrate"
