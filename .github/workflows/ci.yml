@@ -77,7 +77,9 @@ jobs:
       - run: npm run test --workspace @tailor/mobile
       - run: npm run build
       - name: Check web bundle budget
-        run: node tools/check-web-bundle.mjs
+        shell: bash
+        run: |
+          node tools/check-web-bundle.mjs || { echo '--- bundle check output ---'; node tools/check-web-bundle.mjs 2>&1 | sed -u -E 's/(.*)/::error::BUNDLE \1/'; exit 1; }
       - run: npm audit --workspace @tailor/api --workspace @tailor/web --workspace @tailor/shared
 
 
