@@ -294,7 +294,7 @@ router.get('/payments/:paymentId/receipt.pdf', requirePlatformPermission('platfo
   const payment = await prisma.subscriptionPayment.findFirst({
     where: { id: paymentId, status: 'APPROVED', invoiceNumber: { not: null } },
     include: {
-      business: { select: { name: true } },
+      business: { select: { name: true, timezone: true } },
       plan: { select: { name: true } },
       subscription: { select: { startsAt: true, endsAt: true } },
     },
@@ -312,8 +312,8 @@ router.get('/payments/:paymentId/receipt.pdf', requirePlatformPermission('platfo
     paymentMethod: payment.method,
     paymentDate: payment.paymentDate.toISOString().slice(0, 10),
     invoiceNumber: payment.invoiceNumber,
-    startsAt: payment.subscription.startsAt.toLocaleDateString('en-PK', { timeZone: 'Asia/Karachi' }),
-    endsAt: payment.subscription.endsAt.toLocaleDateString('en-PK', { timeZone: 'Asia/Karachi' }),
+    startsAt: payment.subscription.startsAt.toLocaleDateString('en-PK', { timeZone: payment.business.timezone }),
+    endsAt: payment.subscription.endsAt.toLocaleDateString('en-PK', { timeZone: payment.business.timezone }),
   });
   res.type('application/pdf')
     .setHeader('Content-Disposition', `attachment; filename="${payment.invoiceNumber}.pdf"`)
@@ -634,7 +634,7 @@ router.get('/report.csv', requirePlatformPermission('platform:reports:read'), as
     where: {
       ...(dateRange ? { paymentDate: dateRange } : {}),
     },
-    include: { business: { select: { name: true } }, plan: { select: { name: true } } },
+    include: { business: { select: { name: true, timezone: true } }, plan: { select: { name: true } } },
     orderBy: { paymentDate: 'asc' },
   }), prisma.subscriptionEvent.findMany({
     where: {
@@ -642,7 +642,7 @@ router.get('/report.csv', requirePlatformPermission('platform:reports:read'), as
       ...(dateRange ? { createdAt: dateRange } : {}),
     },
     include: {
-      business: { select: { name: true } },
+      business: { select: { name: true, timezone: true } },
       payment: { include: { plan: { select: { name: true } } } },
     },
     orderBy: { createdAt: 'asc' },

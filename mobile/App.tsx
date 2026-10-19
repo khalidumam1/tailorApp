@@ -23,6 +23,7 @@ import { TabBar, type TabDescriptor } from './src/components/TabBar';
 import { Icon } from './src/Icons';
 
 import { LoginScreen } from './src/screens/LoginScreen';
+import { ChangePasswordScreen } from './src/screens/ChangePasswordScreen';
 import { DashboardScreen } from './src/screens/DashboardScreen';
 import { OrdersScreen } from './src/screens/OrdersScreen';
 import { CustomersScreen } from './src/screens/CustomersScreen';
@@ -123,6 +124,10 @@ function AppShell() {
 
   if (!ws.session) {
     return <LoginScreen />;
+  }
+
+  if (ws.session.mustChangePassword) {
+    return <ChangePasswordScreen forced />;
   }
 
   const tabs: TabDescriptor[] = [

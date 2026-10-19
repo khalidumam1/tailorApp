@@ -36,6 +36,7 @@ export const updateCustomerSchema = createCustomerSchema.partial().extend({
 
 export const customerQuerySchema = z.object({
   q: z.string().trim().min(1).max(120).optional(),
+  archived: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   cursor: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
@@ -85,6 +86,7 @@ export const createPaymentSchema = z.object({
 
 export const orderQuerySchema = z.object({
   q: z.string().trim().min(1).max(120).optional(),
+  archived: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   status: z.enum(orderStatuses).optional(),
   dueBefore: z.string().datetime({ offset: true }).optional(),
   dueAfter: z.string().datetime({ offset: true }).optional(),

@@ -3,7 +3,7 @@
  * order form, stage-transition buttons, and WhatsApp order status updates.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import { formatCurrency } from '../local';
 import { useAppStyles } from '../theme/useAppStyles';
 import { useAppTheme } from '../theme/palette';
@@ -11,6 +11,7 @@ import { Icon } from '../Icons';
 import { ActionButton, EmptyState } from '../theme/primitives';
 import { useWorkspace, resolveMobileWorkflowStage } from '../hooks/useWorkspace';
 import { computeDashboardSummary } from '../data/analytics';
+import type { LocalOrder } from '../local';
 import { normalizePhone } from '../data/messaging';
 
 import { AreaChart } from '../components/AreaChart';
@@ -37,6 +38,16 @@ export function OrdersScreen({
   const ws = useWorkspace();
   const copy = ws.copy;
   const [filter, setFilter] = useState<string>('all');
+  const [showArchived, setShowArchived] = useState(false);
+  const [archivedOrders, setArchivedOrders] = useState<LocalOrder[]>([]);
+  useEffect(() => {
+    if (!showArchived) return;
+    let cancelled = false;
+    ws.fetchArchivedOrders()
+      .then((list) => { if (!cancelled) setArchivedOrders(list); })
+      .catch(() => { /* fetchArchivedOrders surfaces the error in the workspace banner */ });
+    return () => { cancelled = true; };
+  }, [showArchived, ws.fetchArchivedOrders, ws.orders]);
 
   useEffect(() => {
     if (intent === 'new-order') {
@@ -87,6 +98,38 @@ export function OrdersScreen({
 
       {ws.orderForm && ws.can('orders:write') ? (
         <OrderForm onOpenCustomers={onOpenCustomers} />
+      ) : null}
+
+      {/* Archived toggle */}
+      <View style={styles.chipWrap}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ selected: showArchived }}
+          android_ripple={{ color: palette.primarySoft }}
+          onPress={() => setShowArchived((value) => !value)}
+          style={({ pressed }) => [styles.chip, showArchived && styles.chipSelected, pressed && styles.chipPressed]}
+        >
+          <Text style={[styles.chipText, showArchived && styles.chipTextSelected]}>Archived</Text>
+        </Pressable>
+      </View>
+
+      {showArchived ? (
+        archivedOrders.length ? archivedOrders.map((order) => (
+          <View key={order.id} style={[styles.listCard, styles.cardAccentPrimary, { flexDirection: 'column', alignItems: 'stretch' }]}>
+            <Text style={styles.listTitle} numberOfLines={2}>{order.item_name ?? order.garment_name} · {order.customer_name}</Text>
+            <Text style={styles.listMeta}>{order.promised_at.slice(0, 10)} · Archived</Text>
+            {ws.can('orders:write') ? (
+              <ActionButton
+                title="Restore order"
+                secondary
+                loading={ws.saving}
+                loadingTitle={copy.loading}
+                disabled={ws.saving}
+                onPress={() => void ws.restoreOrder(order).then(() => setArchivedOrders((current) => current.filter((entry) => entry.id !== order.id)))}
+              />
+            ) : null}
+          </View>
+        )) : <EmptyState title="No archived orders." />
       ) : null}
 
       {/* Filter chips */}
@@ -189,6 +232,24 @@ export function OrdersScreen({
                             {ws.openingPaymentOrderId === order.id ? copy.loading : copy.recordPayment}
                           </Text>
                           <Icon name="wallet" size={16} color={palette.primaryText} />
+                        </Pressable>
+                      ) : null}
+
+                      {ws.can('orders:write') ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          android_ripple={{ color: palette.primarySoft }}
+                          onPress={() => Alert.alert(
+                            'Archive order',
+                            'Archive this order? Its payment history and records are kept and the order can be restored at any time.',
+                            [
+                              { text: copy.cancel, style: 'cancel' },
+                              { text: 'Archive', style: 'destructive', onPress: () => void ws.archiveOrder(order) },
+                            ],
+                          )}
+                          style={({ pressed }) => [styles.nextStageBtn, pressed && styles.pressed]}
+                        >
+                          <Text style={styles.nextStageText}>Archive order</Text>
                         </Pressable>
                       ) : null}
 

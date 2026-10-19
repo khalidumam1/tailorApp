@@ -1,17 +1,20 @@
 /**
  * Settings — clean layout. Language, appearance, business info, sign out.
  */
+import { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { useAppStyles } from '../theme/useAppStyles';
 import { useAppTheme } from '../theme/palette';
 import { ActionButton, ThemeToggle } from '../theme/primitives';
 import { useWorkspace } from '../hooks/useWorkspace';
+import { ChangePasswordScreen } from './ChangePasswordScreen';
 
 export function SettingsScreen() {
   const styles = useAppStyles();
   const { palette } = useAppTheme();
   const ws = useWorkspace();
   const copy = ws.copy;
+  const [changingPassword, setChangingPassword] = useState(false);
 
   return (
     <>
@@ -28,6 +31,19 @@ export function SettingsScreen() {
         <ThemeToggle copy={copy} />
         <Text style={styles.listMeta}>{copy.themeDefault}: {ws.branding.defaultTheme === 'dark' ? copy.darkTheme : copy.lightTheme}</Text>
         <Text style={styles.listMeta}>{copy.themePreferenceNote}</Text>
+      </View>
+
+      {/* Account security */}
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Password</Text>
+        {changingPassword ? (
+          <ChangePasswordScreen forced={false} onCancel={() => setChangingPassword(false)} />
+        ) : (
+          <>
+            <Text style={styles.listMeta}>Use a password only you know. Your administrator can reset it if you forget it.</Text>
+            <ActionButton title="Change password" secondary onPress={() => setChangingPassword(true)} />
+          </>
+        )}
       </View>
 
       {/* Language */}

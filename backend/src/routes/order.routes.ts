@@ -229,7 +229,7 @@ router.get('/', requireBusinessPermission('orders:read'), asyncHandler(async (re
   const query = orderQuerySchema.parse(req.query);
   if (query.cursor) {
     const cursorExists = await prisma.order.findFirst({
-      where: { id: query.cursor, businessId, deletedAt: null },
+      where: { id: query.cursor, businessId, deletedAt: query.archived ? { not: null } : null },
       select: { id: true },
     });
     if (!cursorExists) throw new HttpError(400, 'Pagination cursor is invalid', 'INVALID_CURSOR');
@@ -238,7 +238,7 @@ router.get('/', requireBusinessPermission('orders:read'), asyncHandler(async (re
   const orders = await prisma.order.findMany({
     where: {
       businessId,
-      deletedAt: null,
+      deletedAt: query.archived ? { not: null } : null,
       ...(query.status ? { status: query.status } : {}),
       ...(query.q ? {
         OR: [
@@ -899,6 +899,70 @@ router.get('/:orderId', requireBusinessPermission('orders:read'), asyncHandler(a
       outstanding: calculateOutstanding(order.total, payments).toFixed(2),
     },
   });
+}));
+
+const archiveOrderSchema = z.object({ version: z.number().int().positive() }).strict();
+
+router.delete('/:orderId', requireBusinessPermission('orders:write'), asyncHandler(async (req, res) => {
+  const { businessId, actorId } = getContext(req);
+  const orderId = idSchema.parse(req.params.orderId);
+  const { version } = archiveOrderSchema.parse(req.body);
+  await runSerializableOrderTransaction(async (tx) => {
+    const result = await tx.order.updateMany({
+      where: { id: orderId, businessId, deletedAt: null, version },
+      data: { deletedAt: new Date(), version: { increment: 1 } },
+    });
+    if (!result.count) {
+      const exists = await tx.order.findFirst({ where: { id: orderId, businessId, deletedAt: null }, select: { id: true } });
+      if (!exists) throw new HttpError(404, 'Order not found', 'ORDER_NOT_FOUND');
+      throw new HttpError(409, 'Order changed since it was loaded; refresh before archiving', 'VERSION_CONFLICT');
+    }
+    await tx.whatsAppNotification.updateMany({
+      where: { businessId, orderId, status: 'QUEUED' },
+      data: { status: 'NOT_SENT', lastError: 'Order was archived', failedAt: new Date() },
+    });
+    await tx.auditEvent.create({
+      data: {
+        businessId,
+        actorId,
+        action: 'order.archived',
+        entityType: 'order',
+        entityId: orderId,
+        metadata: { version },
+        requestId: req.requestId,
+      },
+    });
+  });
+  res.json({ data: { archived: true } });
+}));
+
+router.post('/:orderId/restore', requireBusinessPermission('orders:write'), asyncHandler(async (req, res) => {
+  const { businessId, actorId } = getContext(req);
+  const orderId = idSchema.parse(req.params.orderId);
+  const { version } = archiveOrderSchema.parse(req.body);
+  await runSerializableOrderTransaction(async (tx) => {
+    const result = await tx.order.updateMany({
+      where: { id: orderId, businessId, deletedAt: { not: null }, version },
+      data: { deletedAt: null, version: { increment: 1 } },
+    });
+    if (!result.count) {
+      const exists = await tx.order.findFirst({ where: { id: orderId, businessId, deletedAt: { not: null } }, select: { id: true } });
+      if (!exists) throw new HttpError(404, 'Archived order not found', 'ORDER_NOT_FOUND');
+      throw new HttpError(409, 'Order changed since it was loaded; refresh before restoring', 'VERSION_CONFLICT');
+    }
+    await tx.auditEvent.create({
+      data: {
+        businessId,
+        actorId,
+        action: 'order.restored',
+        entityType: 'order',
+        entityId: orderId,
+        metadata: { version },
+        requestId: req.requestId,
+      },
+    });
+  });
+  res.json({ data: { restored: true } });
 }));
 
 export default router;

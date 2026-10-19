@@ -544,6 +544,11 @@ function App() {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [cpCurrent, setCpCurrent] = useState('');
+  const [cpNew, setCpNew] = useState('');
+  const [cpConfirm, setCpConfirm] = useState('');
   const [scopeChoice, setScopeChoice] = useState<'business' | 'platform'>('business');
   const [businessChoice, setBusinessChoice] = useState('');
   const [view, setView] = useState<View>(() => initialStoredSession?.view ?? 'dashboard');
@@ -572,6 +577,11 @@ function App() {
   const [templates, setTemplates] = useState<MeasurementTemplate[]>([]);
   const [profiles, setProfiles] = useState<MeasurementProfile[]>([]);
   const [search, setSearch] = useState('');
+  const [showArchivedCustomers, setShowArchivedCustomers] = useState(false);
+  const [showArchivedOrders, setShowArchivedOrders] = useState(false);
+  const [platformBusinessStatusFilter, setPlatformBusinessStatusFilter] = useState<'' | 'ACTIVE' | 'SUSPENDED' | 'PENDING' | 'ARCHIVED'>('');
+  const [resettingUserId, setResettingUserId] = useState('');
+  const [resetPasswordValue, setResetPasswordValue] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerNotes, setCustomerNotes] = useState('');
@@ -849,7 +859,7 @@ function App() {
         setOrders(orderResult.items);
       } else if (view === 'orders') {
         const [orderResult, customerResult, catalogResult] = await Promise.all([
-          withSession((token) => api.orders(token, search)),
+          withSession((token) => api.orders(token, search, showArchivedOrders)),
           withSession((token) => api.customers(token)),
           businessConfiguration?.enabledModules.includes('catalog')
             ? withSession((token) => api.catalog(token))
@@ -868,7 +878,7 @@ function App() {
         setCatalogItems(catalogResult.items);
         setCatalogInventoryItems(inventoryResult.items);
       } else if (view === 'customers') {
-        setCustomers((await withSession((token) => api.customers(token, search))).items);
+        setCustomers((await withSession((token) => api.customers(token, search, showArchivedCustomers))).items);
       } else if (view === 'measurements') {
         const [templateResult, customerResult] = await Promise.all([
           withSession(api.templates),
@@ -898,7 +908,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [businessConfiguration?.enabledModules, currentUser?.context.permissions, currentUser?.context.scope, measurementCustomerId, measurementTemplateId, search, selectedSubscriptionPlanId, session, subscriptionPayment.method, view, withSession]);
+  }, [businessConfiguration?.enabledModules, currentUser?.context.permissions, currentUser?.context.scope, measurementCustomerId, measurementTemplateId, search, selectedSubscriptionPlanId, session, showArchivedCustomers, showArchivedOrders, subscriptionPayment.method, view, withSession]);
 
   useEffect(() => {
     const onlineChanged = () => setOnline(navigator.onLine);
@@ -1195,7 +1205,7 @@ function App() {
       }
       if (platformView === 'businesses' && currentUser.context.platformPermissions.includes('platform:businesses:read')) {
         const [result, templates] = await Promise.all([
-          withSession(api.platformBusinesses),
+          withSession((token) => api.platformBusinesses(token, platformBusinessStatusFilter || undefined)),
           withSession(api.platformTemplates),
         ]);
         if (active) {
@@ -1266,7 +1276,7 @@ function App() {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [currentUser, platformReloadToken, platformTemplateKey, platformView, session, withSession]);
+  }, [currentUser, platformBusinessStatusFilter, platformReloadToken, platformTemplateKey, platformView, session, withSession]);
 
   useEffect(() => {
     let active = true;
@@ -1428,6 +1438,7 @@ function App() {
         return;
       }
       authGeneration.current += 1;
+      setAuthNotice(null);
       setSession(result);
       setSelection(null);
       setCurrentUser(null);
@@ -1460,6 +1471,111 @@ function App() {
       // Clearing one session must not cancel a newer login made while sign-out was in flight.
       clearRefreshCache(endingSession.refreshToken);
     }
+  }
+
+  async function submitPasswordChange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!session) return;
+    if (cpNew.length < 16) { setError('Choose a new password of at least 16 characters.'); return; }
+    if (cpNew !== cpConfirm) { setError('The new password and its confirmation do not match.'); return; }
+    setWorking(true);
+    setError(null);
+    try {
+      await withSession((token) => api.changePassword(token, cpCurrent, cpNew));
+      // The API revokes every session on a password change, including this one:
+      // return to the sign-in screen so the user continues with the new password.
+      authGeneration.current += 1;
+      setSession(null);
+      clearSessionData();
+      clearRefreshCache();
+      setPasswordDialogOpen(false);
+      setCpCurrent('');
+      setCpNew('');
+      setCpConfirm('');
+      setAuthNotice('Password changed. Sign in again with your new password.');
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  const passwordChangeForm = (forced: boolean) => (
+    <form className="auth-card" onSubmit={submitPasswordChange}>
+      <div>
+        <p className="eyebrow">{applicationBranding.brandName}</p>
+        <h2>{forced ? 'Choose your own password' : 'Change your password'}</h2>
+        <p className="muted">{forced
+          ? 'An administrator reset your password. Choose your own password to continue — nobody else should know it.'
+          : 'After changing your password you will sign in again, and other devices will be signed out.'}</p>
+      </div>
+      {error && <p className="alert alert-error" role="alert">{error}</p>}
+      <label>Current password<input type="password" autoComplete="current-password" value={cpCurrent} onChange={(event) => setCpCurrent(event.target.value)} required /></label>
+      <label>New password (at least 16 characters)<input type="password" autoComplete="new-password" value={cpNew} onChange={(event) => setCpNew(event.target.value)} minLength={16} maxLength={72} required /></label>
+      <label>Type the new password again<input type="password" autoComplete="new-password" value={cpConfirm} onChange={(event) => setCpConfirm(event.target.value)} minLength={16} maxLength={72} required /></label>
+      <button className="button button-primary" type="submit" disabled={working}>{working ? 'Saving…' : 'Save new password'}</button>
+      {forced
+        ? <button className="button button-quiet" type="button" onClick={() => void signOut()}>Sign out instead</button>
+        : <button className="button button-quiet" type="button" onClick={() => { setPasswordDialogOpen(false); setError(null); }}>Cancel</button>}
+    </form>
+  );
+
+  async function archiveCustomerAction(customer: Customer) {
+    if (!window.confirm(`Archive ${customer.name}? They will disappear from lists, but their orders, measurements and payments are kept and the customer can be restored.`)) return;
+    setWorking(true); setError(null);
+    try {
+      await withSession((token) => api.archiveCustomer(token, customer));
+      setNotice(`${customer.name} archived. Use "Show archived" to restore them.`);
+      await reloadCurrent();
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function restoreCustomerAction(customer: Customer) {
+    setWorking(true); setError(null);
+    try {
+      await withSession((token) => api.restoreCustomer(token, customer));
+      setNotice(`${customer.name} restored.`);
+      await reloadCurrent();
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function archiveOrderAction(order: Order) {
+    if (!window.confirm(`Archive order ${order.orderNumber}? It will disappear from lists, but payments and history are kept and the order can be restored.`)) return;
+    setWorking(true); setError(null);
+    try {
+      await withSession((token) => api.archiveOrder(token, order));
+      setNotice(`Order ${order.orderNumber} archived. Use "Show archived" to restore it.`);
+      await reloadCurrent();
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function restoreOrderAction(order: Order) {
+    setWorking(true); setError(null);
+    try {
+      await withSession((token) => api.restoreOrder(token, order));
+      setNotice(`Order ${order.orderNumber} restored.`);
+      await reloadCurrent();
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function resetPlatformUserPasswordAction(userId: string, userLabel: string) {
+    if (resetPasswordValue.length < 16) { setError('Choose a password of at least 16 characters (20 for platform accounts).'); return; }
+    setWorking(true); setError(null);
+    try {
+      await withSession((token) => api.resetPlatformUserPassword(token, userId, resetPasswordValue));
+      setResettingUserId(''); setResetPasswordValue('');
+      setNotice(`Password reset for ${userLabel}. Share it securely; they must choose their own at next sign-in and all their sessions were signed out.`);
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function setPlatformUserActiveAction(userId: string, userLabel: string, active: boolean) {
+    if (!active && !window.confirm(`Deactivate ${userLabel}? They will be signed out everywhere and cannot sign in until reactivated.`)) return;
+    setWorking(true); setError(null);
+    try {
+      await withSession((token) => api.setPlatformUserActive(token, userId, active));
+      setNotice(`${userLabel} ${active ? 'reactivated' : 'deactivated'}.`);
+      setPlatformReloadToken((value) => value + 1);
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
   }
 
   async function addCustomer(event: FormEvent<HTMLFormElement>) {
@@ -1984,6 +2100,7 @@ function App() {
 
   async function updateBusinessStatus(business: import('./api').PlatformBusiness, status: import('./api').PlatformBusiness['status']) {
     if (status === 'SUSPENDED' && !window.confirm(`Suspend ${business.name}? Business sign-in will be blocked.`)) return;
+    if (status === 'ARCHIVED' && !window.confirm(`Archive ${business.name}? Sign-in will be blocked and the business will only appear under the Archived filter. All data is kept and the business can be restored.`)) return;
     setWorking(true);
     setError(null);
     try {
@@ -2466,6 +2583,20 @@ function App() {
     }
   }
 
+  if (session?.mustChangePassword) {
+    return (
+      <main className="auth-layout">
+        {themeToggleButton}
+        <section className="auth-brand">
+          <p className="eyebrow" style={{ marginTop: 18 }}>{applicationBranding.tagline || 'Made for the workroom'}</p>
+          <h1>Your password, your secret.</h1>
+          <p>Administrators can reset a forgotten password, but only you should know the password you use every day.</p>
+        </section>
+        {passwordChangeForm(true)}
+      </main>
+    );
+  }
+
   if (!session) {
     const availableBusinesses = selection?.businesses ?? [];
     return (
@@ -2497,6 +2628,7 @@ function App() {
             <p className="muted">{selection ? 'Sign in again to confirm your access scope.' : 'Sign in with your business account.'}</p>
           </div>
           {error && <p className="alert alert-error" role="alert">{error}</p>}
+          {authNotice && <p className="alert alert-success" role="status">{authNotice}</p>}
           {selection && (
             <fieldset className="scope-picker">
               <legend>Access context</legend>
@@ -2628,6 +2760,7 @@ function App() {
               <span className="user-avatar" aria-hidden="true">{currentUser.user.name.trim().charAt(0).toUpperCase()}</span>
               <span className="platform-identity-name">{currentUser.user.name}<small>Super admin</small></span>
             </div>
+            <button className="button button-secondary" onClick={() => { setError(null); setPasswordDialogOpen(true); }}>Change password</button>
             <button className="button button-secondary" onClick={() => void signOut()}><Icon name="signOut" /> Sign out</button>
           </div>
         </header>
@@ -2836,7 +2969,17 @@ function App() {
         )}
         {platformView === 'businesses' && grants.has('platform:businesses:read') && (
           <section className="content-stack">
-            <div className="section-heading"><div><p className="eyebrow">Workspace management</p><h2>Business directory</h2><p className="muted">Onboard businesses, assign owners, and manage account status.</p></div></div>
+            <div className="section-heading"><div><p className="eyebrow">Workspace management</p><h2>Business directory</h2><p className="muted">Onboard businesses, assign owners, and manage account status. Archiving blocks sign-in but keeps every record; archived businesses can be restored.</p></div>
+              <label>Status
+                <select value={platformBusinessStatusFilter} onChange={(event) => setPlatformBusinessStatusFilter(event.target.value as typeof platformBusinessStatusFilter)} aria-label="Filter businesses by status">
+                  <option value="">All statuses</option>
+                  <option value="ACTIVE">Active</option>
+                  <option value="PENDING">Pending</option>
+                  <option value="SUSPENDED">Suspended</option>
+                  <option value="ARCHIVED">Archived</option>
+                </select>
+              </label>
+            </div>
             <div className="platform-metrics" aria-label="Business account summary">
               <article className="platform-metric"><span className="platform-metric-icon"><Icon name="businesses" /></span><span className="platform-metric-label">Registered businesses</span><strong>{loading ? '—' : platformBusinesses.length}</strong></article>
               <article className="platform-metric"><span className="platform-metric-icon is-green"><Icon name="check" /></span><span className="platform-metric-label">Active</span><strong>{loading ? '—' : activeBusinesses}</strong></article>
@@ -2877,8 +3020,10 @@ function App() {
                       {grants.has('platform:businesses:read') && <button className="button button-secondary" disabled={!online} onClick={() => openBusinessMembers(business)}>Members</button>}
                       {grants.has('platform:businesses:read') && grants.has('platform:businesses:manage') && <button className="button button-secondary" disabled={!online} onClick={() => openBusinessModules(business)}>Modules</button>}
                       {grants.has('platform:businesses:manage') && !business.owner && <button className="button button-secondary" disabled={!online} onClick={() => setOwnerBusinessId(business.id)}>Assign owner</button>}
-                      {grants.has('platform:businesses:manage') && business.status !== 'ACTIVE' && <button className="button button-primary" disabled={working || !online || !business.owner} title={business.owner ? undefined : 'Assign an owner before activating'} onClick={() => void updateBusinessStatus(business, 'ACTIVE')}>Activate</button>}
+                      {grants.has('platform:businesses:manage') && business.status !== 'ACTIVE' && business.status !== 'ARCHIVED' && <button className="button button-primary" disabled={working || !online || !business.owner} title={business.owner ? undefined : 'Assign an owner before activating'} onClick={() => void updateBusinessStatus(business, 'ACTIVE')}>Activate</button>}
                       {grants.has('platform:businesses:manage') && business.status === 'ACTIVE' && <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void updateBusinessStatus(business, 'SUSPENDED')}>Suspend</button>}
+                      {grants.has('platform:businesses:manage') && business.status !== 'ARCHIVED' && <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void updateBusinessStatus(business, 'ARCHIVED')}>Archive</button>}
+                      {grants.has('platform:businesses:manage') && business.status === 'ARCHIVED' && <button className="button button-primary" disabled={working || !online || !business.owner} title={business.owner ? undefined : 'Assign an owner before restoring'} onClick={() => void updateBusinessStatus(business, 'ACTIVE')}>Restore</button>}
                     </div></td>
                   </tr>
                 ))}</tbody>
@@ -3011,6 +3156,21 @@ function App() {
                   ))}
                 </fieldset>
                 <button className="button button-secondary" disabled={working || !online} onClick={() => void savePlatformStaff(staff)}>Save permissions</button>
+                {currentUser.user.platformRole === 'SUPER_ADMIN' && staff.id !== currentUser.user.id && (
+                  <div className="row-actions">
+                    <button className="button button-secondary" disabled={working || !online} onClick={() => { setResettingUserId(resettingUserId === staff.id ? '' : staff.id); setResetPasswordValue(''); }}>Reset password</button>
+                  </div>
+                )}
+                {resettingUserId === staff.id && (
+                  <div className="member-removal">
+                    <p><strong>Reset password for {staff.name}?</strong> They will be signed out everywhere and must choose their own password (20+ characters for platform accounts) at next sign-in.</p>
+                    <label>New password (20–72 characters)<input type="password" value={resetPasswordValue} onChange={(event) => setResetPasswordValue(event.target.value)} minLength={20} maxLength={72} autoComplete="new-password" /></label>
+                    <div className="row-actions">
+                      <button className="button button-primary" disabled={working || !online || resetPasswordValue.length < 20} onClick={() => void resetPlatformUserPasswordAction(staff.id, staff.name)}>{working ? 'Resetting…' : 'Yes, reset password'}</button>
+                      <button className="button button-quiet" disabled={working} onClick={() => { setResettingUserId(''); setResetPasswordValue(''); }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
               </article>
             ))}
           </section>
@@ -3234,6 +3394,11 @@ function App() {
             {loading ? <LoadingState /> : platformHealth ? <section className="panel health-card"><span className="connection-dot is-online" /><div><h3>{platformHealth.status}</h3><p className="muted">Database: {platformHealth.database} · Checked {karachiDate(platformHealth.checkedAt)}</p></div></section> : <EmptyState title="Health status unavailable" />}
           </section>
         )}
+        {passwordDialogOpen && (
+          <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPasswordDialogOpen(false); }}>
+            {passwordChangeForm(false)}
+          </div>
+        )}
         {membersBusinessId && (
           <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeBusinessMembers(); }}>
             <section className="dialog-card dialog-card-wide" role="dialog" aria-modal="true" aria-labelledby="members-title">
@@ -3275,6 +3440,16 @@ function App() {
                           </div>
                         </div>
                         <div className="row-actions">
+                          {currentUser.user.platformRole === 'SUPER_ADMIN' && grants.has('platform:staff:manage') && (
+                            <>
+                              <button className="button button-secondary" type="button" disabled={working || !online} onClick={() => { setResettingUserId(resettingUserId === member.user.id ? '' : member.user.id); setResetPasswordValue(''); }}>
+                                Reset password
+                              </button>
+                              <button className={member.user.active ? 'button button-danger-quiet' : 'button button-secondary'} type="button" disabled={working || !online} onClick={() => void (async () => { await setPlatformUserActiveAction(member.user.id, member.user.name, !member.user.active); await loadBusinessMembers(membersBusinessId); })()}>
+                                {member.user.active ? 'Deactivate account' : 'Reactivate account'}
+                              </button>
+                            </>
+                          )}
                           {member.active ? (
                             grants.has('platform:businesses:manage') && (
                               <button
@@ -3292,6 +3467,16 @@ function App() {
                             )
                           )}
                         </div>
+                        {resettingUserId === member.user.id && (
+                          <div className="member-removal">
+                            <p><strong>Reset password for {member.user.name}?</strong> They will be signed out everywhere and must choose their own password at next sign-in. Share the new password securely — it is never shown again.</p>
+                            <label>New password (16+ characters, 20+ for platform accounts)<input type="password" value={resetPasswordValue} onChange={(event) => setResetPasswordValue(event.target.value)} minLength={16} maxLength={72} autoComplete="new-password" /></label>
+                            <div className="row-actions">
+                              <button className="button button-primary" type="button" disabled={working || !online || resetPasswordValue.length < 16} onClick={() => void resetPlatformUserPasswordAction(member.user.id, member.user.name)}>{working ? 'Resetting…' : 'Yes, reset password'}</button>
+                              <button className="button button-quiet" type="button" disabled={working} onClick={() => { setResettingUserId(''); setResetPasswordValue(''); }}>Cancel</button>
+                            </div>
+                          </div>
+                        )}
                         {removingMemberId === member.id && (
                           <div className="member-removal">
                             <p><strong>Remove {member.user.name} from this business?</strong> Their sign-in for this business stops now{member.otherActiveBusinesses > 0 ? `; they keep access to ${member.otherActiveBusinesses} other business${member.otherActiveBusinesses === 1 ? '' : 'es'}.` : ' and they have no other business to sign in to.'}</p>
@@ -3476,6 +3661,7 @@ function App() {
             {themeToggleButton}
             <span className="user-avatar" aria-hidden="true">{currentUser?.user.name.slice(0, 1).toUpperCase()}</span>
             <span className="user-name">{currentUser?.user.name}</span>
+            <button className="button button-quiet" onClick={() => { setError(null); setPasswordDialogOpen(true); }}>Change password</button>
             <button className="button button-quiet" onClick={() => void signOut()}><Icon name="signOut" /> Sign out</button>
           </div>
         </header>
@@ -3658,7 +3844,8 @@ function App() {
         {view === 'customers' && (
           <section className="content-stack">
             <div className="section-heading">
-              <div><h2>{term('customers', 'Customers')}</h2><p className="muted">Search by name or phone number.</p></div>
+              <div><h2>{term('customers', 'Customers')}</h2><p className="muted">{showArchivedCustomers ? 'Archived customers. Restore brings a customer back with all history.' : 'Search by name or phone number.'}</p></div>
+              <label className="checkbox-row"><input type="checkbox" checked={showArchivedCustomers} onChange={(event) => setShowArchivedCustomers(event.target.checked)} /> Show archived</label>
               <form className="search-form" onSubmit={(event) => { event.preventDefault(); void reloadCurrent(); }}>
                 <label className="visually-hidden" htmlFor="customer-search">Search customers</label>
                 <input id="customer-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name or phone" />
@@ -3686,7 +3873,7 @@ function App() {
             )}
             {loading ? <LoadingState /> : customers.length ? (
               <div className="table-wrap">
-                <table><thead><tr><th>Customer</th><th>Phone</th><th>WhatsApp consent</th><th>Added</th></tr></thead>
+                <table><thead><tr><th>Customer</th><th>Phone</th><th>WhatsApp consent</th><th>Added</th>{permissions.has('customers:write') && <th>Actions</th>}</tr></thead>
                   <tbody>{customers.map((customer) => (
                     <tr key={customer.id}>
                       <td>
@@ -3711,11 +3898,18 @@ function App() {
                         )}
                       </td>
                       <td>{karachiDate(customer.createdAt)}</td>
+                      {permissions.has('customers:write') && (
+                        <td>
+                          {showArchivedCustomers
+                            ? <button className="button button-secondary" disabled={working || !online} onClick={() => void restoreCustomerAction(customer)}>Restore</button>
+                            : <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void archiveCustomerAction(customer)}>Archive</button>}
+                        </td>
+                      )}
                     </tr>
                   ))}</tbody>
                 </table>
               </div>
-            ) : <EmptyState title="No customers yet" detail="Add a customer above or try a broader search." />}
+            ) : <EmptyState title={showArchivedCustomers ? 'No archived customers' : 'No customers yet'} detail={showArchivedCustomers ? 'Archived customers will appear here.' : 'Add a customer above or try a broader search.'} />}
           </section>
         )}
 
@@ -3805,7 +3999,8 @@ function App() {
         {view === 'orders' && (
           <section className="content-stack">
             <div className="section-heading">
-              <div><h2>{term('orders', 'Orders')}</h2><p className="muted">Follow each {term('item', 'item').toLowerCase()} through the configured workflow.</p></div>
+              <div><h2>{term('orders', 'Orders')}</h2><p className="muted">{showArchivedOrders ? 'Archived orders. Restore brings an order back with payments and history.' : `Follow each ${term('item', 'item').toLowerCase()} through the configured workflow.`}</p></div>
+              <label className="checkbox-row"><input type="checkbox" checked={showArchivedOrders} onChange={(event) => setShowArchivedOrders(event.target.checked)} /> Show archived</label>
               <form className="search-form" onSubmit={(event) => { event.preventDefault(); void reloadCurrent(); }}>
                 <label className="visually-hidden" htmlFor="order-search">Search orders</label>
                 <input id="order-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Order number or customer" />
@@ -3905,7 +4100,10 @@ function App() {
                         <span className="muted">{money(order.outstanding, businessConfiguration?.business.currency)} outstanding</span>
                       )}
                       <div className="row-actions">
-                        {permissions.has('orders:transition') && businessConfiguration?.workflow.transitions
+                        {permissions.has('orders:write') && (showArchivedOrders
+                          ? <button className="button button-secondary" disabled={working || !online} onClick={() => void restoreOrderAction(order)}>Restore</button>
+                          : <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void archiveOrderAction(order)}>Archive</button>)}
+                        {!showArchivedOrders && permissions.has('orders:transition') && businessConfiguration?.workflow.transitions
                           .filter((transition) => {
                             const stages = businessConfiguration.workflow.stages;
                             const stageKey = order.workflowStageKey ?? order.currentWorkflowStage?.key ?? order.status;
@@ -3929,7 +4127,7 @@ function App() {
                               onClick={() => void changeWorkflowStage(order, stage.key)}
                             >{isTransitioningThis ? `Moving to ${stage.label}…` : `Move to ${stage.label}`}</button> : null;
                           })}
-                        {permissions.has('payments:write') && moduleEnabled('payments') && Number(order.outstanding ?? 0) > 0 && (
+                        {!showArchivedOrders && permissions.has('payments:write') && moduleEnabled('payments') && Number(order.outstanding ?? 0) > 0 && (
                           <button className="button button-secondary" onClick={() => { setPaymentOrderId(order.id); setPaymentAmount(order.outstanding ?? ''); }}>Record payment</button>
                         )}
                       </div>
@@ -3937,7 +4135,7 @@ function App() {
                   </article>
                 ))}
               </div>
-            ) : <EmptyState title="No orders found" detail="Create an order or adjust your search." />}
+            ) : <EmptyState title={showArchivedOrders ? 'No archived orders' : 'No orders found'} detail={showArchivedOrders ? 'Archived orders will appear here.' : 'Create an order or adjust your search.'} />}
           </section>
         )}
 
@@ -4365,7 +4563,13 @@ function App() {
         </div>
       )}
 
-      <ChatAssistant session={session} onNavigate={(view) => setView(view as any)} />
+
+        {passwordDialogOpen && (
+          <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPasswordDialogOpen(false); }}>
+            {passwordChangeForm(false)}
+          </div>
+        )}
+      <ChatAssistant session={session} onNavigate={(view) => setView(view as View)} />
     </div>
   );
 }

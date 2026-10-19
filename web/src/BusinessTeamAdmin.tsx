@@ -19,6 +19,8 @@ export function BusinessTeamAdmin({ canManage, online, actorPermissions, withSes
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
+  const [resettingMemberId, setResettingMemberId] = useState('');
+  const [resetPassword, setResetPassword] = useState('');
   const [loading, setLoading] = useState(true);
 
   async function reload() {
@@ -139,6 +141,22 @@ export function BusinessTeamAdmin({ canManage, online, actorPermissions, withSes
     }
   }
 
+  async function resetMemberPassword(member: BusinessMember) {
+    if (resetPassword.length < 16) { setError('Choose a password of at least 16 characters.'); return; }
+    setWorking(true);
+    setError(null);
+    try {
+      await withSession((token) => api.resetBusinessStaffPassword(token, member.id, resetPassword));
+      setResettingMemberId('');
+      setResetPassword('');
+      setNotice(`Password reset for ${member.user.name}. Share it securely; they must choose their own at next sign-in and all their sessions were signed out.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to reset this password.');
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function removeMember(member: BusinessMember) {
     if (!window.confirm(`Remove ${member.user.name} from this business?\n\nThey are signed out immediately and cannot open this business again. Customers, orders and payments stay untouched.`)) return;
     setWorking(true);
@@ -227,7 +245,18 @@ export function BusinessTeamAdmin({ canManage, online, actorPermissions, withSes
                   {member.role.name !== 'Owner' && (member.active
                     ? <button className="button button-danger-quiet" type="button" disabled={working || !online} onClick={() => void removeMember(member)}>Remove from business</button>
                     : <button className="button button-secondary" type="button" disabled={working || !online} onClick={() => void updateMember(member, { active: true })}>Restore access</button>)}
+                  {member.active && <button className="button button-secondary" type="button" disabled={working || !online} onClick={() => { setResettingMemberId(resettingMemberId === member.id ? '' : member.id); setResetPassword(''); }}>Reset password</button>}
                 </div>
+                {resettingMemberId === member.id && (
+                  <div className="member-removal">
+                    <p><strong>Reset password for {member.user.name}?</strong> They will be signed out everywhere and must choose their own password at next sign-in. Share the new password securely — it is never shown again.</p>
+                    <label>New password (16–72 characters)<input type="password" value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} minLength={16} maxLength={72} autoComplete="new-password" /></label>
+                    <div className="row-actions">
+                      <button className="button button-primary" type="button" disabled={working || !online || resetPassword.length < 16} onClick={() => void resetMemberPassword(member)}>{working ? 'Resetting…' : 'Yes, reset password'}</button>
+                      <button className="button button-quiet" type="button" disabled={working} onClick={() => { setResettingMemberId(''); setResetPassword(''); }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
               </article>
             )) : <p className="muted">No team members have been added.</p>}
           </section>

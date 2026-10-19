@@ -21,14 +21,14 @@ function jsonInput(value: NotificationPayload): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
-function money(value: Prisma.Decimal | string): string {
-  return `PKR ${new Prisma.Decimal(value).toFixed(2)}`;
+function money(value: Prisma.Decimal | string, currency = 'PKR'): string {
+  return `${currency} ${new Prisma.Decimal(value).toFixed(2)}`;
 }
 
-function dateLabel(value: Date): string {
+function dateLabel(value: Date, timezone = 'Asia/Karachi'): string {
   return new Intl.DateTimeFormat('en-PK', {
     dateStyle: 'medium',
-    timeZone: 'Asia/Karachi',
+    timeZone: timezone,
   }).format(value);
 }
 
@@ -178,7 +178,7 @@ export async function queueOrderCreated(
   const order = await tx.order.findUniqueOrThrow({
     where: { id: orderId },
     include: {
-      business: { select: { name: true } },
+      business: { select: { name: true, timezone: true, currency: true } },
       customer: true,
       items: true,
       payments: { select: { kind: true, amount: true } },
@@ -201,10 +201,10 @@ export async function queueOrderCreated(
       orderNumber: order.orderNumber,
       items: itemNames,
       garments: itemNames,
-      total: money(order.total),
-      advancePaid: money(paid),
-      outstanding: money(Prisma.Decimal.max(new Prisma.Decimal(0), order.total.minus(paid))),
-      readyDate: dateLabel(order.promisedAt),
+      total: money(order.total, order.business.currency),
+      advancePaid: money(paid, order.business.currency),
+      outstanding: money(Prisma.Decimal.max(new Prisma.Decimal(0), order.total.minus(paid)), order.business.currency),
+      readyDate: dateLabel(order.promisedAt, order.business.timezone),
       orderStatus: order.status,
       itemName: order.items[0]?.itemName ?? order.items[0]?.garmentName ?? '',
     },
@@ -218,7 +218,7 @@ export async function queuePaymentReceived(
   const payment = await tx.payment.findUniqueOrThrow({
     where: { id: paymentId },
     include: {
-      business: { select: { name: true } },
+      business: { select: { name: true, timezone: true, currency: true } },
       order: { include: { customer: true, items: true } },
     },
   });
@@ -244,14 +244,14 @@ export async function queuePaymentReceived(
       businessName: payment.business.name,
       customerName: payment.order.customer.name,
       orderNumber: payment.order.orderNumber,
-      amount: money(payment.amount),
-      totalPaid: money(paid),
-      remaining: money(Prisma.Decimal.max(new Prisma.Decimal(0), payment.order.total.minus(paid))),
+      amount: money(payment.amount, payment.business.currency),
+      totalPaid: money(paid, payment.business.currency),
+      remaining: money(Prisma.Decimal.max(new Prisma.Decimal(0), payment.order.total.minus(paid)), payment.business.currency),
       receiptReference: payment.receiptNumber,
       paymentMethod: payment.method,
       paymentKind: payment.kind,
-      paidAt: dateLabel(payment.createdAt),
-      total: money(payment.order.total),
+      paidAt: dateLabel(payment.createdAt, payment.business.timezone),
+      total: money(payment.order.total, payment.business.currency),
       orderStatus: payment.order.status,
       itemName: payment.order.items[0]?.itemName ?? payment.order.items[0]?.garmentName ?? '',
     },
@@ -265,7 +265,7 @@ export async function queueOrderReady(
   const order = await tx.order.findUniqueOrThrow({
     where: { id: orderId },
     include: {
-      business: { select: { name: true } },
+      business: { select: { name: true, timezone: true, currency: true } },
       customer: true,
       items: true,
       payments: { select: { kind: true, amount: true } },
@@ -287,10 +287,10 @@ export async function queueOrderReady(
       orderNumber: order.orderNumber,
       items: order.items.map((item) => `${item.quantity} x ${item.itemName ?? item.garmentName}`).join(', '),
       garments: order.items.map((item) => `${item.quantity} x ${item.itemName ?? item.garmentName}`).join(', '),
-      total: money(order.total),
-      totalPaid: money(paid),
-      remaining: money(Prisma.Decimal.max(new Prisma.Decimal(0), order.total.minus(paid))),
-      readyDate: dateLabel(new Date()),
+      total: money(order.total, order.business.currency),
+      totalPaid: money(paid, order.business.currency),
+      remaining: money(Prisma.Decimal.max(new Prisma.Decimal(0), order.total.minus(paid)), order.business.currency),
+      readyDate: dateLabel(new Date(), order.business.timezone),
       orderStatus: order.status,
       itemName: order.items[0]?.itemName ?? order.items[0]?.garmentName ?? '',
     },
@@ -307,7 +307,7 @@ export async function queueOrderStatusChanged(
   const order = await tx.order.findUniqueOrThrow({
     where: { id: orderId },
     include: {
-      business: { select: { name: true } },
+      business: { select: { name: true, timezone: true, currency: true } },
       customer: true,
       items: true,
       payments: { select: { kind: true, amount: true } },
@@ -328,13 +328,13 @@ export async function queueOrderStatusChanged(
       businessName: order.business.name,
       customerName: order.customer.name,
       orderNumber: order.orderNumber,
-      total: money(order.total),
-      totalPaid: money(paid),
-      remaining: money(balance),
+      total: money(order.total, order.business.currency),
+      totalPaid: money(paid, order.business.currency),
+      remaining: money(balance, order.business.currency),
       orderStatus: toStatus,
       fromStatus,
       itemName: order.items[0]?.itemName ?? order.items[0]?.garmentName ?? '',
-      readyDate: dateLabel(order.promisedAt),
+      readyDate: dateLabel(order.promisedAt, order.business.timezone),
     },
   });
 }
@@ -368,7 +368,7 @@ export async function queueCustomerNotification(
   const customer = await tx.customer.findUniqueOrThrow({
     where: { id: customerId },
     include: {
-      business: { select: { name: true } },
+      business: { select: { name: true, timezone: true, currency: true } },
       customFieldValues: {
         include: { fieldDefinition: { select: { key: true } } },
       },
@@ -390,7 +390,7 @@ export async function queueCustomerNotification(
       eventDescription: `${eventName}: ${customer.name}`,
       eventId: customer.id,
       eventStatus: 'ACTIVE',
-      eventDate: dateLabel(new Date()),
+      eventDate: dateLabel(new Date(), customer.business.timezone),
       ...customFieldSnapshot(customer.customFieldValues),
     },
   });
@@ -407,7 +407,7 @@ export async function queueMeasurementAppended(
         include: {
           customer: {
             include: {
-              business: { select: { name: true } },
+              business: { select: { name: true, timezone: true, currency: true } },
               customFieldValues: {
                 include: { fieldDefinition: { select: { key: true } } },
               },
@@ -435,7 +435,7 @@ export async function queueMeasurementAppended(
       eventName,
       eventDescription: `${revision.profile.garmentTemplate.name} measurements updated (revision ${revision.version})`,
       eventId: revision.id,
-      eventDate: dateLabel(revision.measuredAt),
+      eventDate: dateLabel(revision.measuredAt, customer.business.timezone),
       eventStatus: `REVISION_${revision.version}`,
       itemName: revision.profile.garmentTemplate.name,
       ...customFieldSnapshot(customer.customFieldValues),
@@ -454,7 +454,7 @@ export async function queueSubscriptionPaymentNotification(
   const payment = await tx.subscriptionPayment.findUniqueOrThrow({
     where: { id: paymentId },
     include: {
-      business: { select: { name: true } },
+      business: { select: { name: true, timezone: true, currency: true } },
       plan: { select: { name: true } },
     },
   });
@@ -477,8 +477,8 @@ export async function queueSubscriptionPaymentNotification(
       eventDescription: detail ?? eventNames[kind],
       eventId: payment.id,
       eventStatus: payment.status,
-      eventDate: dateLabel(payment.updatedAt),
-      eventAmount: money(payment.amount),
+      eventDate: dateLabel(payment.updatedAt, payment.business.timezone),
+      eventAmount: money(payment.amount, payment.business.currency),
       eventReference: payment.transactionReference,
     },
   });
@@ -652,12 +652,12 @@ export async function enqueueDuePaymentNotifications(): Promise<void> {
           businessName: order.business.name,
           customerName: order.customer.name,
           orderNumber: order.orderNumber,
-          total: money(order.total),
-          totalPaid: money(paid),
-          remaining: money(balance),
+          total: money(order.total, order.business.currency),
+          totalPaid: money(paid, order.business.currency),
+          remaining: money(balance, order.business.currency),
           orderStatus: order.currentWorkflowStage?.label ?? order.status,
           itemName: order.items[0]?.itemName ?? order.items[0]?.garmentName ?? '',
-          readyDate: dateLabel(order.promisedAt),
+          readyDate: dateLabel(order.promisedAt, order.business.timezone),
         },
       });
     }

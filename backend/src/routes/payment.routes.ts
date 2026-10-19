@@ -380,7 +380,7 @@ router.get('/:paymentId/receipt.pdf', requireBusinessPermission('payments:read')
     paymentKind: payment.kind,
     receiptReference: payment.receiptNumber,
     ...(payment.correctionOf ? { correctionOfReceipt: payment.correctionOf.receiptNumber } : {}),
-    paidAt: payment.createdAt.toLocaleDateString('en-PK', { timeZone: 'Asia/Karachi' }),
+    paidAt: payment.createdAt.toLocaleDateString('en-PK', { timeZone: payment.business.timezone }),
     total: `PKR ${payment.order.total.toFixed(2)}`,
     totalPaid: `PKR ${totalPaid.toFixed(2)}`,
     remaining: `PKR ${calculateOutstanding(payment.order.total, totals.map((row) => ({

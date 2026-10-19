@@ -11,6 +11,7 @@ enum BusinessStatus {
   ACTIVE
   SUSPENDED
   PENDING
+  ARCHIVED
 }
 
 enum PlatformRole {
@@ -322,6 +323,7 @@ model User {
   email                         String                    @unique @db.VarChar(254)
   name                          String                    @db.VarChar(160)
   passwordHash                  String                    @db.VarChar(100)
+  mustChangePassword            Boolean                   @default(false)
   platformRole                  PlatformRole?
   active                        Boolean                   @default(true)
   createdAt                     DateTime                  @default(now()) @db.Timestamptz(3)

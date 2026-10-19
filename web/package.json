@@ -10,7 +10,9 @@
     "dev": "node scripts/build-shared.mjs && vite",
     "build": "node scripts/build-shared.mjs && tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "node scripts/build-shared.mjs && tsc --noEmit"
+    "typecheck": "node scripts/build-shared.mjs && tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src"
   },
   "dependencies": {
     "@tailor/shared": "file:./shared",
@@ -21,8 +23,13 @@
     "@types/react": "19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "6.1.1",
+    "eslint": "^10.13.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
     "typescript": "6.0.3",
-    "vite": "8.3.1"
+    "typescript-eslint": "^8.71.2",
+    "vite": "8.3.1",
+    "vitest": "^5.0.5"
   },
   "overrides": {
     "source-map-js": "1.2.2"

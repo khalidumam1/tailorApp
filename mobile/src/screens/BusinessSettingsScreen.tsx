@@ -56,6 +56,8 @@ export function BusinessSettingsScreen() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [invitePassword, setInvitePassword] = useState('');
   const [inviteRoleId, setInviteRoleId] = useState('');
+  const [resetMemberId, setResetMemberId] = useState<string | null>(null);
+  const [resetPassword, setResetPassword] = useState('');
   const [roles, setRoles] = useState<BusinessRole[]>([]);
   const [members, setMembers] = useState<BusinessMember[]>([]);
   const [businessPermissions, setBusinessPermissions] = useState<BusinessPermission[]>([]);
@@ -174,6 +176,20 @@ export function BusinessSettingsScreen() {
       setTeamNotice(copy.inviteCreated);
       await reloadTeam();
       Alert.alert(copy.createMember, copy.inviteCreated);
+    } catch (failure) {
+      setTeamError(failure instanceof Error ? failure.message : copy.error);
+    }
+  };
+
+  const doResetStaffPassword = async (memberId: string) => {
+    setTeamError('');
+    setTeamNotice('');
+    try {
+      await ws.resetStaffPassword(memberId, resetPassword);
+      setResetPassword('');
+      setResetMemberId(null);
+      setTeamNotice('Password reset. The team member must choose a new password at their next sign-in.');
+      Alert.alert('Password reset', 'Password reset. The team member must choose a new password at their next sign-in.');
     } catch (failure) {
       setTeamError(failure instanceof Error ? failure.message : copy.error);
     }
@@ -554,13 +570,41 @@ export function BusinessSettingsScreen() {
             {members.filter((member) => member.role.name !== 'Owner').length ? members
               .filter((member) => member.role.name !== 'Owner')
               .map((member) => (
-                <View key={member.id} style={styles.teamRow}>
-                  <View style={[styles.avatar, { backgroundColor: palette.surfaceMuted }]}><Text style={styles.avatarText}>{member.user.name.slice(0, 1).toUpperCase()}</Text></View>
-                  <View style={styles.teamMain}>
-                    <Text style={styles.teamName}>{member.user.name}</Text>
-                    <Text style={styles.teamMeta}>{member.user.email} · {member.role.name} · {member.active ? copy.activeMember : copy.removedMember}</Text>
+                <View key={member.id}>
+                  <View style={styles.teamRow}>
+                    <View style={[styles.avatar, { backgroundColor: palette.surfaceMuted }]}><Text style={styles.avatarText}>{member.user.name.slice(0, 1).toUpperCase()}</Text></View>
+                    <View style={styles.teamMain}>
+                      <Text style={styles.teamName}>{member.user.name}</Text>
+                      <Text style={styles.teamMeta}>{member.user.email} · {member.role.name} · {member.active ? copy.activeMember : copy.removedMember}</Text>
+                    </View>
+                    <StatusPill tone={member.active ? 'mint' : 'muted'}>{member.active ? copy.activeMember : copy.removedMember}</StatusPill>
                   </View>
-                  <StatusPill tone={member.active ? 'mint' : 'muted'}>{member.active ? copy.activeMember : copy.removedMember}</StatusPill>
+                  {member.user.id !== ws.session?.user.id && member.active ? (
+                    resetMemberId === member.id ? (
+                      <View style={{ marginTop: 6, marginBottom: 8 }}>
+                        <Field label="New password (at least 16 characters)" value={resetPassword} onChangeText={setResetPassword} secureTextEntry maxLength={72} />
+                        <ActionButton
+                          title="Reset password"
+                          loading={ws.saving}
+                          loadingTitle={copy.loading}
+                          disabled={resetPassword.length < 16 || ws.saving}
+                          onPress={() => void doResetStaffPassword(member.id)}
+                        />
+                        <View style={{ marginTop: 8 }}>
+                          <ActionButton title={copy.cancel} secondary disabled={ws.saving} onPress={() => { setResetMemberId(null); setResetPassword(''); }} />
+                        </View>
+                      </View>
+                    ) : (
+                      <Pressable
+                        accessibilityRole="button"
+                        android_ripple={{ color: palette.primarySoft }}
+                        onPress={() => { setResetMemberId(member.id); setResetPassword(''); setTeamError(''); }}
+                        style={({ pressed }) => [styles.teamRow, pressed && styles.pressed]}
+                      >
+                        <Text style={styles.teamName}>Reset password</Text>
+                      </Pressable>
+                    )
+                  ) : null}
                 </View>
               )) : !teamLoading ? <Text style={styles.listMeta}>{copy.noTeamMembers}</Text> : null}
           </>

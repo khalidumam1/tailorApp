@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
-import { authenticate, requirePlatformPermission } from '../middleware/auth.js';
+import { authenticate, requirePlatformPermission, requireSuperAdminPermission } from '../middleware/auth.js';
 import { businessPermissions, platformPermissions } from '../permissions.js';
 import { APPLICATION_BRANDING_SETTING_KEY, loadApplicationBranding } from '../application-branding.js';
 import {
@@ -14,6 +14,7 @@ import {
   resolveBusinessModuleAccess,
   resolvePlatformEnabledModules,
 } from '../business-modules.js';
+import { applyAdminPasswordReset } from '../password-reset.js';
 
 const router = express.Router();
 const businessSchema = z.object({
@@ -36,7 +37,11 @@ const staffPermissionsSchema = z.object({
   permissions: z.array(z.string()).max(platformPermissions.length),
   active: z.boolean().optional(),
 });
-const statusSchema = z.object({ status: z.enum(['ACTIVE', 'SUSPENDED', 'PENDING']) });
+const statusSchema = z.object({ status: z.enum(['ACTIVE', 'SUSPENDED', 'PENDING', 'ARCHIVED']) });
+const userActiveSchema = z.object({ active: z.boolean() }).strict();
+const userPasswordResetSchema = z.object({
+  newPassword: z.string().min(16).max(72).refine((value) => Buffer.byteLength(value, 'utf8') <= 72, "Password must not exceed bcrypt's 72-byte limit"),
+}).strict();
 const businessModulesSchema = z.object({
   enabledModules: z.array(z.string().trim().regex(/^[a-z][a-z0-9_-]{0,79}$/)).max(40),
 }).strict().superRefine((input, context) => {
@@ -53,6 +58,7 @@ const memberRemovalSchema = z.object({
 }).strict();
 const listSchema = z.object({
   q: z.string().trim().min(1).max(120).optional(),
+  status: z.enum(['ACTIVE', 'SUSPENDED', 'PENDING', 'ARCHIVED']).optional(),
   cursor: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
@@ -242,10 +248,13 @@ router.get('/businesses', requirePlatformPermission('platform:businesses:read'),
     if (!cursor) throw new HttpError(400, 'Pagination cursor is invalid', 'INVALID_CURSOR');
   }
   const businesses = await prisma.business.findMany({
-    where: query.q ? { OR: [
-      { name: { contains: query.q, mode: 'insensitive' } },
-      { slug: { contains: query.q, mode: 'insensitive' } },
-    ] } : {},
+    where: {
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.q ? { OR: [
+        { name: { contains: query.q, mode: 'insensitive' } },
+        { slug: { contains: query.q, mode: 'insensitive' } },
+      ] } : {}),
+    },
     include: {
       _count: { select: { memberships: true } },
       template: { select: { id: true, key: true, name: true } },
@@ -728,6 +737,20 @@ router.patch('/staff/:userId/permissions', requirePlatformPermission('platform:s
   if (userId === actorId && input.active === false) {
     throw new HttpError(409, 'Use another platform administrator to deactivate your account', 'SELF_DEACTIVATION_DENIED');
   }
+  if (input.active === false) {
+    const operators = await prisma.user.findMany({
+      where: { active: true, id: { not: userId }, platformRole: { not: null } },
+      select: {
+        platformRole: true,
+        platformPermissions: { select: { permission: { select: { key: true } } } },
+      },
+    });
+    const canStillManageStaff = operators.some((operator) => operator.platformRole === 'SUPER_ADMIN'
+      || operator.platformPermissions.some((grant) => grant.permission.key === 'platform:staff:manage'));
+    if (!canStillManageStaff) {
+      throw new HttpError(409, 'The last active platform staff manager cannot be deactivated', 'LAST_PLATFORM_OPERATOR');
+    }
+  }
   const updated = await prisma.$transaction(async (tx) => {
     const user = await tx.user.findFirst({
       where: { id: userId, platformRole: 'PLATFORM_STAFF' },
@@ -749,6 +772,89 @@ router.patch('/staff/:userId/permissions', requirePlatformPermission('platform:s
     return { ...next, permissions: grants };
   });
   res.json({ data: updated });
+}));
+
+router.post('/users/:userId/password-reset', requireSuperAdminPermission('platform:staff:manage'), asyncHandler(async (req, res) => {
+  const actorId = getActorId(req);
+  const userId = idSchema.parse(req.params.userId);
+  const input = userPasswordResetSchema.parse(req.body);
+  if (userId === actorId) {
+    throw new HttpError(409, 'Use change-password for your own account', 'SELF_PASSWORD_RESET_DENIED');
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, active: true, platformRole: true },
+  });
+  if (!user) throw new HttpError(404, 'User not found', 'USER_NOT_FOUND');
+  if (!user.active) throw new HttpError(409, 'The account is inactive', 'ACCOUNT_UNAVAILABLE');
+  if (user.platformRole && input.newPassword.length < 20) {
+    throw new HttpError(400, 'Platform accounts require a password of at least 20 characters', 'VALIDATION_ERROR');
+  }
+  const passwordHash = await bcrypt.hash(input.newPassword, 12);
+  const result = await prisma.$transaction(async (tx) => {
+    const reset = await applyAdminPasswordReset(tx, userId, passwordHash);
+    await writePlatformAudit(tx, actorId, 'platform.user_password_reset', 'user', userId, req.requestId, {
+      sessionsRevoked: reset.sessionsRevoked,
+    });
+    return reset;
+  });
+  res.json({ data: { reset: true, mustChangePassword: true, sessionsRevoked: result.sessionsRevoked } });
+}));
+
+router.patch('/users/:userId/active', requireSuperAdminPermission('platform:staff:manage'), asyncHandler(async (req, res) => {
+  const actorId = getActorId(req);
+  const userId = idSchema.parse(req.params.userId);
+  const { active } = userActiveSchema.parse(req.body);
+  const result = await prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, email: true, active: true, platformRole: true },
+    });
+    if (!user) throw new HttpError(404, 'User not found', 'USER_NOT_FOUND');
+    if (!active && userId === actorId) {
+      throw new HttpError(409, 'Use another platform administrator to deactivate your account', 'SELF_DEACTIVATION_DENIED');
+    }
+    if (!active && user.platformRole === 'SUPER_ADMIN') {
+      const activeSuperAdmins = await tx.user.count({ where: { platformRole: 'SUPER_ADMIN', active: true, id: { not: userId } } });
+      if (activeSuperAdmins === 0) {
+        throw new HttpError(409, 'The last active super admin cannot be deactivated', 'LAST_SUPER_ADMIN');
+      }
+    }
+    if (!active) {
+      // F-012: never leave the platform with zero active operators who can
+      // manage platform staff (super admins always hold every grant).
+      const operators = await tx.user.findMany({
+        where: { active: true, id: { not: userId }, platformRole: { not: null } },
+        select: {
+          platformRole: true,
+          platformPermissions: { select: { permission: { select: { key: true } } } },
+        },
+      });
+      const canStillManageStaff = operators.some((operator) => operator.platformRole === 'SUPER_ADMIN'
+        || operator.platformPermissions.some((grant) => grant.permission.key === 'platform:staff:manage'));
+      if (!canStillManageStaff) {
+        throw new HttpError(409, 'The last active platform staff manager cannot be deactivated', 'LAST_PLATFORM_OPERATOR');
+      }
+    }
+    const updated = await tx.user.update({
+      where: { id: userId },
+      data: { active },
+      select: { id: true, name: true, email: true, active: true, platformRole: true },
+    });
+    let sessionsRevoked = 0;
+    if (!active) {
+      const revoked = await tx.refreshToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      sessionsRevoked = revoked.count;
+    }
+    await writePlatformAudit(tx, actorId, active ? 'platform.user_reactivated' : 'platform.user_deactivated', 'user', userId, req.requestId, {
+      sessionsRevoked,
+    });
+    return updated;
+  });
+  res.json({ data: result });
 }));
 
 router.get('/permissions', requirePlatformPermission('platform:staff:manage'), (_req, res) => {

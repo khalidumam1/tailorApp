@@ -42,6 +42,7 @@ export interface Session {
   accessToken: string;
   refreshToken: string;
   accessExpiresAt: number;
+  mustChangePassword?: boolean;
   user: { id: string; name: string; email: string };
   business: { id: string; name: string };
   permissions: string[];
@@ -60,6 +61,7 @@ export type LoginResponse =
     requiresScopeSelection?: false;
     accessToken: string;
     refreshToken: string;
+    mustChangePassword?: boolean;
     user: { id: string; name: string; email: string; platformRole?: string };
     business: { id: string; name: string };
   };
@@ -662,6 +664,7 @@ export async function signIn(
   return {
     accessToken: data.accessToken,
     refreshToken: data.refreshToken,
+    ...(typeof data.mustChangePassword === 'boolean' ? { mustChangePassword: data.mustChangePassword } : {}),
     user: {
       id: user.id,
       name: user.name,
@@ -687,6 +690,7 @@ export async function createSession(data: unknown): Promise<Session> {
     accessToken: data.accessToken,
     refreshToken: data.refreshToken,
     accessExpiresAt: Date.now() + ACCESS_TOKEN_LIFETIME_MS,
+    ...(typeof data.mustChangePassword === 'boolean' ? { mustChangePassword: data.mustChangePassword } : {}),
     user: { id: user.id, name: user.name, email: user.email },
     business: { id: business.id, name: business.name },
     permissions: [],
