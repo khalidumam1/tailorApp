@@ -66,7 +66,13 @@ jobs:
           set -o pipefail
           npm run typecheck --workspace @tailor/mobile 2>&1 | sed -u -E 's/^([^[:space:]()]+)\(([0-9]+),([0-9]+)\): error (TS[0-9]+): (.*)/::error file=\1,line=\2,col=\3::\4: \5/'
       - run: npm run lint --workspace @tailor/web
-      - run: npm test
+      # Backend suite: failing TAP lines are echoed as ::error workflow
+      # commands so they surface as check annotations (readable via the API).
+      - name: Test backend
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | sed -u -E -e 's/^not ok [0-9]+ - (.*)/::error::FAIL: \1/' -e 's/^ +error: (.*)/::error::  error: \1/'
       - run: npm run test --workspace @tailor/web
       - run: npm run test --workspace @tailor/mobile
       - run: npm run build
