@@ -17,9 +17,12 @@ test('customer to order to payment', async ({ page }) => {
   await page.getByLabel('Phone', { exact: true }).fill(`0300${suffix}`);
   await page.getByRole('button', { name: 'Save customer' }).click();
   await expect(page.getByText(customerName)).toBeVisible();
+  console.log('NAV-AFTER-SAVE:', await page.getByLabel('Main navigation')
+    .evaluate((element) => element.outerHTML.slice(0, 500))
+    .catch((error) => `unavailable: ${String(error).slice(0, 120)}`));
 
   // 2. Create an order for that customer.
-  await page.getByRole('button', { name: 'Orders', exact: true }).click();
+  await page.getByLabel('Main navigation').getByRole('button', { name: 'Orders', exact: true }).click();
   const orderForm = page.locator('form', { hasText: 'Start a new order' });
   const customerSelect = orderForm.getByLabel('Customer');
   const customerValue = await customerSelect
