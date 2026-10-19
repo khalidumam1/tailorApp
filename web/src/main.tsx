@@ -4334,7 +4334,7 @@ function App() {
         )}
 
         {view === 'help' && (
-          <Suspense fallback={<div className="panel" role="status">Loading guide…</div>}><HelpGuide audience="platform" topic={guideTopic} onTopicChange={setGuideTopic} /></Suspense>
+          <Suspense fallback={<div className="panel" role="status">Loading guide…</div>}><HelpGuide audience="business" topic={guideTopic} onTopicChange={setGuideTopic} /></Suspense>
         )}
 
         {view === 'measurements' && (
