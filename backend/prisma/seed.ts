@@ -569,6 +569,13 @@ async function seed() {
           },
         },
       });
+      // The demo order occupies `<PREFIX>-000001`; keep the API order
+      // counter ahead of it or the tenant's first real order collides on
+      // the (businessId, orderNumber) unique index. Idempotent on reseed.
+      await tx.business.updateMany({
+        where: { id: demoBusiness.id, orderSequence: { lt: 1 } },
+        data: { orderSequence: 1 },
+      });
       await tx.payment.upsert({
         where: { businessId_idempotencyKey: { businessId: demoBusiness.id, idempotencyKey: `demo-payment-${definition.key}` } },
         update: {},
@@ -717,6 +724,12 @@ async function seed() {
         },
       });
     }
+    // Same guard as the other demo tenants: KARACHI-000001 is taken by the
+    // demo order, so the first staff-created order must be -000002.
+    await tx.business.updateMany({
+      where: { id: business.id, orderSequence: { lt: 1 } },
+      data: { orderSequence: 1 },
+    });
     await tx.order.updateMany({
       where: { id: order.id, businessId: business.id, status: 'NEW', workflowStageId: null },
       data: { workflowStageId: tailorInitialStage.id, workflowStageKey: tailorInitialStage.key },
