@@ -137,6 +137,16 @@ before(async () => {
       create: { key: 'payments:write', description: 'Post payments in tenant isolation test' },
     }),
     prisma.permission.upsert({
+      where: { key: 'payments:read' },
+      update: {},
+      create: { key: 'payments:read', description: 'View payments in tenant isolation test' },
+    }),
+    prisma.permission.upsert({
+      where: { key: 'cashbook:read' },
+      update: {},
+      create: { key: 'cashbook:read', description: 'View cashbook in tenant isolation test' },
+    }),
+    prisma.permission.upsert({
       where: { key: 'notifications:read' },
       update: {},
       create: { key: 'notifications:read', description: 'Read notifications in tenant isolation test' },
@@ -1145,8 +1155,14 @@ test('csv exports are tenant-scoped and the order invoice pdf renders', { skip: 
   const paymentsCsv = await csv('/api/v1/exports/payments.csv');
   assert.ok(paymentsCsv.includes('250.00'), 'recorded payment is exported');
 
-  const ledgerCsv = await csv('/api/v1/exports/ledger.csv');
-  assert.ok(ledgerCsv.startsWith('"Date","Kind","Account","Contra account"'), 'ledger export has a header row');
+  // The tailor template does not enable the cashbook module, so the ledger
+  // export is module-gated for this tenant (same as the cashbook screens).
+  const ledgerResponse = await fetch(`${baseUrl}/api/v1/exports/ledger.csv`, {
+    headers: { authorization: authHeader },
+  });
+  assert.equal(ledgerResponse.status, 403);
+  const ledgerError = await ledgerResponse.json() as { error: { code: string } };
+  assert.equal(ledgerError.error.code, 'BUSINESS_MODULE_DISABLED');
 
   const invoiceResponse = await fetch(`${baseUrl}/api/v1/orders/${createdOrderId}/invoice.pdf`, {
     headers: { authorization: authHeader },

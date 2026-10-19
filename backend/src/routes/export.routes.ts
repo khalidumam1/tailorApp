@@ -7,13 +7,13 @@ import { calculateNetPaid, calculateOutstanding } from '../domain/finance.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
-import { assertBusinessModuleEnabled } from '../business-modules.js';
 
 /**
  * Business CSV exports (Phase 2 task 2.2, F-007). Every export is scoped to
  * the authenticated tenant, gated by the same read permission as the
- * corresponding screen, and (for payments/ledger) by the module being
- * enabled — exporting must never become a side door around either gate.
+ * corresponding screen; requireBusinessPermission also enforces the
+ * matching module gate (payments/cashbook/...), so exporting can never
+ * become a side door around either check.
  * Dates are business-local (tenant timezone) and ranges are inclusive
  * YYYY-MM-DD days in that timezone. Rows are capped; a capped export says
  * so via the X-Export-Truncated header instead of silently dropping data.
@@ -129,7 +129,6 @@ router.get('/orders.csv', requireBusinessPermission('orders:read'), asyncHandler
 
 router.get('/payments.csv', requireBusinessPermission('payments:read'), asyncHandler(async (req, res) => {
   const businessId = getBusinessId(req);
-  await assertBusinessModuleEnabled(businessId, 'payments');
   const timezone = businessTimezone(req);
   const query = exportQuerySchema.parse(req.query);
   const range = businessDateBounds({ from: query.from, to: query.to, timezone });
@@ -160,7 +159,6 @@ router.get('/payments.csv', requireBusinessPermission('payments:read'), asyncHan
 
 router.get('/ledger.csv', requireBusinessPermission('cashbook:read'), asyncHandler(async (req, res) => {
   const businessId = getBusinessId(req);
-  await assertBusinessModuleEnabled(businessId, 'cashbook');
   const timezone = businessTimezone(req);
   const query = exportQuerySchema.parse(req.query);
   const range = businessDateBounds({ from: query.from, to: query.to, timezone });
