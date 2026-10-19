@@ -10,6 +10,10 @@ test.describe('user guide (Phase 3 task 3.1)', () => {
     await page.getByRole('button', { name: 'Help / User Guide' }).click();
     await expect(page.locator('.guide-article .guide-title')).toBeVisible();
     await page.getByLabel('Search the guide').fill('payment');
+    // Snapshot first: on mismatch the failure prints the real page structure.
+    await expect(page.locator('.guide-nav')).toMatchAriaSnapshot(`
+      - button "Payments, receipts and exports"
+    `);
     await page.getByRole('button', { name: 'Payments, receipts and exports' }).click();
     await expect(page.locator('.guide-article')).toContainText('Record a payment');
   });
