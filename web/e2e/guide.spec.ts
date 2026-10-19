@@ -8,7 +8,7 @@ test.describe('user guide (Phase 3 task 3.1)', () => {
 
   test('search finds the payments tutorial and opens it', async ({ page }) => {
     await page.getByRole('button', { name: 'Help / User Guide' }).click();
-    await expect(page.getByRole('heading', { name: 'User Guide' })).toBeVisible();
+    await expect(page.locator('.guide-article .guide-title')).toBeVisible();
     await page.getByLabel('Search the guide').fill('payment');
     await page.getByRole('button', { name: 'Payments, receipts and exports' }).click();
     await expect(page.locator('.guide-article')).toContainText('Record a payment');
