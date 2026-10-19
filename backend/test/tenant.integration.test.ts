@@ -1120,7 +1120,7 @@ test('alteration lifecycle: create, list, complete, reopen with tenant isolation
 test('csv exports are tenant-scoped and the order invoice pdf renders', { skip: !enabled }, async () => {
   const csv = async (path: string) => {
     const response = await fetch(`${baseUrl}${path}`, { headers: { authorization: authHeader } });
-    assert.equal(response.status, 200, path);
+    assert.equal(response.status, 200, `${path} responded ${response.status}: ${await response.clone().text()}`);
     assert.match(response.headers.get('content-type') ?? '', /text\/csv/);
     return response.text();
   };

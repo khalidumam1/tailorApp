@@ -72,7 +72,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          npm test 2>&1 | sed -u -E -e 's/.*not ok [0-9]+ - (.*)/::error::FAIL: \1/' -e 's/^ +error: (.*)/::error::  error: \1/' -e 's/.*(#[[:space:]]*(fail|pass|tests)[[:space:]]+[0-9]+.*)/::error::SUMMARY \1/' -e 's/.*((Error|TypeError|ReferenceError) \[[A-Z_]+\].*)/::error::CRASH: \1/' -e 's/.*(AssertionError.*)/::error::ASSERT: \1/' -e 's/.*(Cannot find module[^,]*)/::error::MODULE: \1/'
+          npm test 2>&1 | sed -u -E -e 's/.*not ok [0-9]+ - (.*)/::error::FAIL: \1/' -e 's/^ +error: (.*)/::error::  error: \1/' -e 's/.*(#[[:space:]]*(fail|pass|tests)[[:space:]]+[0-9]+.*)/::error::SUMMARY \1/' -e 's/.*((Error|TypeError|ReferenceError) \[[A-Z_]+\].*)/::error::CRASH: \1/' -e 's/.*(AssertionError.*)/::error::ASSERT: \1/' -e 's/.*(Cannot find module[^,]*)/::error::MODULE: \1/' -e 's/^ +(actual|expected|operator): (.*)/::error::  \1: \2/'
       - run: npm run test --workspace @tailor/web
       - run: npm run test --workspace @tailor/mobile
       - run: npm run build
