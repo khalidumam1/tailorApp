@@ -9,6 +9,7 @@ import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { businessRoleKey } from '../domain/orders.js';
 import { assertPlanLimit } from '../plan-limits.js';
 import { businessPermissions } from '../permissions.js';
+import { applyAdminPasswordReset } from '../password-reset.js';
 
 const router = express.Router();
 const idSchema = z.string().uuid();
@@ -27,6 +28,9 @@ const memberUpdateSchema = z.object({
   roleId: idSchema.optional(),
   active: z.boolean().optional(),
 }).strict().refine((input) => Object.keys(input).length > 0, 'Provide a role or active-state change');
+const passwordResetSchema = z.object({
+  newPassword: z.string().min(16).max(72).refine((password) => Buffer.byteLength(password, 'utf8') <= 72, "Password must not exceed bcrypt's 72-byte limit"),
+}).strict();
 const memberRemovalSchema = z.object({
   reason: z.string().trim().min(5).max(1000).optional(),
 }).strict();
@@ -356,6 +360,32 @@ router.patch('/staff/:membershipId', requireBusinessPermission('staff:manage'), 
       role: updated.role,
     },
   });
+}));
+
+router.post('/staff/:membershipId/password-reset', requireBusinessPermission('staff:manage'), asyncHandler(async (req, res) => {
+  const tenantId = businessId(req);
+  const membershipId = idSchema.parse(req.params.membershipId);
+  const input = passwordResetSchema.parse(req.body);
+  if (membershipId === req.auth!.membershipId) {
+    throw new HttpError(409, 'Use change-password for your own account', 'SELF_PASSWORD_RESET_DENIED');
+  }
+  const membership = await prisma.membership.findFirst({
+    where: { id: membershipId, businessId: tenantId },
+    select: { id: true, userId: true, user: { select: { active: true } } },
+  });
+  if (!membership) throw new HttpError(404, 'Business membership not found', 'BUSINESS_MEMBERSHIP_NOT_FOUND');
+  if (!membership.user.active) throw new HttpError(409, 'The account is inactive', 'ACCOUNT_UNAVAILABLE');
+  // Hash before opening the transaction so CPU work does not hold it open.
+  const passwordHash = await bcrypt.hash(input.newPassword, 12);
+  const result = await prisma.$transaction(async (tx) => {
+    const reset = await applyAdminPasswordReset(tx, membership.userId, passwordHash);
+    await writeAudit(tx, req, tenantId, 'business.staff_password_reset', 'user', membership.userId, {
+      membershipId,
+      sessionsRevoked: reset.sessionsRevoked,
+    });
+    return reset;
+  });
+  res.json({ data: { reset: true, mustChangePassword: true, sessionsRevoked: result.sessionsRevoked } });
 }));
 
 router.delete('/staff/:membershipId', requireBusinessPermission('staff:manage'), asyncHandler(async (req, res) => {

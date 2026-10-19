@@ -15,6 +15,7 @@ export type NavPage =
   | 'business-settings'
   | 'analytics'
   | 'erp'
+  | 'guide'
   | 'chat';
 
 /** Action to perform once a page opens (e.g. open the order form). */

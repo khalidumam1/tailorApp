@@ -42,15 +42,15 @@ test('health endpoint supports the /backend deployment prefix', async () => {
   assert.equal(body.data.service, 'tailor-api');
 });
 
-test('offline sync endpoints require a valid authenticated session', async () => {
+test('retired offline sync endpoints return the standard 404 (Phase 2, D-1)', async () => {
   const response = await fetch(`${baseUrl}/backend/api/v1/sync/operations`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ operations: [] }),
   });
-  assert.equal(response.status, 401);
+  assert.equal(response.status, 404);
   const body = await response.json() as { error: { code: string } };
-  assert.equal(body.error.code, 'UNAUTHENTICATED');
+  assert.equal(body.error.code, 'NOT_FOUND');
 });
 
 test('business configuration, notifications and template builder APIs require authentication', async () => {

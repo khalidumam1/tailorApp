@@ -10,6 +10,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate } from '../middleware/auth.js';
+import { loginThrottle, LoginThrottle } from '../login-throttle.js';
 
 const router = express.Router();
 const loginSchema = z.object({
@@ -80,6 +81,15 @@ const refreshLimiter = rateLimit({
 
 router.post('/login', loginLimiter, asyncHandler(async (req, res) => {
   const input = loginSchema.parse(req.body);
+  // Per-account throttle (in addition to the per-IP limiter): repeated failures
+  // for this email from this network back off exponentially. Keyed on the
+  // submitted email regardless of account existence — no enumeration oracle.
+  const throttleKey = LoginThrottle.keyFor(input.email, req.ip);
+  const retryAfterMs = loginThrottle.retryAfterMs(throttleKey);
+  if (retryAfterMs > 0) {
+    res.setHeader('Retry-After', String(Math.ceil(retryAfterMs / 1000)));
+    throw new HttpError(429, 'Too many sign-in attempts for this account; please wait and try again', 'ACCOUNT_THROTTLED');
+  }
   const user = await prisma.user.findUnique({
     where: { email: input.email },
     include: {
@@ -95,8 +105,10 @@ router.post('/login', loginLimiter, asyncHandler(async (req, res) => {
   });
   const passwordMatches = await bcrypt.compare(input.password, user?.passwordHash ?? dummyPasswordHash);
   if (!user || !user.active || !passwordMatches) {
+    loginThrottle.recordFailure(throttleKey);
     throw new HttpError(401, 'Email or password is incorrect', 'INVALID_CREDENTIALS');
   }
+  loginThrottle.recordSuccess(throttleKey);
 
   if (user.platformRole && !input.scope) {
     res.status(200).json({
@@ -113,7 +125,7 @@ router.post('/login', loginLimiter, asyncHandler(async (req, res) => {
   if (scope === 'platform') {
     if (!user.platformRole) throw new HttpError(403, 'Platform access is not granted', 'PLATFORM_ACCESS_DENIED');
     const session = await createSession(user.id, 'platform');
-    res.json({ data: { user: { id: user.id, name: user.name, email: user.email, platformRole: user.platformRole }, ...session } });
+    res.json({ data: { user: { id: user.id, name: user.name, email: user.email, platformRole: user.platformRole }, mustChangePassword: user.mustChangePassword, ...session } });
     return;
   }
 
@@ -138,6 +150,7 @@ router.post('/login', loginLimiter, asyncHandler(async (req, res) => {
     data: {
       user: { id: user.id, name: user.name, email: user.email },
       business: { id: membership.business.id, name: membership.business.name },
+      mustChangePassword: user.mustChangePassword,
       ...session,
     },
   });
@@ -235,7 +248,7 @@ router.post('/password/change', authenticate, asyncHandler(async (req, res) => {
   await prisma.$transaction(async (tx) => {
     const updated = await tx.user.updateMany({
       where: { id: userId, passwordHash: user.passwordHash, active: true },
-      data: { passwordHash },
+      data: { passwordHash, mustChangePassword: false },
     });
     if (!updated.count) throw new HttpError(409, 'Account changed during password update; sign in again', 'CREDENTIALS_CHANGED');
     await tx.refreshToken.updateMany({

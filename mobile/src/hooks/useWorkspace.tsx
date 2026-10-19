@@ -27,6 +27,7 @@ import * as SecureStore from 'expo-secure-store';
 import {
   ApiError,
   API_BASE_URL,
+  apiDownloadRequest,
   apiRequest,
   clearSession,
   createSession,
@@ -103,6 +104,15 @@ export type BusinessRole = {
   memberCount: number;
 };
 export type BusinessPermission = { key: string; description: string };
+export type AlterationTask = {
+  id: string;
+  orderId: string;
+  description: string;
+  status: 'OPEN' | 'DONE';
+  dueAt: string | null;
+  createdAt: string;
+};
+
 export type BusinessMember = {
   id: string;
   active: boolean;
@@ -300,6 +310,19 @@ export type WorkspaceContextValue = {
   refreshSubscriptionBilling: () => Promise<void>;
   cancelOrderPayment: () => void;
   saveBusinessConfiguration: (patch: Record<string, unknown>) => Promise<boolean>;
+  completePasswordChange: (currentPassword: string, newPassword: string) => Promise<void>;
+  resetStaffPassword: (membershipId: string, newPassword: string) => Promise<void>;
+  archiveCustomer: (customer: LocalCustomer) => Promise<void>;
+  restoreCustomer: (customer: LocalCustomer) => Promise<void>;
+  fetchArchivedCustomers: () => Promise<LocalCustomer[]>;
+  archiveOrder: (order: LocalOrder) => Promise<void>;
+  restoreOrder: (order: LocalOrder) => Promise<void>;
+  fetchArchivedOrders: () => Promise<LocalOrder[]>;
+  fetchAlterations: (orderId: string) => Promise<AlterationTask[]>;
+  createAlteration: (orderId: string, description: string) => Promise<AlterationTask>;
+  setAlterationStatus: (orderId: string, alterationId: string, status: 'OPEN' | 'DONE') => Promise<AlterationTask>;
+  downloadServerExport: (kind: 'customers' | 'orders' | 'payments' | 'ledger', options?: { archived?: boolean }) => Promise<{ bytes: Uint8Array; filename: string; mimeType: string }>;
+  downloadOrderInvoice: (order: LocalOrder) => Promise<{ bytes: Uint8Array; filename: string; mimeType: string }>;
   fetchRoles: () => Promise<BusinessRole[]>;
   fetchBusinessPermissions: () => Promise<BusinessPermission[]>;
   fetchBusinessStaff: () => Promise<BusinessMember[]>;
@@ -1303,6 +1326,110 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
   }, [businessConfiguration, copy.error, copy.settingsOnline, session, updateSession]);
 
+  const completePasswordChange = useCallback(async (currentPassword: string, newPassword: string): Promise<void> => {
+    if (!session) throw new Error(copy.settingsOnline);
+    await apiRequest(session, '/api/v1/auth/password/change', {
+      method: 'POST',
+      body: { currentPassword, newPassword },
+    }, updateSession);
+    // The API revokes every session on a password change, including this one.
+    sessionRef.current = null;
+    resetWorkspaceData();
+    setSession(null);
+    await clearSession().catch(() => undefined);
+  }, [copy.settingsOnline, resetWorkspaceData, session, updateSession]);
+
+  const resetStaffPassword = useCallback(async (membershipId: string, newPassword: string): Promise<void> => {
+    if (!session) throw new Error(copy.settingsOnline);
+    await apiRequest(session, `/api/v1/business/staff/${membershipId}/password-reset`, {
+      method: 'POST',
+      body: { newPassword },
+    }, updateSession);
+  }, [copy.settingsOnline, session, updateSession]);
+
+  const archiveCustomer = useCallback(async (customer: LocalCustomer): Promise<void> => {
+    if (!session) throw new Error(copy.settingsOnline);
+    await apiRequest(session, `/api/v1/customers/${customer.id}`, {
+      method: 'DELETE',
+      body: { version: customer.version },
+    }, updateSession);
+    setCustomers((current) => current.filter((item) => item.id !== customer.id));
+  }, [copy.settingsOnline, session, updateSession]);
+
+  const restoreCustomer = useCallback(async (customer: LocalCustomer): Promise<void> => {
+    if (!session) throw new Error(copy.settingsOnline);
+    await apiRequest(session, `/api/v1/customers/${customer.id}/restore`, {
+      method: 'POST',
+      body: { version: customer.version },
+    }, updateSession);
+    await refreshWorkspace();
+  }, [copy.settingsOnline, refreshWorkspace, session, updateSession]);
+
+  const fetchArchivedCustomers = useCallback(async (): Promise<LocalCustomer[]> => {
+    const result = await erpRequest<{ items: RemoteCustomer[] }>('/customers?limit=100&archived=true');
+    return result.items.map(mapRemoteCustomer);
+  }, [erpRequest]);
+
+  const archiveOrder = useCallback(async (order: LocalOrder): Promise<void> => {
+    if (!session) throw new Error(copy.settingsOnline);
+    await apiRequest(session, `/api/v1/orders/${order.id}`, {
+      method: 'DELETE',
+      body: { version: order.version },
+    }, updateSession);
+    setOrders((current) => current.filter((item) => item.id !== order.id));
+  }, [copy.settingsOnline, session, updateSession]);
+
+  const restoreOrder = useCallback(async (order: LocalOrder): Promise<void> => {
+    if (!session) throw new Error(copy.settingsOnline);
+    await apiRequest(session, `/api/v1/orders/${order.id}/restore`, {
+      method: 'POST',
+      body: { version: order.version },
+    }, updateSession);
+    await refreshWorkspace();
+  }, [copy.settingsOnline, refreshWorkspace, session, updateSession]);
+
+  const fetchArchivedOrders = useCallback(async (): Promise<LocalOrder[]> => {
+    const result = await erpRequest<{ items: RemoteOrder[] }>('/orders?limit=100&archived=true');
+    return result.items.map(mapRemoteOrder);
+  }, [erpRequest]);
+
+  const fetchAlterations = useCallback(async (orderId: string): Promise<AlterationTask[]> => {
+    const result = await erpRequest<{ items: AlterationTask[] }>(`/orders/${orderId}/alterations`);
+    return result.items;
+  }, [erpRequest]);
+
+  const createAlteration = useCallback(async (orderId: string, description: string): Promise<AlterationTask> => {
+    return erpRequest<AlterationTask>(`/orders/${orderId}/alterations`, {
+      method: 'POST',
+      body: { description },
+    });
+  }, [erpRequest]);
+
+  const setAlterationStatus = useCallback(async (orderId: string, alterationId: string, status: 'OPEN' | 'DONE'): Promise<AlterationTask> => {
+    return erpRequest<AlterationTask>(`/orders/${orderId}/alterations/${alterationId}`, {
+      method: 'PATCH',
+      body: { status },
+    });
+  }, [erpRequest]);
+
+  const downloadServerExport = useCallback(async (
+    kind: 'customers' | 'orders' | 'payments' | 'ledger',
+    options?: { archived?: boolean },
+  ): Promise<{ bytes: Uint8Array; filename: string; mimeType: string }> => {
+    if (!session) throw new Error(copy.settingsOnline);
+    const query = kind === 'orders' && options?.archived ? '?archived=true' : '';
+    const result = await apiDownloadRequest(session, `/api/v1/exports/${kind}.csv${query}`, updateSession);
+    return { bytes: result.bytes, filename: `${kind}.csv`, mimeType: 'text/csv' };
+  }, [copy.settingsOnline, session, updateSession]);
+
+  const downloadOrderInvoice = useCallback(async (
+    order: LocalOrder,
+  ): Promise<{ bytes: Uint8Array; filename: string; mimeType: string }> => {
+    if (!session) throw new Error(copy.settingsOnline);
+    const result = await apiDownloadRequest(session, `/api/v1/orders/${order.id}/invoice.pdf`, updateSession);
+    return { bytes: result.bytes, filename: `invoice-${order.order_number ?? order.id}.pdf`, mimeType: 'application/pdf' };
+  }, [copy.settingsOnline, session, updateSession]);
+
   const fetchRoles = useCallback(async (): Promise<BusinessRole[]> => {
     if (!session) throw new Error(copy.settingsOnline);
     const response = await apiRequest<{ data?: { items?: BusinessRole[] } }>(session, '/api/v1/business/roles', {}, updateSession);
@@ -1528,6 +1655,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     refreshSubscriptionBilling,
     cancelOrderPayment,
     saveBusinessConfiguration,
+    completePasswordChange,
+    resetStaffPassword,
+    archiveCustomer,
+    restoreCustomer,
+    fetchArchivedCustomers,
+    archiveOrder,
+    restoreOrder,
+    fetchArchivedOrders,
+    fetchAlterations,
+    createAlteration,
+    setAlterationStatus,
+    downloadServerExport,
+    downloadOrderInvoice,
     fetchRoles,
     fetchBusinessPermissions,
     fetchBusinessStaff,
@@ -1559,7 +1699,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     changeLanguage, submitSubscriptionPayment, saveCustomer, saveOrder, saveMeasurements,
     saveCatalogItem, toggleCatalogItem, transitionOrder, sendWhatsAppMessage, openOrderPayment, recordPayment, refreshWorkspace,
     refreshNotificationHistory, refreshSubscriptionBilling, email, password,
-    authBusy, shopChoices, cancelOrderPayment, saveBusinessConfiguration, fetchRoles,
+    authBusy, shopChoices, cancelOrderPayment, saveBusinessConfiguration,
+    completePasswordChange, resetStaffPassword, archiveCustomer, restoreCustomer,
+    fetchArchivedCustomers, archiveOrder, restoreOrder, fetchArchivedOrders, fetchAlterations, createAlteration, setAlterationStatus, downloadServerExport, downloadOrderInvoice, fetchRoles,
     fetchBusinessPermissions, fetchBusinessStaff, createBusinessRole, inviteStaffMember,
   ]);
 

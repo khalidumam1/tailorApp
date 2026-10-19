@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { StrictMode } from 'react';
 import ReactDOM from 'react-dom/client';
 import {
@@ -39,21 +39,29 @@ import {
   type LoginResult,
   type MeasurementProfile,
   type InventoryItem,
+  type Alteration,
   type Order,
   type Payment,
   type Receipt,
   type Session,
   type WhatsAppNotification,
 } from './api';
-import { ErpWorkspace } from './ErpWorkspace';
-import ChatAssistant from './ChatAssistant';
-import { BusinessStructureEditors } from './BusinessStructureEditors';
-import { BusinessTeamAdmin } from './BusinessTeamAdmin';
+// Route-level code splitting (Phase 2 task 2.4, F-009): the ERP workspace,
+// chat assistant and the settings editors are separate modules that most
+// sessions never open, so they load on demand instead of inflating the
+// initial bundle. The platform console lives in this file and stays in the
+// entry chunk; splitting it out is the incremental refactor noted in D-8.
+const ErpWorkspace = lazy(() => import('./ErpWorkspace').then((module) => ({ default: module.ErpWorkspace })));
+const HelpGuide = lazy(() => import('./HelpGuide').then((module) => ({ default: module.HelpGuide })));
+const ChatAssistant = lazy(() => import('./ChatAssistant'));
+const BusinessStructureEditors = lazy(() => import('./BusinessStructureEditors').then((module) => ({ default: module.BusinessStructureEditors })));
+const BusinessTeamAdmin = lazy(() => import('./BusinessTeamAdmin').then((module) => ({ default: module.BusinessTeamAdmin })));
 import { AreaChart, BarList, ColumnChart, DonutChart, paletteColor, Sparkline } from './Charts';
 import { Icon, type IconName } from './Icons';
+
 import './styles.css';
 
-type View = 'dashboard' | 'orders' | 'catalog' | 'customers' | 'measurements' | 'payments' | 'notifications' | 'subscription' | 'configuration' | 'erp';
+type View = 'dashboard' | 'orders' | 'catalog' | 'customers' | 'measurements' | 'payments' | 'notifications' | 'subscription' | 'configuration' | 'erp' | 'help';
 type PlatformView =
   | 'overview'
   | 'businesses'
@@ -61,6 +69,7 @@ type PlatformView =
   | 'staff'
   | 'audit'
   | 'health'
+  | 'guide'
   | 'billing'
   | 'plans'
   | 'paymentQueue'
@@ -183,13 +192,25 @@ const navigation: Array<{ view: View; label: string; permission?: string; module
   { view: 'erp', label: 'Operations & finance' },
   { view: 'subscription', label: 'Subscription & billing', permission: 'subscriptions:read' },
   { view: 'configuration', label: 'Business settings', permission: 'settings:manage' },
+  { view: 'help', label: 'Help / User Guide' },
 ];
 
 /** Sidebar sections — keeps the primary workspace separate from administration. */
 const navigationGroups: Array<{ label: string; views: View[] }> = [
   { label: 'Workspace', views: ['dashboard', 'orders', 'catalog', 'customers', 'measurements', 'payments', 'notifications', 'erp'] },
-  { label: 'Administration', views: ['subscription', 'configuration'] },
+  { label: 'Administration', views: ['subscription', 'configuration', 'help'] },
 ];
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
 
 function money(value: string | undefined, currency = 'PKR'): string {
   if (value === undefined) return '—';
@@ -544,6 +565,11 @@ function App() {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [cpCurrent, setCpCurrent] = useState('');
+  const [cpNew, setCpNew] = useState('');
+  const [cpConfirm, setCpConfirm] = useState('');
   const [scopeChoice, setScopeChoice] = useState<'business' | 'platform'>('business');
   const [businessChoice, setBusinessChoice] = useState('');
   const [view, setView] = useState<View>(() => initialStoredSession?.view ?? 'dashboard');
@@ -567,11 +593,19 @@ function App() {
   const [catalogItems, setCatalogItems] = useState<import('./api').CatalogItem[]>([]);
   const [catalogInventoryItems, setCatalogInventoryItems] = useState<InventoryItem[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [alterationsByOrder, setAlterationsByOrder] = useState<Record<string, Alteration[]>>({});
+  const [alterationsOpenFor, setAlterationsOpenFor] = useState<string | null>(null);
+  const [alterationDraft, setAlterationDraft] = useState('');
   const [payments, setPayments] = useState<Payment[]>([]);
   const [notifications, setNotifications] = useState<WhatsAppNotification[]>([]);
   const [templates, setTemplates] = useState<MeasurementTemplate[]>([]);
   const [profiles, setProfiles] = useState<MeasurementProfile[]>([]);
   const [search, setSearch] = useState('');
+  const [showArchivedCustomers, setShowArchivedCustomers] = useState(false);
+  const [showArchivedOrders, setShowArchivedOrders] = useState(false);
+  const [platformBusinessStatusFilter, setPlatformBusinessStatusFilter] = useState<'' | 'ACTIVE' | 'SUSPENDED' | 'PENDING' | 'ARCHIVED'>('');
+  const [resettingUserId, setResettingUserId] = useState('');
+  const [resetPasswordValue, setResetPasswordValue] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerNotes, setCustomerNotes] = useState('');
@@ -596,6 +630,59 @@ function App() {
   const [orderDueAt, setOrderDueAt] = useState(dateTimeInput(7));
   const [orderMeasurementId, setOrderMeasurementId] = useState('');
   const orderSubmission = useRef<{ fingerprint: string; idempotencyKey: string } | null>(null);
+  // Form drafts (Phase 2 task 2.4, F-016): the new-order form survives a
+  // refresh. Drafts are keyed by user + business so another account on the
+  // same browser never sees them, and an emptied form counts as no draft.
+  const orderDraftKey = session && 'business' in session && session.business
+    ? `bizora:draft:order:${session.user.id}:${session.business.id}`
+    : null;
+  const restoredOrderDraftKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!orderDraftKey || restoredOrderDraftKey.current === orderDraftKey) return;
+    restoredOrderDraftKey.current = orderDraftKey;
+    try {
+      const raw = window.localStorage.getItem(orderDraftKey);
+      if (!raw) return;
+      const draft = JSON.parse(raw) as Partial<{
+        customerId: string; catalogItemId: string; itemName: string; itemTypeKey: string;
+        quantity: string; price: string; dueAt: string; measurementId: string;
+        customFields: Record<string, unknown>; itemCustomFields: Record<string, unknown>;
+      }>;
+      if (draft.customerId) setOrderCustomerId(draft.customerId);
+      if (draft.catalogItemId) setOrderCatalogItemId(draft.catalogItemId);
+      if (draft.itemName) setOrderItemName(draft.itemName);
+      if (draft.itemTypeKey) setOrderItemTypeKey(draft.itemTypeKey);
+      if (draft.quantity) setOrderQuantity(draft.quantity);
+      if (draft.price) setOrderPrice(draft.price);
+      if (draft.dueAt) setOrderDueAt(draft.dueAt);
+      if (draft.measurementId) setOrderMeasurementId(draft.measurementId);
+      if (draft.customFields) setOrderCustomFields(draft.customFields);
+      if (draft.itemCustomFields) setOrderItemCustomFields(draft.itemCustomFields);
+      setNotice('Restored your unsaved order draft.');
+    } catch { /* a corrupt draft is ignored rather than blocking the form */ }
+  }, [orderDraftKey]);
+  useEffect(() => {
+    if (!orderDraftKey || restoredOrderDraftKey.current !== orderDraftKey) return;
+    const isEmpty = !orderCustomerId && !orderItemName && !orderPrice && !orderCatalogItemId;
+    try {
+      if (isEmpty) {
+        window.localStorage.removeItem(orderDraftKey);
+      } else {
+        window.localStorage.setItem(orderDraftKey, JSON.stringify({
+          customerId: orderCustomerId,
+          catalogItemId: orderCatalogItemId,
+          itemName: orderItemName,
+          itemTypeKey: orderItemTypeKey,
+          quantity: orderQuantity,
+          price: orderPrice,
+          dueAt: orderDueAt,
+          measurementId: orderMeasurementId,
+          customFields: orderCustomFields,
+          itemCustomFields: orderItemCustomFields,
+        }));
+      }
+    } catch { /* storage full/unavailable — the form still works without drafts */ }
+  }, [orderDraftKey, orderCustomerId, orderCatalogItemId, orderItemName, orderItemTypeKey, orderQuantity, orderPrice, orderDueAt, orderMeasurementId, orderCustomFields, orderItemCustomFields]);
   const [measurementCustomerId, setMeasurementCustomerId] = useState('');
   const [measurementTemplateId, setMeasurementTemplateId] = useState('');
   const [measurementValues, setMeasurementValues] = useState<Record<string, string>>({});
@@ -606,6 +693,13 @@ function App() {
   const paymentAttemptRef = useRef<{ orderId: string; amount: string; method: string; idempotencyKey: string } | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [platformView, setPlatformView] = useState<PlatformView>(() => initialStoredSession?.platformView ?? 'overview');
+  const [guideTopic, setGuideTopic] = useState('quick-start');
+  const openGuide = (pageId: string) => {
+    setGuideTopic(pageId);
+    setError(null);
+    if (currentUser?.context.scope === 'platform') setPlatformView('guide');
+    else setView('help');
+  };
   const [settingsTab, setSettingsTab] = useState<'branding' | 'billing'>('branding');
   const [platformReloadToken, setPlatformReloadToken] = useState(0);
   const [platformBusinesses, setPlatformBusinesses] = useState<import('./api').PlatformBusiness[]>([]);
@@ -849,7 +943,7 @@ function App() {
         setOrders(orderResult.items);
       } else if (view === 'orders') {
         const [orderResult, customerResult, catalogResult] = await Promise.all([
-          withSession((token) => api.orders(token, search)),
+          withSession((token) => api.orders(token, search, showArchivedOrders)),
           withSession((token) => api.customers(token)),
           businessConfiguration?.enabledModules.includes('catalog')
             ? withSession((token) => api.catalog(token))
@@ -868,7 +962,7 @@ function App() {
         setCatalogItems(catalogResult.items);
         setCatalogInventoryItems(inventoryResult.items);
       } else if (view === 'customers') {
-        setCustomers((await withSession((token) => api.customers(token, search))).items);
+        setCustomers((await withSession((token) => api.customers(token, search, showArchivedCustomers))).items);
       } else if (view === 'measurements') {
         const [templateResult, customerResult] = await Promise.all([
           withSession(api.templates),
@@ -898,7 +992,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [businessConfiguration?.enabledModules, currentUser?.context.permissions, currentUser?.context.scope, measurementCustomerId, measurementTemplateId, search, selectedSubscriptionPlanId, session, subscriptionPayment.method, view, withSession]);
+  }, [businessConfiguration?.enabledModules, currentUser?.context.permissions, currentUser?.context.scope, measurementCustomerId, measurementTemplateId, search, selectedSubscriptionPlanId, session, showArchivedCustomers, showArchivedOrders, subscriptionPayment.method, view, withSession]);
 
   useEffect(() => {
     const onlineChanged = () => setOnline(navigator.onLine);
@@ -1117,7 +1211,7 @@ function App() {
     // `overview` and `settings` are composite screens: they are available when
     // the signed-in account holds *any* platform grant (overview) or any of the
     // settings grants, and each card inside them is gated individually.
-    const viewPermissions: Record<Exclude<PlatformView, 'overview' | 'settings'>, string> = {
+    const viewPermissions: Record<Exclude<PlatformView, 'overview' | 'settings' | 'guide'>, string> = {
       businesses: 'platform:businesses:read',
       templates: 'platform:templates:manage',
       staff: 'platform:staff:manage',
@@ -1131,7 +1225,9 @@ function App() {
       reports: 'platform:reports:read',
     };
     const settingsPermissions = ['platform:application:manage', 'platform:billing:settings'];
-    const isPermitted = platformView === 'overview'
+    const isPermitted = platformView === 'guide'
+      ? true
+      : platformView === 'overview'
       ? currentUser.context.platformPermissions.length > 0
       : platformView === 'settings'
         ? settingsPermissions.some((permission) => currentUser.context.platformPermissions.includes(permission))
@@ -1195,7 +1291,7 @@ function App() {
       }
       if (platformView === 'businesses' && currentUser.context.platformPermissions.includes('platform:businesses:read')) {
         const [result, templates] = await Promise.all([
-          withSession(api.platformBusinesses),
+          withSession((token) => api.platformBusinesses(token, platformBusinessStatusFilter || undefined)),
           withSession(api.platformTemplates),
         ]);
         if (active) {
@@ -1266,7 +1362,7 @@ function App() {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [currentUser, platformReloadToken, platformTemplateKey, platformView, session, withSession]);
+  }, [currentUser, platformBusinessStatusFilter, platformReloadToken, platformTemplateKey, platformView, session, withSession]);
 
   useEffect(() => {
     let active = true;
@@ -1428,6 +1524,7 @@ function App() {
         return;
       }
       authGeneration.current += 1;
+      setAuthNotice(null);
       setSession(result);
       setSelection(null);
       setCurrentUser(null);
@@ -1460,6 +1557,174 @@ function App() {
       // Clearing one session must not cancel a newer login made while sign-out was in flight.
       clearRefreshCache(endingSession.refreshToken);
     }
+  }
+
+  async function submitPasswordChange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!session) return;
+    if (cpNew.length < 16) { setError('Choose a new password of at least 16 characters.'); return; }
+    if (cpNew !== cpConfirm) { setError('The new password and its confirmation do not match.'); return; }
+    setWorking(true);
+    setError(null);
+    try {
+      await withSession((token) => api.changePassword(token, cpCurrent, cpNew));
+      // The API revokes every session on a password change, including this one:
+      // return to the sign-in screen so the user continues with the new password.
+      authGeneration.current += 1;
+      setSession(null);
+      clearSessionData();
+      clearRefreshCache();
+      setPasswordDialogOpen(false);
+      setCpCurrent('');
+      setCpNew('');
+      setCpConfirm('');
+      setAuthNotice('Password changed. Sign in again with your new password.');
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  const passwordChangeForm = (forced: boolean) => (
+    <form className="auth-card" onSubmit={submitPasswordChange}>
+      <div>
+        <p className="eyebrow">{applicationBranding.brandName}</p>
+        <h2>{forced ? 'Choose your own password' : 'Change your password'}</h2>
+        <p className="muted">{forced
+          ? 'An administrator reset your password. Choose your own password to continue — nobody else should know it.'
+          : 'After changing your password you will sign in again, and other devices will be signed out.'}</p>
+      </div>
+      {error && <p className="alert alert-error" role="alert">{error}</p>}
+      <label>Current password<input type="password" autoComplete="current-password" value={cpCurrent} onChange={(event) => setCpCurrent(event.target.value)} required /></label>
+      <label>New password (at least 16 characters)<input type="password" autoComplete="new-password" value={cpNew} onChange={(event) => setCpNew(event.target.value)} minLength={16} maxLength={72} required /></label>
+      <label>Type the new password again<input type="password" autoComplete="new-password" value={cpConfirm} onChange={(event) => setCpConfirm(event.target.value)} minLength={16} maxLength={72} required /></label>
+      <button className="button button-primary" type="submit" disabled={working}>{working ? 'Saving…' : 'Save new password'}</button>
+      {forced
+        ? <button className="button button-quiet" type="button" onClick={() => void signOut()}>Sign out instead</button>
+        : <button className="button button-quiet" type="button" onClick={() => { setPasswordDialogOpen(false); setError(null); }}>Cancel</button>}
+    </form>
+  );
+
+  async function archiveCustomerAction(customer: Customer) {
+    if (!window.confirm(`Archive ${customer.name}? They will disappear from lists, but their orders, measurements and payments are kept and the customer can be restored.`)) return;
+    setWorking(true); setError(null);
+    try {
+      await withSession((token) => api.archiveCustomer(token, customer));
+      setNotice(`${customer.name} archived. Use "Show archived" to restore them.`);
+      await reloadCurrent();
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function restoreCustomerAction(customer: Customer) {
+    setWorking(true); setError(null);
+    try {
+      await withSession((token) => api.restoreCustomer(token, customer));
+      setNotice(`${customer.name} restored.`);
+      await reloadCurrent();
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function archiveOrderAction(order: Order) {
+    if (!window.confirm(`Archive order ${order.orderNumber}? It will disappear from lists, but payments and history are kept and the order can be restored.`)) return;
+    setWorking(true); setError(null);
+    try {
+      await withSession((token) => api.archiveOrder(token, order));
+      setNotice(`Order ${order.orderNumber} archived. Use "Show archived" to restore it.`);
+      await reloadCurrent();
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function restoreOrderAction(order: Order) {
+    setWorking(true); setError(null);
+    try {
+      await withSession((token) => api.restoreOrder(token, order));
+      setNotice(`Order ${order.orderNumber} restored.`);
+      await reloadCurrent();
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function toggleAlterations(order: Order) {
+    if (alterationsOpenFor === order.id) { setAlterationsOpenFor(null); return; }
+    setAlterationsOpenFor(order.id);
+    setAlterationDraft('');
+    setError(null);
+    try {
+      const result = await withSession((token) => api.alterations(token, order.id));
+      setAlterationsByOrder((current) => ({ ...current, [order.id]: result.items }));
+    } catch (cause) { setError(messageFor(cause)); }
+  }
+
+  async function addAlteration(order: Order) {
+    const description = alterationDraft.trim();
+    if (!description) return;
+    setWorking(true); setError(null);
+    try {
+      const created = await withSession((token) => api.createAlteration(token, order.id, { description }));
+      setAlterationsByOrder((current) => ({ ...current, [order.id]: [created, ...(current[order.id] ?? [])] }));
+      setAlterationDraft('');
+      setNotice(`Alteration added to order ${order.orderNumber}. It counts on the dashboard until marked done.`);
+      void withSession(api.dashboard).then(setDashboard).catch(() => undefined);
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function setAlterationStatusAction(order: Order, alteration: Alteration, status: Alteration['status']) {
+    setWorking(true); setError(null);
+    try {
+      const updated = await withSession((token) => api.setAlterationStatus(token, order.id, alteration.id, status));
+      setAlterationsByOrder((current) => ({
+        ...current,
+        [order.id]: (current[order.id] ?? []).map((item) => (item.id === updated.id ? updated : item)),
+      }));
+      setNotice(status === 'DONE'
+        ? `Alteration for order ${order.orderNumber} marked done.`
+        : `Alteration for order ${order.orderNumber} reopened.`);
+      void withSession(api.dashboard).then(setDashboard).catch(() => undefined);
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function downloadExport(kind: 'customers' | 'orders' | 'payments' | 'ledger') {
+    setWorking(true); setError(null);
+    try {
+      const blob = await withSession((token) => (kind === 'customers'
+        ? api.exportCustomersCsv(token)
+        : kind === 'orders'
+          ? api.exportOrdersCsv(token, showArchivedOrders)
+          : kind === 'payments'
+            ? api.exportPaymentsCsv(token)
+            : api.exportLedgerCsv(token)));
+      downloadBlob(blob, `${kind}.csv`);
+      setNotice(`${kind[0].toUpperCase()}${kind.slice(1)} export downloaded as CSV.`);
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function downloadInvoice(order: Order) {
+    setWorking(true); setError(null);
+    try {
+      const blob = await withSession((token) => api.orderInvoice(token, order.id));
+      downloadBlob(blob, `invoice-${order.orderNumber}.pdf`);
+      setNotice(`Invoice for order ${order.orderNumber} downloaded.`);
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function resetPlatformUserPasswordAction(userId: string, userLabel: string) {
+    if (resetPasswordValue.length < 16) { setError('Choose a password of at least 16 characters (20 for platform accounts).'); return; }
+    setWorking(true); setError(null);
+    try {
+      await withSession((token) => api.resetPlatformUserPassword(token, userId, resetPasswordValue));
+      setResettingUserId(''); setResetPasswordValue('');
+      setNotice(`Password reset for ${userLabel}. Share it securely; they must choose their own at next sign-in and all their sessions were signed out.`);
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function setPlatformUserActiveAction(userId: string, userLabel: string, active: boolean) {
+    if (!active && !window.confirm(`Deactivate ${userLabel}? They will be signed out everywhere and cannot sign in until reactivated.`)) return;
+    setWorking(true); setError(null);
+    try {
+      await withSession((token) => api.setPlatformUserActive(token, userId, active));
+      setNotice(`${userLabel} ${active ? 'reactivated' : 'deactivated'}.`);
+      setPlatformReloadToken((value) => value + 1);
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
   }
 
   async function addCustomer(event: FormEvent<HTMLFormElement>) {
@@ -1984,6 +2249,7 @@ function App() {
 
   async function updateBusinessStatus(business: import('./api').PlatformBusiness, status: import('./api').PlatformBusiness['status']) {
     if (status === 'SUSPENDED' && !window.confirm(`Suspend ${business.name}? Business sign-in will be blocked.`)) return;
+    if (status === 'ARCHIVED' && !window.confirm(`Archive ${business.name}? Sign-in will be blocked and the business will only appear under the Archived filter. All data is kept and the business can be restored.`)) return;
     setWorking(true);
     setError(null);
     try {
@@ -2466,6 +2732,20 @@ function App() {
     }
   }
 
+  if (session?.mustChangePassword) {
+    return (
+      <main className="auth-layout">
+        {themeToggleButton}
+        <section className="auth-brand">
+          <p className="eyebrow" style={{ marginTop: 18 }}>{applicationBranding.tagline || 'Made for the workroom'}</p>
+          <h1>Your password, your secret.</h1>
+          <p>Administrators can reset a forgotten password, but only you should know the password you use every day.</p>
+        </section>
+        {passwordChangeForm(true)}
+      </main>
+    );
+  }
+
   if (!session) {
     const availableBusinesses = selection?.businesses ?? [];
     return (
@@ -2497,6 +2777,7 @@ function App() {
             <p className="muted">{selection ? 'Sign in again to confirm your access scope.' : 'Sign in with your business account.'}</p>
           </div>
           {error && <p className="alert alert-error" role="alert">{error}</p>}
+          {authNotice && <p className="alert alert-success" role="status">{authNotice}</p>}
           {selection && (
             <fieldset className="scope-picker">
               <legend>Access context</legend>
@@ -2560,6 +2841,7 @@ function App() {
       },
       { view: 'staff', label: 'Platform staff', permission: 'platform:staff:manage' },
       { view: 'audit', label: 'Audit history', permission: 'platform:audit:read' },
+      { view: 'guide', label: 'User Guide' },
       { view: 'health', label: 'System health', permission: 'platform:system:health' },
     ];
     const platformNavItem = (view: PlatformView) => platformNavigation.find((item) => item.view === view);
@@ -2628,6 +2910,7 @@ function App() {
               <span className="user-avatar" aria-hidden="true">{currentUser.user.name.trim().charAt(0).toUpperCase()}</span>
               <span className="platform-identity-name">{currentUser.user.name}<small>Super admin</small></span>
             </div>
+            <button className="button button-secondary" onClick={() => { setError(null); setPasswordDialogOpen(true); }}>Change password</button>
             <button className="button button-secondary" onClick={() => void signOut()}><Icon name="signOut" /> Sign out</button>
           </div>
         </header>
@@ -2652,7 +2935,7 @@ function App() {
                         aria-current={platformView === item.view ? 'page' : undefined}
                         onClick={() => { setPlatformView(item.view); setError(null); }}
                       >
-                        <span className="platform-nav-icon"><Icon name={item.view === 'overview' ? 'dashboard' : item.view} /></span>
+                        <span className="platform-nav-icon"><Icon name={item.view === 'overview' ? 'dashboard' : item.view === 'guide' ? 'notifications' : item.view} /></span>
                         <span className="nav-label">{item.label}</span>
                         {item.view === 'paymentQueue' && billingDashboard && billingDashboard.pendingPayments > 0 && (
                           <span className="nav-badge">{billingDashboard.pendingPayments}</span>
@@ -2678,6 +2961,10 @@ function App() {
                 </span>
               </div>
             )}
+        {platformView === 'guide' && (
+          <Suspense fallback={<div className="panel" role="status">Loading guide…</div>}><HelpGuide audience="platform" topic={guideTopic} onTopicChange={setGuideTopic} /></Suspense>
+        )}
+
         {platformView === 'overview' && (
           <section className="content-stack" aria-label="Platform overview">
             <div className="page-head">
@@ -2836,7 +3123,17 @@ function App() {
         )}
         {platformView === 'businesses' && grants.has('platform:businesses:read') && (
           <section className="content-stack">
-            <div className="section-heading"><div><p className="eyebrow">Workspace management</p><h2>Business directory</h2><p className="muted">Onboard businesses, assign owners, and manage account status.</p></div></div>
+            <div className="section-heading"><div><p className="eyebrow">Workspace management</p><h2>Business directory</h2><p className="muted">Onboard businesses, assign owners, and manage account status. Archiving blocks sign-in but keeps every record; archived businesses can be restored.</p></div>
+              <label>Status
+                <select value={platformBusinessStatusFilter} onChange={(event) => setPlatformBusinessStatusFilter(event.target.value as typeof platformBusinessStatusFilter)} aria-label="Filter businesses by status">
+                  <option value="">All statuses</option>
+                  <option value="ACTIVE">Active</option>
+                  <option value="PENDING">Pending</option>
+                  <option value="SUSPENDED">Suspended</option>
+                  <option value="ARCHIVED">Archived</option>
+                </select>
+              </label>
+            </div>
             <div className="platform-metrics" aria-label="Business account summary">
               <article className="platform-metric"><span className="platform-metric-icon"><Icon name="businesses" /></span><span className="platform-metric-label">Registered businesses</span><strong>{loading ? '—' : platformBusinesses.length}</strong></article>
               <article className="platform-metric"><span className="platform-metric-icon is-green"><Icon name="check" /></span><span className="platform-metric-label">Active</span><strong>{loading ? '—' : activeBusinesses}</strong></article>
@@ -2877,8 +3174,10 @@ function App() {
                       {grants.has('platform:businesses:read') && <button className="button button-secondary" disabled={!online} onClick={() => openBusinessMembers(business)}>Members</button>}
                       {grants.has('platform:businesses:read') && grants.has('platform:businesses:manage') && <button className="button button-secondary" disabled={!online} onClick={() => openBusinessModules(business)}>Modules</button>}
                       {grants.has('platform:businesses:manage') && !business.owner && <button className="button button-secondary" disabled={!online} onClick={() => setOwnerBusinessId(business.id)}>Assign owner</button>}
-                      {grants.has('platform:businesses:manage') && business.status !== 'ACTIVE' && <button className="button button-primary" disabled={working || !online || !business.owner} title={business.owner ? undefined : 'Assign an owner before activating'} onClick={() => void updateBusinessStatus(business, 'ACTIVE')}>Activate</button>}
+                      {grants.has('platform:businesses:manage') && business.status !== 'ACTIVE' && business.status !== 'ARCHIVED' && <button className="button button-primary" disabled={working || !online || !business.owner} title={business.owner ? undefined : 'Assign an owner before activating'} onClick={() => void updateBusinessStatus(business, 'ACTIVE')}>Activate</button>}
                       {grants.has('platform:businesses:manage') && business.status === 'ACTIVE' && <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void updateBusinessStatus(business, 'SUSPENDED')}>Suspend</button>}
+                      {grants.has('platform:businesses:manage') && business.status !== 'ARCHIVED' && <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void updateBusinessStatus(business, 'ARCHIVED')}>Archive</button>}
+                      {grants.has('platform:businesses:manage') && business.status === 'ARCHIVED' && <button className="button button-primary" disabled={working || !online || !business.owner} title={business.owner ? undefined : 'Assign an owner before restoring'} onClick={() => void updateBusinessStatus(business, 'ACTIVE')}>Restore</button>}
                     </div></td>
                   </tr>
                 ))}</tbody>
@@ -3011,6 +3310,21 @@ function App() {
                   ))}
                 </fieldset>
                 <button className="button button-secondary" disabled={working || !online} onClick={() => void savePlatformStaff(staff)}>Save permissions</button>
+                {currentUser.user.platformRole === 'SUPER_ADMIN' && staff.id !== currentUser.user.id && (
+                  <div className="row-actions">
+                    <button className="button button-secondary" disabled={working || !online} onClick={() => { setResettingUserId(resettingUserId === staff.id ? '' : staff.id); setResetPasswordValue(''); }}>Reset password</button>
+                  </div>
+                )}
+                {resettingUserId === staff.id && (
+                  <div className="member-removal">
+                    <p><strong>Reset password for {staff.name}?</strong> They will be signed out everywhere and must choose their own password (20+ characters for platform accounts) at next sign-in.</p>
+                    <label>New password (20–72 characters)<input type="password" value={resetPasswordValue} onChange={(event) => setResetPasswordValue(event.target.value)} minLength={20} maxLength={72} autoComplete="new-password" /></label>
+                    <div className="row-actions">
+                      <button className="button button-primary" disabled={working || !online || resetPasswordValue.length < 20} onClick={() => void resetPlatformUserPasswordAction(staff.id, staff.name)}>{working ? 'Resetting…' : 'Yes, reset password'}</button>
+                      <button className="button button-quiet" disabled={working} onClick={() => { setResettingUserId(''); setResetPasswordValue(''); }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
               </article>
             ))}
           </section>
@@ -3234,6 +3548,11 @@ function App() {
             {loading ? <LoadingState /> : platformHealth ? <section className="panel health-card"><span className="connection-dot is-online" /><div><h3>{platformHealth.status}</h3><p className="muted">Database: {platformHealth.database} · Checked {karachiDate(platformHealth.checkedAt)}</p></div></section> : <EmptyState title="Health status unavailable" />}
           </section>
         )}
+        {passwordDialogOpen && (
+          <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPasswordDialogOpen(false); }}>
+            {passwordChangeForm(false)}
+          </div>
+        )}
         {membersBusinessId && (
           <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeBusinessMembers(); }}>
             <section className="dialog-card dialog-card-wide" role="dialog" aria-modal="true" aria-labelledby="members-title">
@@ -3275,6 +3594,16 @@ function App() {
                           </div>
                         </div>
                         <div className="row-actions">
+                          {currentUser.user.platformRole === 'SUPER_ADMIN' && grants.has('platform:staff:manage') && (
+                            <>
+                              <button className="button button-secondary" type="button" disabled={working || !online} onClick={() => { setResettingUserId(resettingUserId === member.user.id ? '' : member.user.id); setResetPasswordValue(''); }}>
+                                Reset password
+                              </button>
+                              <button className={member.user.active ? 'button button-danger-quiet' : 'button button-secondary'} type="button" disabled={working || !online} onClick={() => void (async () => { await setPlatformUserActiveAction(member.user.id, member.user.name, !member.user.active); await loadBusinessMembers(membersBusinessId); })()}>
+                                {member.user.active ? 'Deactivate account' : 'Reactivate account'}
+                              </button>
+                            </>
+                          )}
                           {member.active ? (
                             grants.has('platform:businesses:manage') && (
                               <button
@@ -3292,6 +3621,16 @@ function App() {
                             )
                           )}
                         </div>
+                        {resettingUserId === member.user.id && (
+                          <div className="member-removal">
+                            <p><strong>Reset password for {member.user.name}?</strong> They will be signed out everywhere and must choose their own password at next sign-in. Share the new password securely — it is never shown again.</p>
+                            <label>New password (16+ characters, 20+ for platform accounts)<input type="password" value={resetPasswordValue} onChange={(event) => setResetPasswordValue(event.target.value)} minLength={16} maxLength={72} autoComplete="new-password" /></label>
+                            <div className="row-actions">
+                              <button className="button button-primary" type="button" disabled={working || !online || resetPasswordValue.length < 16} onClick={() => void resetPlatformUserPasswordAction(member.user.id, member.user.name)}>{working ? 'Resetting…' : 'Yes, reset password'}</button>
+                              <button className="button button-quiet" type="button" disabled={working} onClick={() => { setResettingUserId(''); setResetPasswordValue(''); }}>Cancel</button>
+                            </div>
+                          </div>
+                        )}
                         {removingMemberId === member.id && (
                           <div className="member-removal">
                             <p><strong>Remove {member.user.name} from this business?</strong> Their sign-in for this business stops now{member.otherActiveBusinesses > 0 ? `; they keep access to ${member.otherActiveBusinesses} other business${member.otherActiveBusinesses === 1 ? '' : 'es'}.` : ' and they have no other business to sign in to.'}</p>
@@ -3449,7 +3788,7 @@ function App() {
                     aria-current={view === item.view ? 'page' : undefined}
                     onClick={() => { setView(item.view); setError(null); }}
                   >
-                    <span className="nav-icon"><Icon name={item.view === 'erp' ? 'reports' : item.view} /></span>
+                    <span className="nav-icon"><Icon name={item.view === 'erp' ? 'reports' : item.view === 'help' ? 'notifications' : item.view} /></span>
                     <span className="nav-label">{item.label}</span>
                     {item.view === 'orders' && dashboard && dashboard.overdue > 0 && <span className="nav-badge">{dashboard.overdue}</span>}
                   </button>
@@ -3476,6 +3815,7 @@ function App() {
             {themeToggleButton}
             <span className="user-avatar" aria-hidden="true">{currentUser?.user.name.slice(0, 1).toUpperCase()}</span>
             <span className="user-name">{currentUser?.user.name}</span>
+            <button className="button button-quiet" onClick={() => { setError(null); setPasswordDialogOpen(true); }}>Change password</button>
             <button className="button button-quiet" onClick={() => void signOut()}><Icon name="signOut" /> Sign out</button>
           </div>
         </header>
@@ -3485,6 +3825,7 @@ function App() {
         {!online && <div className="offline-banner" role="status">You are offline. This web workspace is read-only until the connection returns.</div>}
 
         {view === 'erp' && (
+          <Suspense fallback={<div className="panel" role="status">Loading workspace…</div>}>
           <ErpWorkspace
             withSession={withSession}
             online={online}
@@ -3493,6 +3834,7 @@ function App() {
             currency={businessConfiguration?.business.currency ?? 'PKR'}
             timezone={businessConfiguration?.business.timezone ?? 'Asia/Karachi'}
           />
+          </Suspense>
         )}
 
         {view === 'dashboard' && (
@@ -3658,12 +4000,15 @@ function App() {
         {view === 'customers' && (
           <section className="content-stack">
             <div className="section-heading">
-              <div><h2>{term('customers', 'Customers')}</h2><p className="muted">Search by name or phone number.</p></div>
+              <div><h2>{term('customers', 'Customers')}</h2><p className="muted">{showArchivedCustomers ? 'Archived customers. Restore brings a customer back with all history.' : 'Search by name or phone number.'}</p></div>
+              <label className="checkbox-row"><input type="checkbox" checked={showArchivedCustomers} onChange={(event) => setShowArchivedCustomers(event.target.checked)} /> Show archived</label>
               <form className="search-form" onSubmit={(event) => { event.preventDefault(); void reloadCurrent(); }}>
                 <label className="visually-hidden" htmlFor="customer-search">Search customers</label>
                 <input id="customer-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name or phone" />
                 <button className="button button-secondary" type="submit">Search</button>
               </form>
+              {!showArchivedCustomers && <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadExport('customers')}>Export CSV</button>}
+              <button className="button button-quiet" onClick={() => openGuide('customers')}>? Guide</button>
             </div>
             {permissions.has('customers:write') && (
               <form className="panel form-panel" onSubmit={addCustomer}>
@@ -3686,7 +4031,7 @@ function App() {
             )}
             {loading ? <LoadingState /> : customers.length ? (
               <div className="table-wrap">
-                <table><thead><tr><th>Customer</th><th>Phone</th><th>WhatsApp consent</th><th>Added</th></tr></thead>
+                <table><thead><tr><th>Customer</th><th>Phone</th><th>WhatsApp consent</th><th>Added</th>{permissions.has('customers:write') && <th>Actions</th>}</tr></thead>
                   <tbody>{customers.map((customer) => (
                     <tr key={customer.id}>
                       <td>
@@ -3711,11 +4056,18 @@ function App() {
                         )}
                       </td>
                       <td>{karachiDate(customer.createdAt)}</td>
+                      {permissions.has('customers:write') && (
+                        <td>
+                          {showArchivedCustomers
+                            ? <button className="button button-secondary" disabled={working || !online} onClick={() => void restoreCustomerAction(customer)}>Restore</button>
+                            : <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void archiveCustomerAction(customer)}>Archive</button>}
+                        </td>
+                      )}
                     </tr>
                   ))}</tbody>
                 </table>
               </div>
-            ) : <EmptyState title="No customers yet" detail="Add a customer above or try a broader search." />}
+            ) : <EmptyState title={showArchivedCustomers ? 'No archived customers' : 'No customers yet'} detail={showArchivedCustomers ? 'Archived customers will appear here.' : 'Add a customer above or try a broader search.'} />}
           </section>
         )}
 
@@ -3805,12 +4157,15 @@ function App() {
         {view === 'orders' && (
           <section className="content-stack">
             <div className="section-heading">
-              <div><h2>{term('orders', 'Orders')}</h2><p className="muted">Follow each {term('item', 'item').toLowerCase()} through the configured workflow.</p></div>
+              <div><h2>{term('orders', 'Orders')}</h2><p className="muted">{showArchivedOrders ? 'Archived orders. Restore brings an order back with payments and history.' : `Follow each ${term('item', 'item').toLowerCase()} through the configured workflow.`}</p></div>
+              <label className="checkbox-row"><input type="checkbox" checked={showArchivedOrders} onChange={(event) => setShowArchivedOrders(event.target.checked)} /> Show archived</label>
               <form className="search-form" onSubmit={(event) => { event.preventDefault(); void reloadCurrent(); }}>
                 <label className="visually-hidden" htmlFor="order-search">Search orders</label>
                 <input id="order-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Order number or customer" />
                 <button className="button button-secondary" type="submit">Search</button>
               </form>
+              <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadExport('orders')}>Export CSV</button>
+              <button className="button button-quiet" onClick={() => openGuide('orders')}>? Guide</button>
             </div>
             {businessConfiguration && (
               <section className="panel template-preview">
@@ -3905,7 +4260,10 @@ function App() {
                         <span className="muted">{money(order.outstanding, businessConfiguration?.business.currency)} outstanding</span>
                       )}
                       <div className="row-actions">
-                        {permissions.has('orders:transition') && businessConfiguration?.workflow.transitions
+                        {permissions.has('orders:write') && (showArchivedOrders
+                          ? <button className="button button-secondary" disabled={working || !online} onClick={() => void restoreOrderAction(order)}>Restore</button>
+                          : <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void archiveOrderAction(order)}>Archive</button>)}
+                        {!showArchivedOrders && permissions.has('orders:transition') && businessConfiguration?.workflow.transitions
                           .filter((transition) => {
                             const stages = businessConfiguration.workflow.stages;
                             const stageKey = order.workflowStageKey ?? order.currentWorkflowStage?.key ?? order.status;
@@ -3929,16 +4287,54 @@ function App() {
                               onClick={() => void changeWorkflowStage(order, stage.key)}
                             >{isTransitioningThis ? `Moving to ${stage.label}…` : `Move to ${stage.label}`}</button> : null;
                           })}
-                        {permissions.has('payments:write') && moduleEnabled('payments') && Number(order.outstanding ?? 0) > 0 && (
+                        {!showArchivedOrders && permissions.has('orders:read') && (
+                          <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadInvoice(order)}>Invoice PDF</button>
+                        )}
+                        {!showArchivedOrders && permissions.has('payments:write') && moduleEnabled('payments') && Number(order.outstanding ?? 0) > 0 && (
                           <button className="button button-secondary" onClick={() => { setPaymentOrderId(order.id); setPaymentAmount(order.outstanding ?? ''); }}>Record payment</button>
                         )}
                       </div>
+                      {!showArchivedOrders && permissions.has('orders:read') && (
+                        <div className="alterations-block">
+                          <button className="button button-secondary" disabled={working || !online} onClick={() => void toggleAlterations(order)}>
+                            {alterationsOpenFor === order.id ? 'Hide alterations' : 'Alterations'}
+                            {alterationsByOrder[order.id] ? ` (${alterationsByOrder[order.id].filter((item) => item.status === 'OPEN').length} open)` : ''}
+                          </button>
+                          {alterationsOpenFor === order.id && (
+                            <div className="alterations-panel">
+                              {(alterationsByOrder[order.id] ?? []).length === 0 && <p className="muted">No alterations for this order yet.</p>}
+                              {(alterationsByOrder[order.id] ?? []).map((alteration) => (
+                                <div className="alteration-row" key={alteration.id}>
+                                  <div>
+                                    <strong className={alteration.status === 'DONE' ? 'alteration-done' : ''}>{alteration.description}</strong>
+                                    <p className="muted">{alteration.status === 'DONE' ? 'Done' : 'Open'}{alteration.dueAt ? ` · Due ${karachiDate(alteration.dueAt)}` : ''} · Added {karachiDate(alteration.createdAt)}</p>
+                                  </div>
+                                  {permissions.has('orders:write') && (alteration.status === 'OPEN'
+                                    ? <button className="button button-secondary" disabled={working || !online} onClick={() => void setAlterationStatusAction(order, alteration, 'DONE')}>Mark done</button>
+                                    : <button className="button button-secondary" disabled={working || !online} onClick={() => void setAlterationStatusAction(order, alteration, 'OPEN')}>Reopen</button>)}
+                                </div>
+                              ))}
+                              {permissions.has('orders:write') && (
+                                <form className="alteration-form" onSubmit={(event) => { event.preventDefault(); void addAlteration(order); }}>
+                                  <label className="visually-hidden" htmlFor={`alteration-${order.id}`}>New alteration for order {order.orderNumber}</label>
+                                  <input id={`alteration-${order.id}`} value={alterationDraft} onChange={(event) => setAlterationDraft(event.target.value)} placeholder="e.g. Shorten sleeves by 2 cm" maxLength={1000} required />
+                                  <button className="button button-primary" type="submit" disabled={working || !online || !alterationDraft.trim()}>Add alteration</button>
+                                </form>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </article>
                 ))}
               </div>
-            ) : <EmptyState title="No orders found" detail="Create an order or adjust your search." />}
+            ) : <EmptyState title={showArchivedOrders ? 'No archived orders' : 'No orders found'} detail={showArchivedOrders ? 'Archived orders will appear here.' : 'Create an order or adjust your search.'} />}
           </section>
+        )}
+
+        {view === 'help' && (
+          <Suspense fallback={<div className="panel" role="status">Loading guide…</div>}><HelpGuide audience="business" topic={guideTopic} onTopicChange={setGuideTopic} /></Suspense>
         )}
 
         {view === 'measurements' && (
@@ -3986,7 +4382,13 @@ function App() {
 
         {view === 'payments' && (
           <section className="content-stack">
-            <div className="section-heading"><div><h2>Payment ledger</h2><p className="muted">Posted payments and corrections are permanent ledger entries.</p></div></div>
+            <div className="section-heading"><div><h2>Payment ledger</h2><p className="muted">Posted payments and corrections are permanent ledger entries.</p></div>
+              <button className="button button-quiet" onClick={() => openGuide('payments')}>? Guide</button>
+              <div className="row-actions">
+                <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadExport('payments')}>Export payments CSV</button>
+                {permissions.has('cashbook:read') && <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadExport('ledger')}>Export ledger CSV</button>}
+              </div>
+            </div>
             {payments.length ? (
               <div className="table-wrap">
                 <table><thead><tr><th>Receipt</th><th>Customer / order</th><th>Type</th><th>Method</th><th>Amount</th><th></th></tr></thead>
@@ -4163,6 +4565,7 @@ function App() {
                   <div className="platform-form-footer"><p className="fine-print">Version {businessConfigurationDraft.version}. Saving publishes an audited configuration for this business only.</p><button className="button button-primary" disabled={working || !online}>{working ? 'Publishing…' : 'Publish settings'}</button></div>
                 </form>
                 <form className="content-stack" onSubmit={saveBusinessStructure}>
+                  <Suspense fallback={<div className="panel" role="status">Loading editors…</div>}>
                   <BusinessStructureEditors
                     fields={structureFields}
                     itemTypes={businessConfigurationDraft.itemTypes}
@@ -4180,6 +4583,7 @@ function App() {
                       setStructureTransitions(transitions);
                     }}
                   />
+                  </Suspense>
                   <div className="panel form-panel platform-form-footer">
                     <p className="fine-print">
                       Configuration version {businessConfigurationDraft.configurationVersion} · template version {businessConfigurationDraft.templateVersion}.
@@ -4198,12 +4602,14 @@ function App() {
                   <p className="fine-print">Workflow: {businessConfigurationDraft.workflow.stages.map((stage) => stage.label).join(' → ')}</p>
                   <p className="fine-print">Allowed transitions: {businessConfigurationDraft.workflow.transitions.length}</p>
                 </section>
+                <Suspense fallback={<div className="panel" role="status">Loading team…</div>}>
                 <BusinessTeamAdmin
                   canManage={currentUser?.context.permissions.includes('staff:manage') ?? false}
                   actorPermissions={currentUser?.context.permissions ?? []}
                   online={online}
                   withSession={withSession}
                 />
+                </Suspense>
                 <section className="panel form-panel configuration-history" aria-labelledby="configuration-history-title">
                   <div className="section-heading">
                     <div>
@@ -4365,7 +4771,15 @@ function App() {
         </div>
       )}
 
-      <ChatAssistant session={session} onNavigate={(view) => setView(view as any)} />
+
+        {passwordDialogOpen && (
+          <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPasswordDialogOpen(false); }}>
+            {passwordChangeForm(false)}
+          </div>
+        )}
+      <Suspense fallback={null}>
+        <ChatAssistant session={session} onNavigate={(view) => setView(view as View)} />
+      </Suspense>
     </div>
   );
 }

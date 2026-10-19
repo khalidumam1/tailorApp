@@ -350,7 +350,7 @@ router.get('/:paymentId/receipt.pdf', requireBusinessPermission('payments:read')
   const payment = await prisma.payment.findFirst({
     where: { id: paymentId, businessId },
     include: {
-      business: { select: { name: true } },
+      business: { select: { name: true, timezone: true } },
       order: {
         include: {
           customer: { select: { name: true } },
@@ -380,7 +380,7 @@ router.get('/:paymentId/receipt.pdf', requireBusinessPermission('payments:read')
     paymentKind: payment.kind,
     receiptReference: payment.receiptNumber,
     ...(payment.correctionOf ? { correctionOfReceipt: payment.correctionOf.receiptNumber } : {}),
-    paidAt: payment.createdAt.toLocaleDateString('en-PK', { timeZone: 'Asia/Karachi' }),
+    paidAt: payment.createdAt.toLocaleDateString('en-PK', { timeZone: payment.business.timezone }),
     total: `PKR ${payment.order.total.toFixed(2)}`,
     totalPaid: `PKR ${totalPaid.toFixed(2)}`,
     remaining: `PKR ${calculateOutstanding(payment.order.total, totals.map((row) => ({

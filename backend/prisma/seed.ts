@@ -569,6 +569,13 @@ async function seed() {
           },
         },
       });
+      // The demo order occupies `<PREFIX>-000001`; keep the API order
+      // counter ahead of it or the tenant's first real order collides on
+      // the (businessId, orderNumber) unique index. Idempotent on reseed.
+      await tx.business.updateMany({
+        where: { id: demoBusiness.id, orderSequence: { lt: 1 } },
+        data: { orderSequence: 1 },
+      });
       await tx.payment.upsert({
         where: { businessId_idempotencyKey: { businessId: demoBusiness.id, idempotencyKey: `demo-payment-${definition.key}` } },
         update: {},
@@ -880,6 +887,24 @@ async function seed() {
         idempotencyKey: 'demo-advance-0002',
       },
     });
+
+    // The demo orders occupy KARACHI-000001/-000002; keep the API order
+    // counter ahead of the highest seeded number (derived, so adding
+    // another demo order later cannot reintroduce the collision).
+    const highestSeededOrder = await tx.order.findFirst({
+      where: { businessId: business.id },
+      orderBy: { orderNumber: 'desc' },
+      select: { orderNumber: true },
+    });
+    const seededSequence = highestSeededOrder
+      ? Number(highestSeededOrder.orderNumber.split('-').pop() ?? 0)
+      : 0;
+    if (seededSequence > 0) {
+      await tx.business.updateMany({
+        where: { id: business.id, orderSequence: { lt: seededSequence } },
+        data: { orderSequence: seededSequence },
+      });
+    }
 
     return {
       businesses: ['Tailor Demo', ...demoConfigurations.map((definition) => definition.name)],

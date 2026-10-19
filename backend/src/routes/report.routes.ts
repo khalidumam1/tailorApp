@@ -3,6 +3,7 @@ import express from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { calculateNetPaid } from '../domain/finance.js';
+import { businessDayRange } from '../domain/business-time.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
@@ -22,20 +23,10 @@ function getBusinessId(req: express.Request): string {
   return req.auth.business.id;
 }
 
-function karachiDayRange(date = new Date()): { start: Date; end: Date } {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Karachi',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value;
-  const year = part('year');
-  const month = part('month');
-  const day = part('day');
-  if (!year || !month || !day) throw new Error('Unable to calculate Asia/Karachi date range');
-  const start = new Date(`${year}-${month}-${day}T00:00:00+05:00`);
-  return { start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
+function businessTimezone(req: express.Request): string {
+  // The auth context carries the tenant timezone; the fallback only protects
+  // against a partially-populated context and matches the schema default.
+  return req.auth?.business?.timezone ?? 'Asia/Karachi';
 }
 
 function paymentNet(
@@ -55,7 +46,7 @@ router.get('/dashboard', requireBusinessPermission('orders:read'), asyncHandler(
   if (!moduleAccess.enabledModules.includes('orders')) {
     throw new HttpError(403, 'The orders module is disabled for this business', 'BUSINESS_MODULE_DISABLED');
   }
-  const { start, end } = karachiDayRange();
+  const { start, end } = businessDayRange(businessTimezone(req));
   const canReadPayments = req.auth?.permissions.includes('payments:read') === true
     && moduleAccess.enabledModules.includes('payments');
 

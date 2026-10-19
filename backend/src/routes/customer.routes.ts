@@ -146,7 +146,7 @@ router.get('/', requireBusinessPermission('customers:read'), asyncHandler(async 
   const query = customerQuerySchema.parse(req.query);
   if (query.cursor) {
     const cursorExists = await prisma.customer.findFirst({
-      where: { id: query.cursor, businessId, deletedAt: null },
+      where: { id: query.cursor, businessId, deletedAt: query.archived ? { not: null } : null },
       select: { id: true },
     });
     if (!cursorExists) throw new HttpError(400, 'Pagination cursor is invalid', 'INVALID_CURSOR');
@@ -157,7 +157,7 @@ router.get('/', requireBusinessPermission('customers:read'), asyncHandler(async 
   const items = await prisma.customer.findMany({
     where: {
       businessId,
-      deletedAt: null,
+      deletedAt: query.archived ? { not: null } : null,
       ...(search ? {
         OR: [
           { name: { contains: search, mode: 'insensitive' } },
@@ -389,6 +389,41 @@ router.post('/:customerId/whatsapp-consent', requireBusinessPermission('customer
     return updated;
   });
   res.json({ data: customer });
+}));
+
+router.post('/:customerId/restore', requireBusinessPermission('customers:write'), asyncHandler(async (req, res) => {
+  const businessId = getBusinessId(req);
+  const customerId = customerIdSchema.parse(req.params.customerId);
+  const { version } = deleteSchema.parse(req.body);
+  const customer = await runCustomerTransaction(async (tx) => {
+    const result = await tx.customer.updateMany({
+      where: { id: customerId, businessId, deletedAt: { not: null }, version },
+      data: { deletedAt: null, version: { increment: 1 } },
+    });
+    if (!result.count) {
+      const exists = await tx.customer.findFirst({ where: { id: customerId, businessId, deletedAt: { not: null } }, select: { id: true } });
+      if (!exists) throw new HttpError(404, 'Archived customer not found', 'CUSTOMER_NOT_FOUND');
+      throw new HttpError(409, 'Customer changed since it was loaded; refresh before restoring', 'VERSION_CONFLICT');
+    }
+    await tx.auditEvent.create({
+      data: {
+        businessId,
+        actorId: getActorId(req),
+        action: 'customer.restored',
+        entityType: 'customer',
+        entityId: customerId,
+        metadata: { version },
+        requestId: req.requestId,
+      },
+    });
+    return tx.customer.findFirstOrThrow({
+      where: { id: customerId, businessId },
+      include: {
+        customFieldValues: { include: { fieldDefinition: { select: { key: true, label: true, type: true } } } },
+      },
+    });
+  });
+  res.json({ data: withCustomFieldMap(customer) });
 }));
 
 router.delete('/:customerId', requireBusinessPermission('customers:write'), asyncHandler(async (req, res) => {

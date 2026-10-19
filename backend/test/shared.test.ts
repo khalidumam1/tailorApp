@@ -5,7 +5,6 @@ import {
   createPaymentSchema,
   normalizePakistanPhone,
   orderStatuses,
-  syncOperationSchema,
   toE164Phone,
 } from '../shared/src/index.ts';
 
@@ -39,19 +38,4 @@ test('order workflow includes terminal collected and cancelled statuses', () => 
   assert.deepEqual(orderStatuses.slice(-2), ['COLLECTED', 'CANCELLED']);
 });
 
-test('offline sync operations require UUID operation and entity identifiers', () => {
-  const validOperation = {
-    clientOperationId: '9ab629c8-5424-40f9-a29d-c7f797563102',
-    entityType: 'customer',
-    entityId: 'c380ec0b-50a0-46cc-8d6e-38cc5930d529',
-    payload: { action: 'customer.create' },
-  };
-  assert.equal(syncOperationSchema.safeParse(validOperation).success, true);
-  assert.equal(syncOperationSchema.safeParse({
-    ...validOperation,
-    entityType: 'catalog_item',
-    entityId: '73f44483-0ec1-4219-bd6a-6a8227f1239e',
-    payload: { action: 'catalog.create', item: { typeKey: 'chair', name: 'Chair' } },
-  }).success, true);
-  assert.equal(syncOperationSchema.safeParse({ ...validOperation, clientOperationId: 'duplicate' }).success, false);
-});
+

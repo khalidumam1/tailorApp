@@ -36,6 +36,7 @@ export const updateCustomerSchema = createCustomerSchema.partial().extend({
 
 export const customerQuerySchema = z.object({
   q: z.string().trim().min(1).max(120).optional(),
+  archived: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   cursor: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
@@ -85,6 +86,7 @@ export const createPaymentSchema = z.object({
 
 export const orderQuerySchema = z.object({
   q: z.string().trim().min(1).max(120).optional(),
+  archived: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   status: z.enum(orderStatuses).optional(),
   dueBefore: z.string().datetime({ offset: true }).optional(),
   dueAfter: z.string().datetime({ offset: true }).optional(),
@@ -109,6 +111,12 @@ export const createAlterationSchema = z.object({
   dueAt: z.string().datetime({ offset: true }).optional(),
 });
 
+export const alterationStatuses = ['OPEN', 'DONE'] as const;
+export const updateAlterationSchema = z.object({
+  status: z.enum(alterationStatuses),
+}).strict();
+export type AlterationStatus = (typeof alterationStatuses)[number];
+
 export const reversePaymentSchema = z.object({
   amount: z.string().regex(/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/).refine((amount) => Number(amount) > 0),
   reason: z.string().trim().min(1).max(500),
@@ -121,13 +129,6 @@ export const paymentQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
-export const syncOperationSchema = z.object({
-  clientOperationId: z.string().uuid(),
-  entityType: z.enum(['customer', 'measurement', 'order', 'catalog_item']),
-  entityId: z.string().uuid(),
-  baseVersion: z.number().int().positive().optional(),
-  payload: z.record(z.string(), z.unknown()),
-});
 
 export const paginationSchema = z.object({
   cursor: z.string().optional(),
@@ -140,7 +141,6 @@ export type CreateMeasurementRevisionInput = z.infer<typeof createMeasurementRev
 export type CreateGarmentTemplateInput = z.infer<typeof createGarmentTemplateSchema>;
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 export type CreatePaymentInput = z.infer<typeof createPaymentSchema>;
-export type SyncOperationInput = z.infer<typeof syncOperationSchema>;
 
 const brandingAssetUrlSchema = z.string().trim().max(2048).refine((value) => {
   if (!value) return true;

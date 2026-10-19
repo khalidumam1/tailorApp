@@ -3,6 +3,7 @@ import express from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
+import { businessLocalDateString } from '../domain/business-time.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { generateSubscriptionReceiptPdf, queueSubscriptionPaymentNotification } from '../whatsapp.js';
@@ -16,10 +17,7 @@ const paymentSchema = z.object({
   amount: z.string().regex(/^\d{1,10}(?:\.\d{1,2})?$/),
   method: z.string().trim().min(2).max(60),
   paymentDate: z.string().date(),
-}).refine((input) => {
-  const todayInKarachi = new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  return input.paymentDate <= todayInKarachi;
-}, { message: 'Payment date cannot be in the future', path: ['paymentDate'] });
+});
 
 function businessId(req: express.Request): string {
   if (!req.auth?.business || !req.auth.membershipId) {
@@ -76,7 +74,7 @@ router.get('/payments/:paymentId/receipt.pdf', requireBusinessPermission('subscr
   const payment = await prisma.subscriptionPayment.findFirst({
     where: { id: paymentId, businessId: id, status: 'APPROVED', invoiceNumber: { not: null } },
     include: {
-      business: { select: { name: true } },
+      business: { select: { name: true, timezone: true } },
       plan: { select: { name: true } },
       subscription: { select: { startsAt: true, endsAt: true } },
     },
@@ -94,8 +92,8 @@ router.get('/payments/:paymentId/receipt.pdf', requireBusinessPermission('subscr
     paymentMethod: payment.method,
     paymentDate: payment.paymentDate.toISOString().slice(0, 10),
     invoiceNumber: payment.invoiceNumber,
-    startsAt: payment.subscription.startsAt.toLocaleDateString('en-PK', { timeZone: 'Asia/Karachi' }),
-    endsAt: payment.subscription.endsAt.toLocaleDateString('en-PK', { timeZone: 'Asia/Karachi' }),
+    startsAt: payment.subscription.startsAt.toLocaleDateString('en-PK', { timeZone: payment.business.timezone }),
+    endsAt: payment.subscription.endsAt.toLocaleDateString('en-PK', { timeZone: payment.business.timezone }),
   });
   res.type('application/pdf')
     .setHeader('Content-Disposition', `attachment; filename="${payment.invoiceNumber}.pdf"`)
@@ -107,6 +105,10 @@ router.post('/payments', requireBusinessPermission('subscriptions:manage'), asyn
   const actorId = req.auth?.userId;
   if (!actorId) throw new HttpError(401, 'Authentication required', 'UNAUTHENTICATED');
   const input = paymentSchema.parse(req.body);
+  const todayLocal = businessLocalDateString(req.auth?.business?.timezone ?? 'Asia/Karachi');
+  if (input.paymentDate > todayLocal) {
+    throw new HttpError(400, 'Payment date cannot be in the future', 'VALIDATION_ERROR');
+  }
   const setting = await prisma.platformSetting.findUnique({ where: { key: 'billing' }, select: { value: true } });
   const billing = setting?.value;
   const configuredMethods = typeof billing === 'object' && billing !== null && 'paymentMethods' in billing

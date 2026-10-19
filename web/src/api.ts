@@ -21,6 +21,16 @@ const customerSchema = z.object({
   createdAt: z.string(),
 });
 
+const alterationSchema = z.object({
+  id: z.string().uuid(),
+  orderId: z.string().uuid(),
+  description: z.string(),
+  status: z.enum(['OPEN', 'DONE']),
+  dueAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type Alteration = z.infer<typeof alterationSchema>;
+
 const customerSummarySchema = customerSchema.pick({ id: true, name: true, phone: true });
 const catalogItemSchema = z.object({
   id: z.string().uuid(),
@@ -77,6 +87,7 @@ const loginResponseSchema = z.union([
   z.object({
     user: z.object({ id: z.string().uuid(), name: z.string(), email: z.string(), platformRole: z.string().nullable().optional() }),
     business: z.object({ id: z.string().uuid(), name: z.string() }).optional(),
+    mustChangePassword: z.boolean().optional(),
     accessToken: z.string(),
     refreshToken: z.string(),
   }),
@@ -369,7 +380,7 @@ const platformBusinessSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
   slug: z.string(),
-  status: z.enum(['ACTIVE', 'SUSPENDED', 'PENDING']),
+  status: z.enum(['ACTIVE', 'SUSPENDED', 'PENDING', 'ARCHIVED']),
   createdAt: z.string(),
   template: z.object({ id: z.string().uuid(), key: z.string(), name: z.string() }).optional(),
   _count: z.object({ memberships: z.number().int() }).optional(),
@@ -1015,6 +1026,13 @@ export const api = {
   me(token: string) {
     return request('/auth/me', meSchema, { token });
   },
+  changePassword(token: string, currentPassword: string, newPassword: string) {
+    return request('/auth/password/change', z.object({ passwordChanged: z.boolean(), signInAgain: z.boolean() }), {
+      token,
+      method: 'POST',
+      body: { currentPassword, newPassword },
+    });
+  },
   refresh(refreshToken: string) {
     return refreshTokens(refreshToken);
   },
@@ -1196,10 +1214,25 @@ export const api = {
     const params = asOf ? `?${new URLSearchParams({ asOf })}` : '';
     return request(`/accounting/reports/balance-sheet${params}`, balanceSheetSchema, { token });
   },
-  customers(token: string, query = '') {
+  customers(token: string, query = '', archived = false) {
     const params = new URLSearchParams({ limit: '100' });
     if (query) params.set('q', query);
+    if (archived) params.set('archived', 'true');
     return request(`/customers?${params}`, z.object({ items: z.array(customerSchema), nextCursor: z.string().nullable() }), { token });
+  },
+  archiveCustomer(token: string, customer: Customer) {
+    return request(`/customers/${customer.id}`, z.object({ archived: z.boolean() }), {
+      token,
+      method: 'DELETE',
+      body: { version: customer.version },
+    });
+  },
+  restoreCustomer(token: string, customer: Customer) {
+    return request(`/customers/${customer.id}/restore`, customerSchema, {
+      token,
+      method: 'POST',
+      body: { version: customer.version },
+    });
   },
   catalog(token: string, query = '', includeInactive = false) {
     const params = new URLSearchParams({ limit: '100' });
@@ -1258,10 +1291,53 @@ export const api = {
       nextCursor: z.string().nullable(),
     }), { token });
   },
-  orders(token: string, query = '') {
+  orders(token: string, query = '', archived = false) {
     const params = new URLSearchParams({ limit: '100' });
     if (query) params.set('q', query);
+    if (archived) params.set('archived', 'true');
     return request(`/orders?${params}`, z.object({ items: z.array(orderSchema), nextCursor: z.string().nullable() }), { token });
+  },
+  archiveOrder(token: string, order: Order) {
+    return request(`/orders/${order.id}`, z.object({ archived: z.boolean() }), {
+      token,
+      method: 'DELETE',
+      body: { version: order.version },
+    });
+  },
+  alterations(token: string, orderId: string) {
+    return request(`/orders/${orderId}/alterations`, z.object({ items: z.array(alterationSchema) }), { token });
+  },
+  createAlteration(token: string, orderId: string, input: { description: string; dueAt?: string }) {
+    return request(`/orders/${orderId}/alterations`, alterationSchema, { token, method: 'POST', body: input });
+  },
+  setAlterationStatus(token: string, orderId: string, alterationId: string, status: Alteration['status']) {
+    return request(`/orders/${orderId}/alterations/${alterationId}`, alterationSchema, {
+      token,
+      method: 'PATCH',
+      body: { status },
+    });
+  },
+  restoreOrder(token: string, order: Order) {
+    return request(`/orders/${order.id}/restore`, z.object({ restored: z.boolean() }), {
+      token,
+      method: 'POST',
+      body: { version: order.version },
+    });
+  },
+  orderInvoice(token: string, orderId: string) {
+    return requestPdf(`/orders/${orderId}/invoice.pdf`, token);
+  },
+  exportCustomersCsv(token: string) {
+    return requestCsv('/exports/customers.csv', token);
+  },
+  exportOrdersCsv(token: string, archived = false) {
+    return requestCsv(`/exports/orders.csv${archived ? '?archived=true' : ''}`, token);
+  },
+  exportPaymentsCsv(token: string) {
+    return requestCsv('/exports/payments.csv', token);
+  },
+  exportLedgerCsv(token: string) {
+    return requestCsv('/exports/ledger.csv', token);
   },
   createOrder(token: string, input: OrderInput, idempotencyKey: string = crypto.randomUUID()) {
     return request('/orders', orderSchema.omit({ paid: true, outstanding: true }), {
@@ -1320,6 +1396,13 @@ export const api = {
   updateBusinessStaff(token: string, membershipId: string, input: { roleId?: string; active?: boolean }) {
     return request(`/business/staff/${membershipId}`, businessMemberSchema, { token, method: 'PATCH', body: input });
   },
+  resetBusinessStaffPassword(token: string, membershipId: string, newPassword: string) {
+    return request(`/business/staff/${membershipId}/password-reset`, z.object({
+      reset: z.boolean(),
+      mustChangePassword: z.boolean(),
+      sessionsRevoked: z.number().int(),
+    }), { token, method: 'POST', body: { newPassword } });
+  },
   removeBusinessStaff(token: string, membershipId: string, reason?: string) {
     return request(`/business/staff/${membershipId}`, businessMemberSchema, {
       token,
@@ -1377,11 +1460,29 @@ export const api = {
   receipt(token: string, paymentId: string) {
     return request(`/payments/${paymentId}/receipt`, receiptSchema, { token });
   },
-  platformBusinesses(token: string) {
-    return request('/platform/businesses?limit=100', z.object({
+  platformBusinesses(token: string, status?: 'ACTIVE' | 'SUSPENDED' | 'PENDING' | 'ARCHIVED') {
+    const params = new URLSearchParams({ limit: '100' });
+    if (status) params.set('status', status);
+    return request(`/platform/businesses?${params}`, z.object({
       items: z.array(platformBusinessSchema),
       nextCursor: z.string().nullable(),
     }), { token });
+  },
+  resetPlatformUserPassword(token: string, userId: string, newPassword: string) {
+    return request(`/platform/users/${userId}/password-reset`, z.object({
+      reset: z.boolean(),
+      mustChangePassword: z.boolean(),
+      sessionsRevoked: z.number().int(),
+    }), { token, method: 'POST', body: { newPassword } });
+  },
+  setPlatformUserActive(token: string, userId: string, active: boolean) {
+    return request(`/platform/users/${userId}/active`, z.object({
+      id: z.string().uuid(),
+      name: z.string(),
+      email: z.string(),
+      active: z.boolean(),
+      platformRole: z.string().nullable(),
+    }), { token, method: 'PATCH', body: { active } });
   },
   platformBusinessModules(token: string, businessId: string) {
     return request(`/platform/businesses/${businessId}/modules`, platformBusinessModulesSchema, { token });
@@ -1424,7 +1525,7 @@ export const api = {
         id: z.string().uuid(),
         name: z.string(),
         slug: z.string(),
-        status: z.enum(['ACTIVE', 'SUSPENDED', 'PENDING']),
+        status: z.enum(['ACTIVE', 'SUSPENDED', 'PENDING', 'ARCHIVED']),
       }),
       items: z.array(platformBusinessMemberSchema),
       totalCount: z.number().int(),

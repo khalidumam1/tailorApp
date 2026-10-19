@@ -30,9 +30,18 @@ jobs:
       TEST_DATABASE_URL: postgresql://tailor:ci-test-password@localhost:5432/tailor?schema=public
       ALLOW_SHARED_TEST_DATABASE: "true"
       RUN_DB_TESTS: "true"
-      NODE_ENV: test
+      # NOTE: NODE_ENV stays unset at job level. With NODE_ENV=test, Vite
+      # bundles the development React build (~1.6x larger), which broke the
+      # bundle budget and never matched production. Test steps opt in below.
     steps:
       - uses: actions/checkout@v4
+      # F-011: the four @tailor/shared copies must stay byte-identical.
+      - name: Check shared contract drift
+        run: node tools/check-shared-drift.mjs
+      - name: Check user-guide content is compiled
+        run: |
+          node tools/build-guide.mjs
+          git diff --exit-code -- web/src/guide-content.ts mobile/src/guide-content.ts
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -40,10 +49,144 @@ jobs:
       - run: npm ci
       - run: npm run db:generate
       - run: npm run db:migrate
-      - run: npm run typecheck
-      - run: npm test
+      # Per-workspace typechecks; tsc errors are echoed as ::error workflow
+      # commands so they surface as check annotations (readable via the API).
+      - name: Typecheck shared
+        shell: bash
+        run: |
+          set -o pipefail
+          { npm run build --workspace @tailor/shared && npm run typecheck --workspace @tailor/shared; } 2>&1 | sed -u -E 's/^([^[:space:]()]+)\(([0-9]+),([0-9]+)\): error (TS[0-9]+): (.*)/::error file=\1,line=\2,col=\3::\4: \5/'
+      - name: Typecheck api
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck --workspace @tailor/api 2>&1 | sed -u -E 's/^([^[:space:]()]+)\(([0-9]+),([0-9]+)\): error (TS[0-9]+): (.*)/::error file=\1,line=\2,col=\3::\4: \5/'
+      - name: Typecheck web
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck --workspace @tailor/web 2>&1 | sed -u -E 's/^([^[:space:]()]+)\(([0-9]+),([0-9]+)\): error (TS[0-9]+): (.*)/::error file=\1,line=\2,col=\3::\4: \5/'
+      - name: Typecheck mobile
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck --workspace @tailor/mobile 2>&1 | sed -u -E 's/^([^[:space:]()]+)\(([0-9]+),([0-9]+)\): error (TS[0-9]+): (.*)/::error file=\1,line=\2,col=\3::\4: \5/'
+      - run: npm run lint --workspace @tailor/web
+      # Backend suite: failing TAP lines are echoed as ::error workflow
+      # commands so they surface as check annotations (readable via the API).
+      - name: Test backend
+        shell: bash
+        env:
+          NODE_ENV: test
+        run: |
+          set -o pipefail
+          npm test 2>&1 | sed -u -E -e 's/.*not ok [0-9]+ - (.*)/::error::FAIL: \1/' -e 's/^ +error: (.*)/::error::  error: \1/' -e 's/.*(#[[:space:]]*(fail|pass|tests)[[:space:]]+[0-9]+.*)/::error::SUMMARY \1/' -e 's/.*((Error|TypeError|ReferenceError) \[[A-Z_]+\].*)/::error::CRASH: \1/' -e 's/.*(AssertionError.*)/::error::ASSERT: \1/' -e 's/.*(Cannot find module[^,]*)/::error::MODULE: \1/' -e 's/^ +(actual|expected|operator): (.*)/::error::  \1: \2/'
+      - run: npm run test --workspace @tailor/web
+        env:
+          NODE_ENV: test
+      - run: npm run test --workspace @tailor/mobile
+        env:
+          NODE_ENV: test
       - run: npm run build
+        env:
+          NODE_ENV: production
+      - name: Check web bundle budget
+        shell: bash
+        run: |
+          node tools/check-web-bundle.mjs || { echo '--- bundle check output ---'; node tools/check-web-bundle.mjs 2>&1 | sed -u -E 's/(.*)/::error::BUNDLE \1/'; exit 1; }
       - run: npm audit --workspace @tailor/api --workspace @tailor/web --workspace @tailor/shared
+      # Phase 3 task 3.4: browser E2E against an isolated `e2e` Postgres
+      # schema (same CI database, fully separate tables) seeded with
+      # throwaway CI-only accounts. The main suite's public schema is
+      # untouched, and nothing here can see production data.
+      - name: Typecheck E2E specs
+        run: npm run typecheck:e2e --workspace @tailor/web
+      - name: Install Playwright chromium
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: E2E journeys (isolated schema)
+        shell: bash
+        env:
+          # NODE_ENV is scoped per command below: the seed refuses to run
+          # in production (by design), while the API server under test
+          # runs with production settings.
+          DATABASE_URL: postgresql://tailor:ci-test-password@localhost:5432/tailor?schema=e2e
+          TEST_DATABASE_URL: postgresql://tailor:ci-test-password@localhost:5432/tailor?schema=e2e
+          SEED_OWNER_EMAIL: e2e-owner@example.com
+          SEED_OWNER_PASSWORD: e2e-owner-password-2026
+          SEED_STAFF_EMAIL: e2e-staff@example.com
+          SEED_STAFF_PASSWORD: e2e-staff-password-2026
+          SEED_PLATFORM_ADMIN_EMAIL: e2e-platform@example.com
+          SEED_PLATFORM_ADMIN_PASSWORD: e2e-platform-password-2026-x
+          ACCESS_TOKEN_SECRET: ci-e2e-access-token-secret-at-least-32-chars
+          # Production boot rejects the localhost dev default; the browser
+          # only ever calls the API same-origin through the Vite proxy.
+          CORS_ORIGINS: "http://127.0.0.1:4173"
+          PORT: "5000"
+          API_PROXY_TARGET: http://127.0.0.1:5000
+        run: |
+          # Phase markers + log tails are emitted as ::error annotations on
+          # failure (job logs are not always downloadable; annotations are).
+          emit_annotated() { sed -u -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/^/::error::E2E-LOG /' || true; }
+          annotate_tail() { tail -15 "$1" 2>/dev/null | emit_annotated; }
+          fail() {
+            echo "::error::E2E PHASE FAILED: $1"
+            # One multi-line annotation carrying the Playwright tail
+            # (single-line annotations kept getting truncated away).
+            echo "::error::E2E-TESTS-TAIL $(grep -E 'Error:|✘|Received:|- (button|heading|navigation|article)|waiting for|Locator:|PAGEERROR|CONSOLE-ERROR|NAV-AFTER-SAVE|DASHBOARD-BUTTONS|ORDER-SUBMIT-ERROR|ORDER-CARDS' /tmp/e2e-tests.log 2>/dev/null | head -30 | cut -c1-160 | perl -0777 -pe 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+            echo "::error::E2E-API-TAIL $(tail -5 /tmp/e2e-api.log 2>/dev/null | cut -c1-200 | perl -0777 -pe 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+            exit 1
+          }
+          NODE_ENV=test npm run db:migrate > /tmp/e2e-setup.log 2>&1 || fail "migrate"
+          echo "E2E phase ok: migrate"
+          NODE_ENV=test npm run db:seed >> /tmp/e2e-setup.log 2>&1 || fail "seed"
+          echo "E2E phase ok: seed"
+          NODE_ENV=production node backend/dist/server.js > /tmp/e2e-api.log 2>&1 &
+          API_PID=$!
+          npm run preview --workspace @tailor/web -- --port 4173 --strictPort > /tmp/e2e-web.log 2>&1 &
+          WEB_PID=$!
+          trap 'kill $API_PID $WEB_PID 2>/dev/null || true' EXIT
+          API_OK=""
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:5000/api/v1/health >/dev/null 2>&1 && { API_OK=1; break; } || sleep 2; done
+          [ -n "$API_OK" ] || fail "api health"
+          echo "E2E phase ok: api"
+          WEB_OK=""
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:4173/ >/dev/null 2>&1 && { WEB_OK=1; break; } || sleep 2; done
+          [ -n "$WEB_OK" ] || fail "web preview"
+          echo "E2E phase ok: preview"
+          npm run test:e2e --workspace @tailor/web > /tmp/e2e-tests.log 2>&1 || fail "playwright"
+          cat /tmp/e2e-tests.log
+          grep -E "[0-9]+ (passed|failed|skipped)" /tmp/e2e-tests.log | sed -u -E 's/^/::error::E2E SUMMARY: /' || true
+      # Phase 3 task 3.5: timed backup/restore drill. Dumps the populated
+      # e2e schema, restores it into a throwaway database, verifies the
+      # seeded + E2E-created rows survived, then drops it. Also serves as
+      # the migration rehearsal evidence: every run already deployed all
+      # migrations into this previously-empty schema (db:migrate above).
+      - name: Backup/restore drill (timed)
+        shell: bash
+        env:
+          PGPASSWORD: ci-test-password
+        run: |
+          set -euo pipefail
+          START=$SECONDS
+          pg_dump -h localhost -U tailor -d tailor -n e2e -Fc -f /tmp/e2e-backup.dump
+          psql -h localhost -U tailor -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE tailor_restore'
+          pg_restore -h localhost -U tailor -d tailor_restore --no-owner /tmp/e2e-backup.dump
+          USERS=$(psql -h localhost -U tailor -d tailor_restore -tAc 'SELECT count(*) FROM e2e."User"')
+          ORDERS=$(psql -h localhost -U tailor -d tailor_restore -tAc 'SELECT count(*) FROM e2e."Order"')
+          echo "Restore drill OK: users=$USERS orders=$ORDERS elapsed=$((SECONDS - START))s"
+          test "$USERS" -gt 0
+          test "$ORDERS" -gt 0
+          psql -h localhost -U tailor -d postgres -v ON_ERROR_STOP=1 -c 'DROP DATABASE tailor_restore'
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            web/playwright-report
+            web/test-results
+          if-no-files-found: ignore
 
 
 

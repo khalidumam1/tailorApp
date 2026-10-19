@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import express from 'express';
 import {
   createAlterationSchema,
+  updateAlterationSchema,
   createOrderSchema,
   orderQuerySchema,
   transitionOrderSchema,
@@ -12,6 +13,9 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { calculateNetPaid, calculateOutstanding } from '../domain/finance.js';
+import { buildInvoice } from '../domain/invoice.js';
+import { generateInvoicePdf } from '../domain/invoice-pdf.js';
+import { businessLocalDateString } from '../domain/business-time.js';
 import { ensureDefaultAccounts, postJournal } from '../domain/accounting.js';
 import { getOrCreateDefaultLocation, postInventoryMovement } from '../domain/inventory.js';
 import { customFieldValueData, validateCustomFieldValues, withBuiltInOrderItemFields } from '../domain/custom-fields.js';
@@ -229,7 +233,7 @@ router.get('/', requireBusinessPermission('orders:read'), asyncHandler(async (re
   const query = orderQuerySchema.parse(req.query);
   if (query.cursor) {
     const cursorExists = await prisma.order.findFirst({
-      where: { id: query.cursor, businessId, deletedAt: null },
+      where: { id: query.cursor, businessId, deletedAt: query.archived ? { not: null } : null },
       select: { id: true },
     });
     if (!cursorExists) throw new HttpError(400, 'Pagination cursor is invalid', 'INVALID_CURSOR');
@@ -238,7 +242,7 @@ router.get('/', requireBusinessPermission('orders:read'), asyncHandler(async (re
   const orders = await prisma.order.findMany({
     where: {
       businessId,
-      deletedAt: null,
+      deletedAt: query.archived ? { not: null } : null,
       ...(query.status ? { status: query.status } : {}),
       ...(query.q ? {
         OR: [
@@ -863,6 +867,56 @@ router.post('/:orderId/alterations', requireBusinessPermission('orders:write'), 
   res.status(201).json({ data: alteration });
 }));
 
+router.get('/:orderId/alterations', requireBusinessPermission('orders:read'), asyncHandler(async (req, res) => {
+  const { businessId } = getContext(req);
+  const orderId = idSchema.parse(req.params.orderId);
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, businessId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!order) throw new HttpError(404, 'Order not found', 'ORDER_NOT_FOUND');
+  const items = await prisma.alterationTask.findMany({
+    where: { orderId },
+    // 'OPEN' sorts after 'DONE', so descending status lists open work first.
+    orderBy: [{ status: 'desc' }, { createdAt: 'desc' }],
+  });
+  res.json({ data: { items } });
+}));
+
+router.patch('/:orderId/alterations/:alterationId', requireBusinessPermission('orders:write'), asyncHandler(async (req, res) => {
+  const { businessId, actorId } = getContext(req);
+  const orderId = idSchema.parse(req.params.orderId);
+  const alterationId = idSchema.parse(req.params.alterationId);
+  const input = updateAlterationSchema.parse(req.body);
+  const updated = await prisma.$transaction(async (tx) => {
+    const order = await tx.order.findFirst({
+      where: { id: orderId, businessId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!order) throw new HttpError(404, 'Order not found', 'ORDER_NOT_FOUND');
+    const current = await tx.alterationTask.findFirst({ where: { id: alterationId, orderId } });
+    if (!current) throw new HttpError(404, 'Alteration not found', 'ALTERATION_NOT_FOUND');
+    if (current.status === input.status) return current;
+    const next = await tx.alterationTask.update({
+      where: { id: alterationId },
+      data: { status: input.status },
+    });
+    await tx.auditEvent.create({
+      data: {
+        businessId,
+        actorId,
+        action: input.status === 'DONE' ? 'alteration.completed' : 'alteration.reopened',
+        entityType: 'alteration',
+        entityId: alterationId,
+        metadata: { orderId, from: current.status, to: input.status },
+        requestId: req.requestId,
+      },
+    });
+    return next;
+  });
+  res.json({ data: updated });
+}));
+
 router.get('/:orderId', requireBusinessPermission('orders:read'), asyncHandler(async (req, res) => {
   const { businessId } = getContext(req);
   const orderId = idSchema.parse(req.params.orderId);
@@ -899,6 +953,122 @@ router.get('/:orderId', requireBusinessPermission('orders:read'), asyncHandler(a
       outstanding: calculateOutstanding(order.total, payments).toFixed(2),
     },
   });
+}));
+
+router.get('/:orderId/invoice.pdf', requireBusinessPermission('orders:read'), asyncHandler(async (req, res) => {
+  const { businessId } = getContext(req);
+  const orderId = idSchema.parse(req.params.orderId);
+  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId);
+  const canReadPayments = req.auth?.permissions.includes('payments:read') === true
+    && moduleAccess.enabledModules.includes('payments');
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, businessId, deletedAt: null },
+    include: {
+      customer: { select: { name: true, phone: true } },
+      items: true,
+      business: { select: { name: true, currency: true, timezone: true } },
+    },
+  });
+  if (!order) throw new HttpError(404, 'Order not found', 'ORDER_NOT_FOUND');
+  const payments = canReadPayments
+    ? await prisma.payment.findMany({ where: { businessId, orderId }, orderBy: { createdAt: 'asc' } })
+    : null;
+  const invoice = buildInvoice({
+    items: order.items.map((item) => ({
+      name: item.itemName ?? item.garmentName ?? 'Item',
+      quantity: item.quantity,
+      unitPrice: item.unitPrice.toString(),
+    })),
+    total: order.total.toString(),
+    payments: (payments ?? []).map((payment) => ({ kind: payment.kind, amount: payment.amount.toString() })),
+  });
+  const pdf = await generateInvoicePdf({
+    ...invoice,
+    businessName: order.business.name,
+    currency: order.business.currency,
+    orderNumber: order.orderNumber,
+    customerName: order.customer.name,
+    customerPhone: order.customer.phone,
+    issuedAt: businessLocalDateString(order.business.timezone, new Date()),
+    promisedAt: businessLocalDateString(order.business.timezone, order.promisedAt),
+    payments: payments
+      ? payments.map((payment) => ({
+        receiptNumber: payment.receiptNumber,
+        kind: payment.kind,
+        method: payment.method,
+        amount: payment.amount.toString(),
+        date: businessLocalDateString(order.business.timezone, payment.createdAt),
+      }))
+      : null,
+  });
+  res.status(200)
+    .type('application/pdf')
+    .setHeader('content-disposition', `attachment; filename="invoice-${order.orderNumber}.pdf"`)
+    .send(pdf);
+}));
+
+const archiveOrderSchema = z.object({ version: z.number().int().positive() }).strict();
+
+router.delete('/:orderId', requireBusinessPermission('orders:write'), asyncHandler(async (req, res) => {
+  const { businessId, actorId } = getContext(req);
+  const orderId = idSchema.parse(req.params.orderId);
+  const { version } = archiveOrderSchema.parse(req.body);
+  await runSerializableOrderTransaction(async (tx) => {
+    const result = await tx.order.updateMany({
+      where: { id: orderId, businessId, deletedAt: null, version },
+      data: { deletedAt: new Date(), version: { increment: 1 } },
+    });
+    if (!result.count) {
+      const exists = await tx.order.findFirst({ where: { id: orderId, businessId, deletedAt: null }, select: { id: true } });
+      if (!exists) throw new HttpError(404, 'Order not found', 'ORDER_NOT_FOUND');
+      throw new HttpError(409, 'Order changed since it was loaded; refresh before archiving', 'VERSION_CONFLICT');
+    }
+    await tx.whatsAppNotification.updateMany({
+      where: { businessId, orderId, status: 'QUEUED' },
+      data: { status: 'NOT_SENT', lastError: 'Order was archived', failedAt: new Date() },
+    });
+    await tx.auditEvent.create({
+      data: {
+        businessId,
+        actorId,
+        action: 'order.archived',
+        entityType: 'order',
+        entityId: orderId,
+        metadata: { version },
+        requestId: req.requestId,
+      },
+    });
+  });
+  res.json({ data: { archived: true } });
+}));
+
+router.post('/:orderId/restore', requireBusinessPermission('orders:write'), asyncHandler(async (req, res) => {
+  const { businessId, actorId } = getContext(req);
+  const orderId = idSchema.parse(req.params.orderId);
+  const { version } = archiveOrderSchema.parse(req.body);
+  await runSerializableOrderTransaction(async (tx) => {
+    const result = await tx.order.updateMany({
+      where: { id: orderId, businessId, deletedAt: { not: null }, version },
+      data: { deletedAt: null, version: { increment: 1 } },
+    });
+    if (!result.count) {
+      const exists = await tx.order.findFirst({ where: { id: orderId, businessId, deletedAt: { not: null } }, select: { id: true } });
+      if (!exists) throw new HttpError(404, 'Archived order not found', 'ORDER_NOT_FOUND');
+      throw new HttpError(409, 'Order changed since it was loaded; refresh before restoring', 'VERSION_CONFLICT');
+    }
+    await tx.auditEvent.create({
+      data: {
+        businessId,
+        actorId,
+        action: 'order.restored',
+        entityType: 'order',
+        entityId: orderId,
+        metadata: { version },
+        requestId: req.requestId,
+      },
+    });
+  });
+  res.json({ data: { restored: true } });
 }));
 
 export default router;

@@ -3,14 +3,17 @@
  * order form, stage-transition buttons, and WhatsApp order status updates.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import { formatCurrency } from '../local';
 import { useAppStyles } from '../theme/useAppStyles';
 import { useAppTheme } from '../theme/palette';
 import { Icon } from '../Icons';
-import { ActionButton, EmptyState } from '../theme/primitives';
+import { ActionButton, EmptyState, Field } from '../theme/primitives';
 import { useWorkspace, resolveMobileWorkflowStage } from '../hooks/useWorkspace';
 import { computeDashboardSummary } from '../data/analytics';
+import type { LocalOrder } from '../local';
+import type { AlterationTask } from '../hooks/useWorkspace';
+import { shareDownloadedFile } from '../data/downloads';
 import { normalizePhone } from '../data/messaging';
 
 import { AreaChart } from '../components/AreaChart';
@@ -37,6 +40,28 @@ export function OrdersScreen({
   const ws = useWorkspace();
   const copy = ws.copy;
   const [filter, setFilter] = useState<string>('all');
+  const [alterationsByOrder, setAlterationsByOrder] = useState<Record<string, AlterationTask[]>>({});
+  const [alterationsOpenFor, setAlterationsOpenFor] = useState<string | null>(null);
+  const [alterationDraft, setAlterationDraft] = useState('');
+  const toggleAlterations = async (order: LocalOrder) => {
+    if (alterationsOpenFor === order.id) { setAlterationsOpenFor(null); return; }
+    setAlterationsOpenFor(order.id);
+    setAlterationDraft('');
+    try {
+      const items = await ws.fetchAlterations(order.id);
+      setAlterationsByOrder((current) => ({ ...current, [order.id]: items }));
+    } catch { /* workspace banner shows the error */ }
+  };
+  const [showArchived, setShowArchived] = useState(false);
+  const [archivedOrders, setArchivedOrders] = useState<LocalOrder[]>([]);
+  useEffect(() => {
+    if (!showArchived) return;
+    let cancelled = false;
+    ws.fetchArchivedOrders()
+      .then((list) => { if (!cancelled) setArchivedOrders(list); })
+      .catch(() => { /* fetchArchivedOrders surfaces the error in the workspace banner */ });
+    return () => { cancelled = true; };
+  }, [showArchived, ws.fetchArchivedOrders, ws.orders]);
 
   useEffect(() => {
     if (intent === 'new-order') {
@@ -76,6 +101,15 @@ export function OrdersScreen({
           <Text style={styles.pageTitle}>{ws.term('orders', copy.orders)}</Text>
           <Text style={styles.pageSubtitle}>{filtered.length} {ws.term('orders', copy.orders).toLowerCase()}</Text>
         </View>
+        {ws.can('orders:read') ? (
+          <ActionButton
+            title="Export CSV"
+            secondary
+            onPress={() => void ws.downloadServerExport('orders', { archived: showArchived })
+              .then((file) => shareDownloadedFile(file.filename, file.bytes, file.mimeType))
+              .catch(() => { /* workspace banner shows the error */ })}
+          />
+        ) : null}
         {ws.can('orders:write') ? (
           <ActionButton
             title={`＋ ${copy.newOrder}`}
@@ -87,6 +121,38 @@ export function OrdersScreen({
 
       {ws.orderForm && ws.can('orders:write') ? (
         <OrderForm onOpenCustomers={onOpenCustomers} />
+      ) : null}
+
+      {/* Archived toggle */}
+      <View style={styles.chipWrap}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ selected: showArchived }}
+          android_ripple={{ color: palette.primarySoft }}
+          onPress={() => setShowArchived((value) => !value)}
+          style={({ pressed }) => [styles.chip, showArchived && styles.chipSelected, pressed && styles.chipPressed]}
+        >
+          <Text style={[styles.chipText, showArchived && styles.chipTextSelected]}>Archived</Text>
+        </Pressable>
+      </View>
+
+      {showArchived ? (
+        archivedOrders.length ? archivedOrders.map((order) => (
+          <View key={order.id} style={[styles.listCard, styles.cardAccentPrimary, { flexDirection: 'column', alignItems: 'stretch' }]}>
+            <Text style={styles.listTitle} numberOfLines={2}>{order.item_name ?? order.garment_name} · {order.customer_name}</Text>
+            <Text style={styles.listMeta}>{order.promised_at.slice(0, 10)} · Archived</Text>
+            {ws.can('orders:write') ? (
+              <ActionButton
+                title="Restore order"
+                secondary
+                loading={ws.saving}
+                loadingTitle={copy.loading}
+                disabled={ws.saving}
+                onPress={() => void ws.restoreOrder(order).then(() => setArchivedOrders((current) => current.filter((entry) => entry.id !== order.id)))}
+              />
+            ) : null}
+          </View>
+        )) : <EmptyState title="No archived orders." />
       ) : null}
 
       {/* Filter chips */}
@@ -190,6 +256,101 @@ export function OrdersScreen({
                           </Text>
                           <Icon name="wallet" size={16} color={palette.primaryText} />
                         </Pressable>
+                      ) : null}
+
+                      {ws.can('orders:read') ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          android_ripple={{ color: palette.primarySoft }}
+                          onPress={() => void ws.downloadOrderInvoice(order)
+                            .then((file) => shareDownloadedFile(file.filename, file.bytes, file.mimeType))
+                            .catch(() => { /* workspace banner shows the error */ })}
+                          style={({ pressed }) => [styles.nextStageBtn, pressed && styles.pressed]}
+                        >
+                          <Text style={styles.nextStageText}>Invoice PDF</Text>
+                        </Pressable>
+                      ) : null}
+
+                      {ws.can('orders:write') ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          android_ripple={{ color: palette.primarySoft }}
+                          onPress={() => Alert.alert(
+                            'Archive order',
+                            'Archive this order? Its payment history and records are kept and the order can be restored at any time.',
+                            [
+                              { text: copy.cancel, style: 'cancel' },
+                              { text: 'Archive', style: 'destructive', onPress: () => void ws.archiveOrder(order) },
+                            ],
+                          )}
+                          style={({ pressed }) => [styles.nextStageBtn, pressed && styles.pressed]}
+                        >
+                          <Text style={styles.nextStageText}>Archive order</Text>
+                        </Pressable>
+                      ) : null}
+
+                      {!showArchived && ws.can('orders:read') ? (
+                        <View style={{ marginTop: 8 }}>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityState={{ expanded: alterationsOpenFor === order.id }}
+                            android_ripple={{ color: palette.primarySoft }}
+                            onPress={() => void toggleAlterations(order)}
+                            style={({ pressed }) => [styles.nextStageBtn, pressed && styles.pressed]}
+                          >
+                            <Text style={styles.nextStageText}>
+                              {alterationsOpenFor === order.id ? 'Hide alterations' : 'Alterations'}
+                              {alterationsByOrder[order.id] ? ` (${alterationsByOrder[order.id].filter((item) => item.status === 'OPEN').length} open)` : ''}
+                            </Text>
+                          </Pressable>
+                          {alterationsOpenFor === order.id ? (
+                            <View style={{ marginTop: 8 }}>
+                              {(alterationsByOrder[order.id] ?? []).length === 0 ? (
+                                <Text style={styles.listMeta}>No alterations for this order yet.</Text>
+                              ) : (alterationsByOrder[order.id] ?? []).map((alteration) => (
+                                <View key={alteration.id} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 }}>
+                                  <View style={{ flex: 1, paddingRight: 8 }}>
+                                    <Text style={[styles.listTitle, alteration.status === 'DONE' && { textDecorationLine: 'line-through', opacity: 0.6 }]}>{alteration.description}</Text>
+                                    <Text style={styles.listMeta}>{alteration.status === 'DONE' ? 'Done' : 'Open'} · {alteration.createdAt.slice(0, 10)}</Text>
+                                  </View>
+                                  {ws.can('orders:write') ? (
+                                    <Pressable
+                                      accessibilityRole="button"
+                                      android_ripple={{ color: palette.primarySoft }}
+                                      onPress={() => void ws.setAlterationStatus(order.id, alteration.id, alteration.status === 'OPEN' ? 'DONE' : 'OPEN')
+                                        .then((updated) => setAlterationsByOrder((current) => ({
+                                          ...current,
+                                          [order.id]: (current[order.id] ?? []).map((item) => (item.id === updated.id ? updated : item)),
+                                        })))
+                                        .catch(() => { /* workspace banner shows the error */ })}
+                                      style={({ pressed }) => [pressed && styles.pressed]}
+                                    >
+                                      <Text style={styles.nextStageText}>{alteration.status === 'OPEN' ? 'Mark done' : 'Reopen'}</Text>
+                                    </Pressable>
+                                  ) : null}
+                                </View>
+                              ))}
+                              {ws.can('orders:write') ? (
+                                <>
+                                  <Field label="New alteration" value={alterationDraft} onChangeText={setAlterationDraft} maxLength={1000} />
+                                  <ActionButton
+                                    title="Add alteration"
+                                    secondary
+                                    loading={ws.saving}
+                                    loadingTitle={copy.loading}
+                                    disabled={!alterationDraft.trim()}
+                                    onPress={() => void ws.createAlteration(order.id, alterationDraft.trim())
+                                      .then((created) => {
+                                        setAlterationsByOrder((current) => ({ ...current, [order.id]: [created, ...(current[order.id] ?? [])] }));
+                                        setAlterationDraft('');
+                                      })
+                                      .catch(() => { /* workspace banner shows the error */ })}
+                                  />
+                                </>
+                              ) : null}
+                            </View>
+                          ) : null}
+                        </View>
                       ) : null}
 
                       {paymentOpen && ws.can('payments:write') && ws.moduleEnabled('payments') ? <PaymentForm /> : null}

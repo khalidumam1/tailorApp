@@ -2272,3 +2272,24 @@ tbody td strong { color: var(--ink-900); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Alterations (Phase 2 task 2.1) */
+.alterations-block { margin-top: 10px; }
+.alterations-panel { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.alteration-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; }
+.alteration-done { text-decoration: line-through; opacity: 0.65; }
+.alteration-form { display: flex; gap: 8px; }
+.alteration-form input { flex: 1; }
+
+/* User Guide (Phase 3) */
+.guide-layout { display: grid; grid-template-columns: 240px 1fr; gap: 16px; align-items: start; }
+.guide-nav { display: flex; flex-direction: column; gap: 4px; }
+.guide-nav-item { text-align: left; padding: 8px 10px; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; background: transparent; cursor: pointer; }
+.guide-nav-item.active { border-color: var(--primary, #2563eb); font-weight: 600; }
+.guide-article { max-width: 760px; }
+.guide-title { margin-top: 0; }
+.guide-body h2 { font-size: 1.05rem; margin: 1.1em 0 0.4em; }
+.guide-body h3 { font-size: 1rem; margin: 1em 0 0.35em; }
+.guide-body h4 { font-size: 0.95rem; margin: 0.9em 0 0.3em; }
+.guide-body p, .guide-body li { line-height: 1.55; }
+@media (max-width: 720px) { .guide-layout { grid-template-columns: 1fr; } }

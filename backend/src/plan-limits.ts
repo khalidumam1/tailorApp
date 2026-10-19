@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { HttpError } from './errors.js';
+import { businessMonthStart } from './domain/business-time.js';
 
 type UsageLimit = 'customers' | 'staff' | 'ordersPerMonth' | 'catalogItems';
 
@@ -55,8 +56,8 @@ export async function assertPlanLimit(
       where: { businessId, active: true, role: { name: { not: 'Owner' } } },
     });
   } else if (limitName === 'ordersPerMonth') {
-    const karachiNow = new Date(now.getTime() + 5 * 60 * 60 * 1000);
-    const monthStart = new Date(Date.UTC(karachiNow.getUTCFullYear(), karachiNow.getUTCMonth(), 1) - 5 * 60 * 60 * 1000);
+    const business = await tx.business.findUnique({ where: { id: businessId }, select: { timezone: true } });
+    const monthStart = businessMonthStart(business?.timezone ?? 'Asia/Karachi', now);
     currentUsage = await tx.order.count({ where: { businessId, createdAt: { gte: monthStart } } });
   } else {
     currentUsage = await tx.businessItem.count({ where: { businessId, active: true } });

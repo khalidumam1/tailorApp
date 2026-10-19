@@ -23,6 +23,7 @@ import { TabBar, type TabDescriptor } from './src/components/TabBar';
 import { Icon } from './src/Icons';
 
 import { LoginScreen } from './src/screens/LoginScreen';
+import { ChangePasswordScreen } from './src/screens/ChangePasswordScreen';
 import { DashboardScreen } from './src/screens/DashboardScreen';
 import { OrdersScreen } from './src/screens/OrdersScreen';
 import { CustomersScreen } from './src/screens/CustomersScreen';
@@ -30,6 +31,7 @@ import { CatalogScreen } from './src/screens/CatalogScreen';
 import { PaymentsScreen } from './src/screens/PaymentsScreen';
 import { ActivityScreen } from './src/screens/ActivityScreen';
 import { MoreScreen } from './src/screens/MoreScreen';
+import { GuideScreen } from './src/screens/GuideScreen';
 import { MeasurementsScreen } from './src/screens/MeasurementsScreen';
 import { NotificationsScreen } from './src/screens/NotificationsScreen';
 import { SubscriptionScreen } from './src/screens/SubscriptionScreen';
@@ -125,6 +127,10 @@ function AppShell() {
     return <LoginScreen />;
   }
 
+  if (ws.session.mustChangePassword) {
+    return <ChangePasswordScreen forced />;
+  }
+
   const tabs: TabDescriptor[] = [
     { key: 'home', label: ws.copy.home, icon: 'home' },
     ...(pageAccess.has('orders') ? [{ key: 'orders' as const, label: ws.term('orders', ws.copy.orders), icon: 'orders' as const }] : []),
@@ -179,6 +185,9 @@ function AppShell() {
       break;
     case 'chat':
       content = <ChatScreen />;
+      break;
+    case 'guide':
+      content = <GuideScreen />;
       break;
     default:
       content = null;

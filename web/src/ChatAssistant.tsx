@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, ApiError, type Session } from './api';
+import { api, ApiError, type Customer, type Order, type Session } from './api';
 
 type Message = { role: 'user' | 'assistant'; text: string };
 
@@ -234,7 +234,7 @@ export function ChatAssistant({ session, onNavigate }: ChatAssistantProps) {
       const ordersResult = await apiCall((token) => api.orders(token, orderNumber));
       const order = ordersResult.items.find((item) => item.orderNumber === orderNumber) ?? ordersResult.items[0];
       if (!order) return `Order #${orderNumber} not found.`;
-      const updated = await apiCall((token) => api.transitionOrder(token, order, status as any));
+      const updated = await apiCall((token) => api.transitionOrder(token, order, status));
       return `Order #${updated.orderNumber} moved to ${updated.status}.`;
     }
 
@@ -245,7 +245,7 @@ export function ChatAssistant({ session, onNavigate }: ChatAssistantProps) {
       const ordersResult = await apiCall((token) => api.orders(token, orderNumber));
       const order = ordersResult.items.find((item) => item.orderNumber === orderNumber) ?? ordersResult.items[0];
       if (!order) return `Order #${orderNumber} not found.`;
-      const updated = await apiCall((token) => api.transitionOrder(token, order, status as any));
+      const updated = await apiCall((token) => api.transitionOrder(token, order, status));
       return `Order #${updated.orderNumber} moved to ${updated.status}.`;
     }
 
@@ -259,24 +259,28 @@ export function ChatAssistant({ session, onNavigate }: ChatAssistantProps) {
       const payTokens = rest.slice(1);
       const orderNumber = flagValue(payTokens, 'order');
       const amount = flagValue(payTokens, 'amount');
-      const method = (flagValue(payTokens, 'method') ?? 'CASH').toUpperCase();
+      const methodInput = (flagValue(payTokens, 'method') ?? 'CASH').toUpperCase();
       if (!orderNumber || !amount) return 'Usage: record payment order <orderNumber> amount <amount> method <CASH|BANK|DIGITAL>';
+      if (methodInput !== 'CASH' && methodInput !== 'BANK' && methodInput !== 'DIGITAL') return 'Payment method must be CASH, BANK or DIGITAL.';
+      const method = methodInput;
       const ordersResult = await apiCall((token) => api.orders(token, orderNumber));
       const order = ordersResult.items.find((item) => item.orderNumber === orderNumber) ?? ordersResult.items[0];
       if (!order) return `Order #${orderNumber} not found.`;
-      const payment = await apiCall((token) => api.createPayment(token, order.id, { amount, method: method as any }, crypto.randomUUID()));
+      const payment = await apiCall((token) => api.createPayment(token, order.id, { amount, method }, crypto.randomUUID()));
       return `Payment recorded: ${money(payment.amount)} via ${payment.method} for order #${order.orderNumber}.`;
     }
 
     if (command === 'pay') {
       const orderNumber = rest[0];
       const amount = rest[1];
-      const method = (rest[2] ?? 'CASH').toUpperCase();
+      const methodInput = (rest[2] ?? 'CASH').toUpperCase();
       if (!orderNumber || !amount) return 'Usage: pay <orderNumber> <amount> [CASH|BANK|DIGITAL]';
+      if (methodInput !== 'CASH' && methodInput !== 'BANK' && methodInput !== 'DIGITAL') return 'Payment method must be CASH, BANK or DIGITAL.';
+      const method = methodInput;
       const ordersResult = await apiCall((token) => api.orders(token, orderNumber));
       const order = ordersResult.items.find((item) => item.orderNumber === orderNumber) ?? ordersResult.items[0];
       if (!order) return `Order #${orderNumber} not found.`;
-      const payment = await apiCall((token) => api.createPayment(token, order.id, { amount, method: method as any }, crypto.randomUUID()));
+      const payment = await apiCall((token) => api.createPayment(token, order.id, { amount, method }, crypto.randomUUID()));
       return `Payment recorded: ${money(payment.amount)} via ${payment.method} for order #${order.orderNumber}.`;
     }
 
@@ -388,12 +392,12 @@ export function ChatAssistant({ session, onNavigate }: ChatAssistantProps) {
       const term = rest.join(' ').trim();
       if (!term) return 'Usage: search <term>';
       const [customersResult, ordersResult] = await Promise.all([
-        apiCall((token) => api.customers(token, term)).catch(() => ({ items: [] as any[] })),
-        apiCall((token) => api.orders(token, term)).catch(() => ({ items: [] as any[] })),
+        apiCall((token) => api.customers(token, term)).catch(() => ({ items: [] as Customer[] })),
+        apiCall((token) => api.orders(token, term)).catch(() => ({ items: [] as Order[] })),
       ]);
       const lines: string[] = [];
-      if (customersResult.items.length) lines.push(`Customers:\n${customersResult.items.slice(0, 10).map((customer: any) => `- ${customer.name} · ${customer.phone}`).join('\n')}`);
-      if (ordersResult.items.length) lines.push(`Orders:\n${ordersResult.items.slice(0, 10).map((order: any) => `- #${order.orderNumber} · ${order.status} · ${order.customer?.name ?? ''}`).join('\n')}`);
+      if (customersResult.items.length) lines.push(`Customers:\n${customersResult.items.slice(0, 10).map((customer) => `- ${customer.name} · ${customer.phone}`).join('\n')}`);
+      if (ordersResult.items.length) lines.push(`Orders:\n${ordersResult.items.slice(0, 10).map((order) => `- #${order.orderNumber} · ${order.status} · ${order.customer?.name ?? ''}`).join('\n')}`);
       return lines.length ? lines.join('\n\n') : `No results for "${term}".`;
     }
 

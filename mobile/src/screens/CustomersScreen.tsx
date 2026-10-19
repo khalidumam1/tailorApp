@@ -2,7 +2,7 @@
  * Customers — clean, searchable list with add/edit customer forms,
  * per-customer order history, and WhatsApp / call actions.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 import { formatCurrency } from '../local';
 import { useAppStyles } from '../theme/useAppStyles';
@@ -11,6 +11,8 @@ import { Icon } from '../Icons';
 import { ActionButton, EmptyState, Field, openExternal } from '../theme/primitives';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { DynamicField, StoredCustomFields } from '../components/DynamicFields';
+import type { LocalCustomer } from '../local';
+import { shareDownloadedFile } from '../data/downloads';
 import { telUrl, whatsappUrl } from '../data/messaging';
 
 export function CustomersScreen() {
@@ -20,6 +22,16 @@ export function CustomersScreen() {
   const copy = ws.copy;
   const [openId, setOpenId] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [archivedCustomers, setArchivedCustomers] = useState<LocalCustomer[]>([]);
+  useEffect(() => {
+    if (!showArchived) return;
+    let cancelled = false;
+    ws.fetchArchivedCustomers()
+      .then((list) => { if (!cancelled) setArchivedCustomers(list); })
+      .catch(() => { /* fetchArchivedCustomers surfaces the error in the workspace banner */ });
+    return () => { cancelled = true; };
+  }, [showArchived, ws.fetchArchivedCustomers, ws.customers]);
   const currency = ws.businessConfiguration?.business.currency;
   const customerLabel = ws.term('customers', copy.customers);
 
@@ -68,6 +80,15 @@ export function CustomersScreen() {
           <Text style={styles.pageTitle}>{customerLabel}</Text>
           <Text style={styles.pageSubtitle}>{ws.customers.length} {customerLabel.toLowerCase()}</Text>
         </View>
+        {ws.can('customers:read') && !showArchived ? (
+          <ActionButton
+            title="Export CSV"
+            secondary
+            onPress={() => void ws.downloadServerExport('customers')
+              .then((file) => shareDownloadedFile(file.filename, file.bytes, file.mimeType))
+              .catch(() => { /* workspace banner shows the error */ })}
+          />
+        ) : null}
         {ws.can('customers:write') ? (
           <ActionButton
             title={`＋ ${copy.addCustomer}`}
@@ -79,7 +100,38 @@ export function CustomersScreen() {
 
       <Field label={copy.search} value={ws.search} onChangeText={ws.setSearch} />
 
-      {ws.customerForm && editId === null && ws.can('customers:write') ? (
+      <View style={styles.chipWrap}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ selected: showArchived }}
+          android_ripple={{ color: palette.primarySoft }}
+          onPress={() => setShowArchived((value) => !value)}
+          style={({ pressed }) => [styles.chip, showArchived && styles.chipSelected, pressed && styles.chipPressed]}
+        >
+          <Text style={[styles.chipText, showArchived && styles.chipTextSelected]}>Archived</Text>
+        </Pressable>
+      </View>
+
+      {showArchived ? (
+        archivedCustomers.length ? archivedCustomers.map((customer) => (
+          <View key={customer.id} style={[styles.listCard, styles.cardAccentPrimary, { flexDirection: 'column', alignItems: 'stretch' }]}>
+            <Text style={styles.listTitle} numberOfLines={1}>{customer.name}</Text>
+            <Text style={styles.listMeta}>{customer.phone} · Archived</Text>
+            {ws.can('customers:write') ? (
+              <ActionButton
+                title="Restore"
+                secondary
+                loading={ws.saving}
+                loadingTitle={copy.loading}
+                disabled={ws.saving}
+                onPress={() => void ws.restoreCustomer(customer).then(() => setArchivedCustomers((current) => current.filter((entry) => entry.id !== customer.id)))}
+              />
+            ) : null}
+          </View>
+        )) : <EmptyState title="No archived customers." />
+      ) : null}
+
+      {!showArchived && ws.customerForm && editId === null && ws.can('customers:write') ? (
         <View style={styles.card}>
           <Field label={copy.customerName} value={ws.customerName} onChangeText={ws.setCustomerName} />
           <Field label={copy.phone} value={ws.customerPhone} onChangeText={ws.setCustomerPhone} keyboardType="phone-pad" />
@@ -101,7 +153,7 @@ export function CustomersScreen() {
         </View>
       ) : null}
 
-      {editId !== null && ws.can('customers:write') ? (
+      {!showArchived && editId !== null && ws.can('customers:write') ? (
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>{copy.customerName}</Text>
           <Field label={copy.customerName} value={ws.customerName} onChangeText={ws.setCustomerName} />
@@ -123,7 +175,7 @@ export function CustomersScreen() {
         </View>
       ) : null}
 
-      {filtered.length ? filtered.map((customer) => {
+      {!showArchived && (filtered.length ? filtered.map((customer) => {
         const stats = statsByCustomer.get(customer.id) ?? { count: 0, spent: 0, lastVisitAt: 0 };
         const expanded = openId === customer.id;
         const customerOrders = ws.orders.filter((order) => order.customer_id === customer.id);
@@ -211,6 +263,23 @@ export function CustomersScreen() {
               >
                 <Text style={styles.customerAction}>{copy.customerWhatsapp}</Text>
               </Pressable>
+              {ws.can('customers:write') ? (
+                <Pressable
+                  accessibilityRole="button"
+                  android_ripple={{ color: palette.primarySoft }}
+                  onPress={() => Alert.alert(
+                    'Archive customer',
+                    `Archive ${customer.name}? Their history is kept and the customer can be restored at any time.`,
+                    [
+                      { text: copy.cancel, style: 'cancel' },
+                      { text: 'Archive', style: 'destructive', onPress: () => void ws.archiveCustomer(customer) },
+                    ],
+                  )}
+                  style={({ pressed }) => [pressed && styles.pressed]}
+                >
+                  <Text style={styles.customerAction}>Archive</Text>
+                </Pressable>
+              ) : null}
               <Pressable
                 accessibilityRole="button"
                 accessibilityState={{ disabled: !hasPhone }}
@@ -241,7 +310,7 @@ export function CustomersScreen() {
         );
       }) : (
         <EmptyState title={copy.emptyCustomers} />
-      )}
+      ))}
     </>
   );
 }
