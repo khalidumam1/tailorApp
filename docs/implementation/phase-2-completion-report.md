@@ -76,11 +76,29 @@ changes in Phase 2.
   `IMPLEMENTATION_PLAN.md`, `AUDIT_FIX_REPORT.md`, `UI_UX_AUDIT.md`,
   `docs/ERP_ARCHITECTURE_AUDIT.md`, findings register, decision log.
 
-## 6. CI verification
+## 6. CI verification — ✅ Complete
 
-⏳ Pending the push of the Phase 2 commits to PR #27 (the PR still contains
-Phase 1; it will be retitled to cover both phases). This section will be
-updated with the green run reference before Phase 3 approval is requested.
+Pull request: https://github.com/khalidumam1/tailorApp/pull/27 (retitled to
+cover Phases 1–2). Green run:
+https://github.com/khalidumam1/tailorApp/actions/runs/39216110295 — every step
+passed on the isolated PostgreSQL service: drift check, `npm ci`, Prisma
+generate, full migration chain (incl. the sync-retirement drop), all
+typechecks, web lint, backend DB suite (incl. the new alteration-lifecycle,
+CSV-export and invoice tests), web 14/14, mobile 31/31, production builds,
+bundle budget, dependency audit.
+
+The road there is part of the record (runs 39214282202 → 39216110295):
+1. First failure was the payments export returning 403 — the tenant-test role
+   never held `payments:read` (implementation correct; fixture extended, and
+   the ledger assertion became a module-gate negative test once it was clear
+   the tailor template has no cashbook module).
+2. Then the bundle-budget step failed: CI had set `NODE_ENV=test` job-wide,
+   so Vite bundled the development React build (entry 810 kB in CI vs
+   502 kB locally). This pre-dated Phase 2 (main's CI builds had the same
+   flaw, invisible without a budget) and is now fixed by scoping `NODE_ENV`
+   to the test steps and `production` to the build step.
+To make these failures diagnosable without log downloads, CI now emits tsc
+errors, failing TAP test names, and bundle-check output as check annotations.
 
 ## 7. Remaining risks and known limitations
 
@@ -88,8 +106,9 @@ updated with the green run reference before Phase 3 approval is requested.
   needs the platform-console extraction from `main.tsx` (D-8(b)) — scoped,
   recorded, and deliberately deferred rather than done blind without a browser.
 - DB-backed Phase 2 tests (alteration lifecycle, CSV content/isolation,
-  invoice PDF) execute only in CI; UI flows (alteration panels, export
-  downloads, draft restore) were verified by typecheck/build only.
+  invoice PDF) have now run green in CI; UI flows (alteration panels, export
+  downloads, draft restore) were verified by typecheck/build only — an
+  interactive smoke pass is still recommended before production use.
 - CSV exports are capped at 5,000 rows (flagged via header, never silent);
   businesses with larger history need paginated exports — future work.
 - Invoice payment section requires `payments:read` + payments module; other
