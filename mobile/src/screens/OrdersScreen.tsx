@@ -8,10 +8,11 @@ import { formatCurrency } from '../local';
 import { useAppStyles } from '../theme/useAppStyles';
 import { useAppTheme } from '../theme/palette';
 import { Icon } from '../Icons';
-import { ActionButton, EmptyState } from '../theme/primitives';
+import { ActionButton, EmptyState, Field } from '../theme/primitives';
 import { useWorkspace, resolveMobileWorkflowStage } from '../hooks/useWorkspace';
 import { computeDashboardSummary } from '../data/analytics';
 import type { LocalOrder } from '../local';
+import type { AlterationTask } from '../hooks/useWorkspace';
 import { normalizePhone } from '../data/messaging';
 
 import { AreaChart } from '../components/AreaChart';
@@ -38,6 +39,18 @@ export function OrdersScreen({
   const ws = useWorkspace();
   const copy = ws.copy;
   const [filter, setFilter] = useState<string>('all');
+  const [alterationsByOrder, setAlterationsByOrder] = useState<Record<string, AlterationTask[]>>({});
+  const [alterationsOpenFor, setAlterationsOpenFor] = useState<string | null>(null);
+  const [alterationDraft, setAlterationDraft] = useState('');
+  const toggleAlterations = async (order: LocalOrder) => {
+    if (alterationsOpenFor === order.id) { setAlterationsOpenFor(null); return; }
+    setAlterationsOpenFor(order.id);
+    setAlterationDraft('');
+    try {
+      const items = await ws.fetchAlterations(order.id);
+      setAlterationsByOrder((current) => ({ ...current, [order.id]: items }));
+    } catch { /* workspace banner shows the error */ }
+  };
   const [showArchived, setShowArchived] = useState(false);
   const [archivedOrders, setArchivedOrders] = useState<LocalOrder[]>([]);
   useEffect(() => {
@@ -251,6 +264,70 @@ export function OrdersScreen({
                         >
                           <Text style={styles.nextStageText}>Archive order</Text>
                         </Pressable>
+                      ) : null}
+
+                      {!showArchived && ws.can('orders:read') ? (
+                        <View style={{ marginTop: 8 }}>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityState={{ expanded: alterationsOpenFor === order.id }}
+                            android_ripple={{ color: palette.primarySoft }}
+                            onPress={() => void toggleAlterations(order)}
+                            style={({ pressed }) => [styles.nextStageBtn, pressed && styles.pressed]}
+                          >
+                            <Text style={styles.nextStageText}>
+                              {alterationsOpenFor === order.id ? 'Hide alterations' : 'Alterations'}
+                              {alterationsByOrder[order.id] ? ` (${alterationsByOrder[order.id].filter((item) => item.status === 'OPEN').length} open)` : ''}
+                            </Text>
+                          </Pressable>
+                          {alterationsOpenFor === order.id ? (
+                            <View style={{ marginTop: 8 }}>
+                              {(alterationsByOrder[order.id] ?? []).length === 0 ? (
+                                <Text style={styles.listMeta}>No alterations for this order yet.</Text>
+                              ) : (alterationsByOrder[order.id] ?? []).map((alteration) => (
+                                <View key={alteration.id} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 }}>
+                                  <View style={{ flex: 1, paddingRight: 8 }}>
+                                    <Text style={[styles.listTitle, alteration.status === 'DONE' && { textDecorationLine: 'line-through', opacity: 0.6 }]}>{alteration.description}</Text>
+                                    <Text style={styles.listMeta}>{alteration.status === 'DONE' ? 'Done' : 'Open'} · {alteration.createdAt.slice(0, 10)}</Text>
+                                  </View>
+                                  {ws.can('orders:write') ? (
+                                    <Pressable
+                                      accessibilityRole="button"
+                                      android_ripple={{ color: palette.primarySoft }}
+                                      onPress={() => void ws.setAlterationStatus(order.id, alteration.id, alteration.status === 'OPEN' ? 'DONE' : 'OPEN')
+                                        .then((updated) => setAlterationsByOrder((current) => ({
+                                          ...current,
+                                          [order.id]: (current[order.id] ?? []).map((item) => (item.id === updated.id ? updated : item)),
+                                        })))
+                                        .catch(() => { /* workspace banner shows the error */ })}
+                                      style={({ pressed }) => [pressed && styles.pressed]}
+                                    >
+                                      <Text style={styles.nextStageText}>{alteration.status === 'OPEN' ? 'Mark done' : 'Reopen'}</Text>
+                                    </Pressable>
+                                  ) : null}
+                                </View>
+                              ))}
+                              {ws.can('orders:write') ? (
+                                <>
+                                  <Field label="New alteration" value={alterationDraft} onChangeText={setAlterationDraft} maxLength={1000} />
+                                  <ActionButton
+                                    title="Add alteration"
+                                    secondary
+                                    loading={ws.saving}
+                                    loadingTitle={copy.loading}
+                                    disabled={!alterationDraft.trim()}
+                                    onPress={() => void ws.createAlteration(order.id, alterationDraft.trim())
+                                      .then((created) => {
+                                        setAlterationsByOrder((current) => ({ ...current, [order.id]: [created, ...(current[order.id] ?? [])] }));
+                                        setAlterationDraft('');
+                                      })
+                                      .catch(() => { /* workspace banner shows the error */ })}
+                                  />
+                                </>
+                              ) : null}
+                            </View>
+                          ) : null}
+                        </View>
                       ) : null}
 
                       {paymentOpen && ws.can('payments:write') && ws.moduleEnabled('payments') ? <PaymentForm /> : null}

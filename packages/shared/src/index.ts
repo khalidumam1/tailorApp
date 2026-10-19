@@ -111,6 +111,12 @@ export const createAlterationSchema = z.object({
   dueAt: z.string().datetime({ offset: true }).optional(),
 });
 
+export const alterationStatuses = ['OPEN', 'DONE'] as const;
+export const updateAlterationSchema = z.object({
+  status: z.enum(alterationStatuses),
+}).strict();
+export type AlterationStatus = (typeof alterationStatuses)[number];
+
 export const reversePaymentSchema = z.object({
   amount: z.string().regex(/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/).refine((amount) => Number(amount) > 0),
   reason: z.string().trim().min(1).max(500),

@@ -1055,6 +1055,68 @@ test('order create retries and duplicate payment requests create one notificatio
   assert.equal(history.data.items.some((item) => item.id === foreignNotification.id), false);
 });
 
+test('alteration lifecycle: create, list, complete, reopen with tenant isolation', { skip: !enabled }, async () => {
+  const headers = { authorization: authHeader, 'content-type': 'application/json' };
+  const dashboardAlterations = async (): Promise<number> => {
+    const response = await fetch(`${baseUrl}/api/v1/reports/dashboard`, { headers: { authorization: authHeader } });
+    assert.equal(response.status, 200);
+    const body = await response.json() as { data: { alterations: number } };
+    return body.data.alterations;
+  };
+  const before = await dashboardAlterations();
+
+  const createResponse = await fetch(`${baseUrl}/api/v1/orders/${createdOrderId}/alterations`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ description: 'Shorten sleeves by 2 cm' }),
+  });
+  assert.equal(createResponse.status, 201, await createResponse.clone().text());
+  const created = await createResponse.json() as { data: { id: string; status: string } };
+  assert.equal(created.data.status, 'OPEN');
+  assert.equal(await dashboardAlterations(), before + 1, 'open alteration appears on the dashboard');
+
+  // Tenant isolation: business B's order cannot be read through business A's token.
+  const foreignList = await fetch(`${baseUrl}/api/v1/orders/${orderBId}/alterations`, {
+    headers: { authorization: authHeader },
+  });
+  assert.equal(foreignList.status, 404);
+  const foreignPatch = await fetch(`${baseUrl}/api/v1/orders/${orderBId}/alterations/${created.data.id}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ status: 'DONE' }),
+  });
+  assert.equal(foreignPatch.status, 404);
+
+  const listResponse = await fetch(`${baseUrl}/api/v1/orders/${createdOrderId}/alterations`, {
+    headers: { authorization: authHeader },
+  });
+  assert.equal(listResponse.status, 200);
+  const list = await listResponse.json() as { data: { items: Array<{ id: string; status: string; description: string }> } };
+  assert.ok(list.data.items.some((item) => item.id === created.data.id && item.status === 'OPEN'));
+
+  const setStatus = (status: string) => fetch(`${baseUrl}/api/v1/orders/${createdOrderId}/alterations/${created.data.id}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ status }),
+  });
+  const invalid = await setStatus('LOST');
+  assert.equal(invalid.status, 400, 'unknown alteration status is rejected');
+
+  const completed = await setStatus('DONE');
+  assert.equal(completed.status, 200);
+  const completedBody = await completed.json() as { data: { status: string } };
+  assert.equal(completedBody.data.status, 'DONE');
+  assert.equal(await dashboardAlterations(), before, 'completing an alteration decrements the dashboard count');
+
+  const reopened = await setStatus('OPEN');
+  assert.equal(reopened.status, 200);
+  assert.equal(await dashboardAlterations(), before + 1, 'reopening returns the alteration to the dashboard count');
+
+  // Leave no open alteration behind for other tests.
+  const cleanup = await setStatus('DONE');
+  assert.equal(cleanup.status, 200);
+});
+
 test('subscription expiry reminders use configured business contact, idempotency and generic history fields', { skip: !enabled }, async () => {
   const existingBillingSetting = await prisma.platformSetting.findUnique({ where: { key: 'billing' } });
   await prisma.platformSetting.upsert({

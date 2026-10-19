@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import express from 'express';
 import {
   createAlterationSchema,
+  updateAlterationSchema,
   createOrderSchema,
   orderQuerySchema,
   transitionOrderSchema,
@@ -861,6 +862,56 @@ router.post('/:orderId/alterations', requireBusinessPermission('orders:write'), 
     return created;
   });
   res.status(201).json({ data: alteration });
+}));
+
+router.get('/:orderId/alterations', requireBusinessPermission('orders:read'), asyncHandler(async (req, res) => {
+  const { businessId } = getContext(req);
+  const orderId = idSchema.parse(req.params.orderId);
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, businessId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!order) throw new HttpError(404, 'Order not found', 'ORDER_NOT_FOUND');
+  const items = await prisma.alterationTask.findMany({
+    where: { orderId },
+    // 'OPEN' sorts after 'DONE', so descending status lists open work first.
+    orderBy: [{ status: 'desc' }, { createdAt: 'desc' }],
+  });
+  res.json({ data: { items } });
+}));
+
+router.patch('/:orderId/alterations/:alterationId', requireBusinessPermission('orders:write'), asyncHandler(async (req, res) => {
+  const { businessId, actorId } = getContext(req);
+  const orderId = idSchema.parse(req.params.orderId);
+  const alterationId = idSchema.parse(req.params.alterationId);
+  const input = updateAlterationSchema.parse(req.body);
+  const updated = await prisma.$transaction(async (tx) => {
+    const order = await tx.order.findFirst({
+      where: { id: orderId, businessId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!order) throw new HttpError(404, 'Order not found', 'ORDER_NOT_FOUND');
+    const current = await tx.alterationTask.findFirst({ where: { id: alterationId, orderId } });
+    if (!current) throw new HttpError(404, 'Alteration not found', 'ALTERATION_NOT_FOUND');
+    if (current.status === input.status) return current;
+    const next = await tx.alterationTask.update({
+      where: { id: alterationId },
+      data: { status: input.status },
+    });
+    await tx.auditEvent.create({
+      data: {
+        businessId,
+        actorId,
+        action: input.status === 'DONE' ? 'alteration.completed' : 'alteration.reopened',
+        entityType: 'alteration',
+        entityId: alterationId,
+        metadata: { orderId, from: current.status, to: input.status },
+        requestId: req.requestId,
+      },
+    });
+    return next;
+  });
+  res.json({ data: updated });
 }));
 
 router.get('/:orderId', requireBusinessPermission('orders:read'), asyncHandler(async (req, res) => {

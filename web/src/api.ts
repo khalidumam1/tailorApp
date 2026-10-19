@@ -21,6 +21,16 @@ const customerSchema = z.object({
   createdAt: z.string(),
 });
 
+const alterationSchema = z.object({
+  id: z.string().uuid(),
+  orderId: z.string().uuid(),
+  description: z.string(),
+  status: z.enum(['OPEN', 'DONE']),
+  dueAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type Alteration = z.infer<typeof alterationSchema>;
+
 const customerSummarySchema = customerSchema.pick({ id: true, name: true, phone: true });
 const catalogItemSchema = z.object({
   id: z.string().uuid(),
@@ -1292,6 +1302,19 @@ export const api = {
       token,
       method: 'DELETE',
       body: { version: order.version },
+    });
+  },
+  alterations(token: string, orderId: string) {
+    return request(`/orders/${orderId}/alterations`, z.object({ items: z.array(alterationSchema) }), { token });
+  },
+  createAlteration(token: string, orderId: string, input: { description: string; dueAt?: string }) {
+    return request(`/orders/${orderId}/alterations`, alterationSchema, { token, method: 'POST', body: input });
+  },
+  setAlterationStatus(token: string, orderId: string, alterationId: string, status: Alteration['status']) {
+    return request(`/orders/${orderId}/alterations/${alterationId}`, alterationSchema, {
+      token,
+      method: 'PATCH',
+      body: { status },
     });
   },
   restoreOrder(token: string, order: Order) {

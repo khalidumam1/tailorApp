@@ -2272,3 +2272,11 @@ tbody td strong { color: var(--ink-900); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Alterations (Phase 2 task 2.1) */
+.alterations-block { margin-top: 10px; }
+.alterations-panel { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.alteration-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; }
+.alteration-done { text-decoration: line-through; opacity: 0.65; }
+.alteration-form { display: flex; gap: 8px; }
+.alteration-form input { flex: 1; }

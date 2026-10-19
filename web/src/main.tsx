@@ -39,6 +39,7 @@ import {
   type LoginResult,
   type MeasurementProfile,
   type InventoryItem,
+  type Alteration,
   type Order,
   type Payment,
   type Receipt,
@@ -572,6 +573,9 @@ function App() {
   const [catalogItems, setCatalogItems] = useState<import('./api').CatalogItem[]>([]);
   const [catalogInventoryItems, setCatalogInventoryItems] = useState<InventoryItem[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [alterationsByOrder, setAlterationsByOrder] = useState<Record<string, Alteration[]>>({});
+  const [alterationsOpenFor, setAlterationsOpenFor] = useState<string | null>(null);
+  const [alterationDraft, setAlterationDraft] = useState('');
   const [payments, setPayments] = useState<Payment[]>([]);
   const [notifications, setNotifications] = useState<WhatsAppNotification[]>([]);
   const [templates, setTemplates] = useState<MeasurementTemplate[]>([]);
@@ -1555,6 +1559,45 @@ function App() {
       await withSession((token) => api.restoreOrder(token, order));
       setNotice(`Order ${order.orderNumber} restored.`);
       await reloadCurrent();
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function toggleAlterations(order: Order) {
+    if (alterationsOpenFor === order.id) { setAlterationsOpenFor(null); return; }
+    setAlterationsOpenFor(order.id);
+    setAlterationDraft('');
+    setError(null);
+    try {
+      const result = await withSession((token) => api.alterations(token, order.id));
+      setAlterationsByOrder((current) => ({ ...current, [order.id]: result.items }));
+    } catch (cause) { setError(messageFor(cause)); }
+  }
+
+  async function addAlteration(order: Order) {
+    const description = alterationDraft.trim();
+    if (!description) return;
+    setWorking(true); setError(null);
+    try {
+      const created = await withSession((token) => api.createAlteration(token, order.id, { description }));
+      setAlterationsByOrder((current) => ({ ...current, [order.id]: [created, ...(current[order.id] ?? [])] }));
+      setAlterationDraft('');
+      setNotice(`Alteration added to order ${order.orderNumber}. It counts on the dashboard until marked done.`);
+      void withSession(api.dashboard).then(setDashboard).catch(() => undefined);
+    } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
+  }
+
+  async function setAlterationStatusAction(order: Order, alteration: Alteration, status: Alteration['status']) {
+    setWorking(true); setError(null);
+    try {
+      const updated = await withSession((token) => api.setAlterationStatus(token, order.id, alteration.id, status));
+      setAlterationsByOrder((current) => ({
+        ...current,
+        [order.id]: (current[order.id] ?? []).map((item) => (item.id === updated.id ? updated : item)),
+      }));
+      setNotice(status === 'DONE'
+        ? `Alteration for order ${order.orderNumber} marked done.`
+        : `Alteration for order ${order.orderNumber} reopened.`);
+      void withSession(api.dashboard).then(setDashboard).catch(() => undefined);
     } catch (cause) { setError(messageFor(cause)); } finally { setWorking(false); }
   }
 
@@ -4131,6 +4174,37 @@ function App() {
                           <button className="button button-secondary" onClick={() => { setPaymentOrderId(order.id); setPaymentAmount(order.outstanding ?? ''); }}>Record payment</button>
                         )}
                       </div>
+                      {!showArchivedOrders && permissions.has('orders:read') && (
+                        <div className="alterations-block">
+                          <button className="button button-secondary" disabled={working || !online} onClick={() => void toggleAlterations(order)}>
+                            {alterationsOpenFor === order.id ? 'Hide alterations' : 'Alterations'}
+                            {alterationsByOrder[order.id] ? ` (${alterationsByOrder[order.id].filter((item) => item.status === 'OPEN').length} open)` : ''}
+                          </button>
+                          {alterationsOpenFor === order.id && (
+                            <div className="alterations-panel">
+                              {(alterationsByOrder[order.id] ?? []).length === 0 && <p className="muted">No alterations for this order yet.</p>}
+                              {(alterationsByOrder[order.id] ?? []).map((alteration) => (
+                                <div className="alteration-row" key={alteration.id}>
+                                  <div>
+                                    <strong className={alteration.status === 'DONE' ? 'alteration-done' : ''}>{alteration.description}</strong>
+                                    <p className="muted">{alteration.status === 'DONE' ? 'Done' : 'Open'}{alteration.dueAt ? ` · Due ${karachiDate(alteration.dueAt)}` : ''} · Added {karachiDate(alteration.createdAt)}</p>
+                                  </div>
+                                  {permissions.has('orders:write') && (alteration.status === 'OPEN'
+                                    ? <button className="button button-secondary" disabled={working || !online} onClick={() => void setAlterationStatusAction(order, alteration, 'DONE')}>Mark done</button>
+                                    : <button className="button button-secondary" disabled={working || !online} onClick={() => void setAlterationStatusAction(order, alteration, 'OPEN')}>Reopen</button>)}
+                                </div>
+                              ))}
+                              {permissions.has('orders:write') && (
+                                <form className="alteration-form" onSubmit={(event) => { event.preventDefault(); void addAlteration(order); }}>
+                                  <label className="visually-hidden" htmlFor={`alteration-${order.id}`}>New alteration for order {order.orderNumber}</label>
+                                  <input id={`alteration-${order.id}`} value={alterationDraft} onChange={(event) => setAlterationDraft(event.target.value)} placeholder="e.g. Shorten sleeves by 2 cm" maxLength={1000} required />
+                                  <button className="button button-primary" type="submit" disabled={working || !online || !alterationDraft.trim()}>Add alteration</button>
+                                </form>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </article>
                 ))}

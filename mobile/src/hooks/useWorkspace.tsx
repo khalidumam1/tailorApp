@@ -103,6 +103,15 @@ export type BusinessRole = {
   memberCount: number;
 };
 export type BusinessPermission = { key: string; description: string };
+export type AlterationTask = {
+  id: string;
+  orderId: string;
+  description: string;
+  status: 'OPEN' | 'DONE';
+  dueAt: string | null;
+  createdAt: string;
+};
+
 export type BusinessMember = {
   id: string;
   active: boolean;
@@ -308,6 +317,9 @@ export type WorkspaceContextValue = {
   archiveOrder: (order: LocalOrder) => Promise<void>;
   restoreOrder: (order: LocalOrder) => Promise<void>;
   fetchArchivedOrders: () => Promise<LocalOrder[]>;
+  fetchAlterations: (orderId: string) => Promise<AlterationTask[]>;
+  createAlteration: (orderId: string, description: string) => Promise<AlterationTask>;
+  setAlterationStatus: (orderId: string, alterationId: string, status: 'OPEN' | 'DONE') => Promise<AlterationTask>;
   fetchRoles: () => Promise<BusinessRole[]>;
   fetchBusinessPermissions: () => Promise<BusinessPermission[]>;
   fetchBusinessStaff: () => Promise<BusinessMember[]>;
@@ -1378,6 +1390,25 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return result.items.map(mapRemoteOrder);
   }, [erpRequest]);
 
+  const fetchAlterations = useCallback(async (orderId: string): Promise<AlterationTask[]> => {
+    const result = await erpRequest<{ items: AlterationTask[] }>(`/orders/${orderId}/alterations`);
+    return result.items;
+  }, [erpRequest]);
+
+  const createAlteration = useCallback(async (orderId: string, description: string): Promise<AlterationTask> => {
+    return erpRequest<AlterationTask>(`/orders/${orderId}/alterations`, {
+      method: 'POST',
+      body: { description },
+    });
+  }, [erpRequest]);
+
+  const setAlterationStatus = useCallback(async (orderId: string, alterationId: string, status: 'OPEN' | 'DONE'): Promise<AlterationTask> => {
+    return erpRequest<AlterationTask>(`/orders/${orderId}/alterations/${alterationId}`, {
+      method: 'PATCH',
+      body: { status },
+    });
+  }, [erpRequest]);
+
   const fetchRoles = useCallback(async (): Promise<BusinessRole[]> => {
     if (!session) throw new Error(copy.settingsOnline);
     const response = await apiRequest<{ data?: { items?: BusinessRole[] } }>(session, '/api/v1/business/roles', {}, updateSession);
@@ -1611,6 +1642,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     archiveOrder,
     restoreOrder,
     fetchArchivedOrders,
+    fetchAlterations,
+    createAlteration,
+    setAlterationStatus,
     fetchRoles,
     fetchBusinessPermissions,
     fetchBusinessStaff,
@@ -1644,7 +1678,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     refreshNotificationHistory, refreshSubscriptionBilling, email, password,
     authBusy, shopChoices, cancelOrderPayment, saveBusinessConfiguration,
     completePasswordChange, resetStaffPassword, archiveCustomer, restoreCustomer,
-    fetchArchivedCustomers, archiveOrder, restoreOrder, fetchArchivedOrders, fetchRoles,
+    fetchArchivedCustomers, archiveOrder, restoreOrder, fetchArchivedOrders, fetchAlterations, createAlteration, setAlterationStatus, fetchRoles,
     fetchBusinessPermissions, fetchBusinessStaff, createBusinessRole, inviteStaffMember,
   ]);
 
