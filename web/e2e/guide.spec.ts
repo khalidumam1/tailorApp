@@ -1,9 +1,9 @@
 import { expect, test } from '@playwright/test';
-import { OWNER, signIn } from './helpers';
+import { useSeededSession } from './helpers';
 
 test.describe('user guide (Phase 3 task 3.1)', () => {
   test.beforeEach(async ({ page }) => {
-    await signIn(page, OWNER.email, OWNER.password);
+    await useSeededSession(page);
   });
 
   test('search finds the payments tutorial and opens it', async ({ page }) => {

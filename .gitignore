@@ -16,3 +16,6 @@ image-search/
 docs/ui-previews/
 docs/ui-previews-v2/
 docs/ui-previews-v2-built/
+web/e2e/.auth/
+web/playwright-report/
+web/test-results/

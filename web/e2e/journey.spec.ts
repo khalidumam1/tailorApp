@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { fillRemainingRequired, OWNER, signIn } from './helpers';
+import { fillRemainingRequired, useSeededSession } from './helpers';
 
 /**
  * The money journey end to end in the real UI against the real API:
@@ -9,7 +9,7 @@ import { fillRemainingRequired, OWNER, signIn } from './helpers';
 test('customer to order to payment', async ({ page }) => {
   const suffix = Date.now().toString().slice(-8);
   const customerName = `E2E Customer ${suffix}`;
-  await signIn(page, OWNER.email, OWNER.password);
+  await useSeededSession(page);
 
   // 1. Create the customer.
   await page.getByRole('button', { name: 'Customers', exact: true }).click();

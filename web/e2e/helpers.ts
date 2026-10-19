@@ -1,4 +1,28 @@
 import { expect, type Locator, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+export const SESSION_FILE = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '.auth',
+  'session.json',
+);
+
+/**
+ * Restores the session captured by auth.setup.ts (no login request, so
+ * the suite stays far under the login rate limit). Call before goto().
+ */
+export async function useSeededSession(page: Page) {
+  const { raw } = JSON.parse(readFileSync(SESSION_FILE, 'utf8')) as { raw: string };
+  await page.addInitScript((value) => {
+    sessionStorage.setItem('tailorapp.session.v1', value);
+  }, raw);
+  await page.goto('/');
+  await expect(
+    page.getByRole('button', { name: /Orders|Businesses|Overview/ }).first(),
+  ).toBeVisible({ timeout: 30_000 });
+}
 
 /** CI-only throwaway accounts, seeded into the isolated e2e schema. */
 export const OWNER = {

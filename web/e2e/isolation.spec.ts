@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { OWNER, sessionToken, signIn } from './helpers';
+import { sessionToken, useSeededSession } from './helpers';
 
 /**
  * Authorization negatives at API level (browser-level tenant isolation is
@@ -15,7 +15,7 @@ test.describe('authorization negatives', () => {
   });
 
   test('a business token cannot open platform routes', async ({ page }) => {
-    await signIn(page, OWNER.email, OWNER.password);
+    await useSeededSession(page);
     const token = await sessionToken(page);
     const response = await page.request.get('/api/v1/platform/businesses', {
       headers: { Authorization: `Bearer ${token}` },
