@@ -70,6 +70,8 @@ jobs:
       - run: npm run test --workspace @tailor/web
       - run: npm run test --workspace @tailor/mobile
       - run: npm run build
+      - name: Check web bundle budget
+        run: node tools/check-web-bundle.mjs
       - run: npm audit --workspace @tailor/api --workspace @tailor/web --workspace @tailor/shared
 
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { StrictMode } from 'react';
 import ReactDOM from 'react-dom/client';
 import {
@@ -46,10 +46,15 @@ import {
   type Session,
   type WhatsAppNotification,
 } from './api';
-import { ErpWorkspace } from './ErpWorkspace';
-import ChatAssistant from './ChatAssistant';
-import { BusinessStructureEditors } from './BusinessStructureEditors';
-import { BusinessTeamAdmin } from './BusinessTeamAdmin';
+// Route-level code splitting (Phase 2 task 2.4, F-009): the ERP workspace,
+// chat assistant and the settings editors are separate modules that most
+// sessions never open, so they load on demand instead of inflating the
+// initial bundle. The platform console lives in this file and stays in the
+// entry chunk; splitting it out is the incremental refactor noted in D-8.
+const ErpWorkspace = lazy(() => import('./ErpWorkspace').then((module) => ({ default: module.ErpWorkspace })));
+const ChatAssistant = lazy(() => import('./ChatAssistant'));
+const BusinessStructureEditors = lazy(() => import('./BusinessStructureEditors').then((module) => ({ default: module.BusinessStructureEditors })));
+const BusinessTeamAdmin = lazy(() => import('./BusinessTeamAdmin').then((module) => ({ default: module.BusinessTeamAdmin })));
 import { AreaChart, BarList, ColumnChart, DonutChart, paletteColor, Sparkline } from './Charts';
 import { Icon, type IconName } from './Icons';
 import './styles.css';
@@ -621,6 +626,59 @@ function App() {
   const [orderDueAt, setOrderDueAt] = useState(dateTimeInput(7));
   const [orderMeasurementId, setOrderMeasurementId] = useState('');
   const orderSubmission = useRef<{ fingerprint: string; idempotencyKey: string } | null>(null);
+  // Form drafts (Phase 2 task 2.4, F-016): the new-order form survives a
+  // refresh. Drafts are keyed by user + business so another account on the
+  // same browser never sees them, and an emptied form counts as no draft.
+  const orderDraftKey = session && 'business' in session && session.business
+    ? `bizora:draft:order:${session.user.id}:${session.business.id}`
+    : null;
+  const restoredOrderDraftKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!orderDraftKey || restoredOrderDraftKey.current === orderDraftKey) return;
+    restoredOrderDraftKey.current = orderDraftKey;
+    try {
+      const raw = window.localStorage.getItem(orderDraftKey);
+      if (!raw) return;
+      const draft = JSON.parse(raw) as Partial<{
+        customerId: string; catalogItemId: string; itemName: string; itemTypeKey: string;
+        quantity: string; price: string; dueAt: string; measurementId: string;
+        customFields: Record<string, unknown>; itemCustomFields: Record<string, unknown>;
+      }>;
+      if (draft.customerId) setOrderCustomerId(draft.customerId);
+      if (draft.catalogItemId) setOrderCatalogItemId(draft.catalogItemId);
+      if (draft.itemName) setOrderItemName(draft.itemName);
+      if (draft.itemTypeKey) setOrderItemTypeKey(draft.itemTypeKey);
+      if (draft.quantity) setOrderQuantity(draft.quantity);
+      if (draft.price) setOrderPrice(draft.price);
+      if (draft.dueAt) setOrderDueAt(draft.dueAt);
+      if (draft.measurementId) setOrderMeasurementId(draft.measurementId);
+      if (draft.customFields) setOrderCustomFields(draft.customFields);
+      if (draft.itemCustomFields) setOrderItemCustomFields(draft.itemCustomFields);
+      setNotice('Restored your unsaved order draft.');
+    } catch { /* a corrupt draft is ignored rather than blocking the form */ }
+  }, [orderDraftKey]);
+  useEffect(() => {
+    if (!orderDraftKey || restoredOrderDraftKey.current !== orderDraftKey) return;
+    const isEmpty = !orderCustomerId && !orderItemName && !orderPrice && !orderCatalogItemId;
+    try {
+      if (isEmpty) {
+        window.localStorage.removeItem(orderDraftKey);
+      } else {
+        window.localStorage.setItem(orderDraftKey, JSON.stringify({
+          customerId: orderCustomerId,
+          catalogItemId: orderCatalogItemId,
+          itemName: orderItemName,
+          itemTypeKey: orderItemTypeKey,
+          quantity: orderQuantity,
+          price: orderPrice,
+          dueAt: orderDueAt,
+          measurementId: orderMeasurementId,
+          customFields: orderCustomFields,
+          itemCustomFields: orderItemCustomFields,
+        }));
+      }
+    } catch { /* storage full/unavailable — the form still works without drafts */ }
+  }, [orderDraftKey, orderCustomerId, orderCatalogItemId, orderItemName, orderItemTypeKey, orderQuantity, orderPrice, orderDueAt, orderMeasurementId, orderCustomFields, orderItemCustomFields]);
   const [measurementCustomerId, setMeasurementCustomerId] = useState('');
   const [measurementTemplateId, setMeasurementTemplateId] = useState('');
   const [measurementValues, setMeasurementValues] = useState<Record<string, string>>({});
@@ -3749,6 +3807,7 @@ function App() {
         {!online && <div className="offline-banner" role="status">You are offline. This web workspace is read-only until the connection returns.</div>}
 
         {view === 'erp' && (
+          <Suspense fallback={<div className="panel" role="status">Loading workspace…</div>}>
           <ErpWorkspace
             withSession={withSession}
             online={online}
@@ -3757,6 +3816,7 @@ function App() {
             currency={businessConfiguration?.business.currency ?? 'PKR'}
             timezone={businessConfiguration?.business.timezone ?? 'Asia/Karachi'}
           />
+          </Suspense>
         )}
 
         {view === 'dashboard' && (
@@ -4480,6 +4540,7 @@ function App() {
                   <div className="platform-form-footer"><p className="fine-print">Version {businessConfigurationDraft.version}. Saving publishes an audited configuration for this business only.</p><button className="button button-primary" disabled={working || !online}>{working ? 'Publishing…' : 'Publish settings'}</button></div>
                 </form>
                 <form className="content-stack" onSubmit={saveBusinessStructure}>
+                  <Suspense fallback={<div className="panel" role="status">Loading editors…</div>}>
                   <BusinessStructureEditors
                     fields={structureFields}
                     itemTypes={businessConfigurationDraft.itemTypes}
@@ -4497,6 +4558,7 @@ function App() {
                       setStructureTransitions(transitions);
                     }}
                   />
+                  </Suspense>
                   <div className="panel form-panel platform-form-footer">
                     <p className="fine-print">
                       Configuration version {businessConfigurationDraft.configurationVersion} · template version {businessConfigurationDraft.templateVersion}.
@@ -4515,12 +4577,14 @@ function App() {
                   <p className="fine-print">Workflow: {businessConfigurationDraft.workflow.stages.map((stage) => stage.label).join(' → ')}</p>
                   <p className="fine-print">Allowed transitions: {businessConfigurationDraft.workflow.transitions.length}</p>
                 </section>
+                <Suspense fallback={<div className="panel" role="status">Loading team…</div>}>
                 <BusinessTeamAdmin
                   canManage={currentUser?.context.permissions.includes('staff:manage') ?? false}
                   actorPermissions={currentUser?.context.permissions ?? []}
                   online={online}
                   withSession={withSession}
                 />
+                </Suspense>
                 <section className="panel form-panel configuration-history" aria-labelledby="configuration-history-title">
                   <div className="section-heading">
                     <div>
@@ -4688,7 +4752,9 @@ function App() {
             {passwordChangeForm(false)}
           </div>
         )}
-      <ChatAssistant session={session} onNavigate={(view) => setView(view as View)} />
+      <Suspense fallback={null}>
+        <ChatAssistant session={session} onNavigate={(view) => setView(view as View)} />
+      </Suspense>
     </div>
   );
 }
