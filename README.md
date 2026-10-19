@@ -299,10 +299,11 @@ builds and signing are not configured.
 
 ### Backend container deployment
 
-For a separate Shiper backend service, use the repository root as the build
-context and `backend/Dockerfile` as the Dockerfile path. The Dockerfile lives
-under `backend/`, but it needs the monorepo root context to install the shared
-workspace dependencies. Configure Shiper to run the default `runtime` target
+For a separate Shiper backend service, use `backend/` as the build context and
+`backend/Dockerfile` as the Dockerfile path. The `backend/` directory is
+self-contained: it carries its own lockfile and a local copy of the shared
+contracts (`backend/shared`), so the image builds without the rest of the
+monorepo. Configure Shiper to run the default `runtime` target
 and provide `DATABASE_URL`,
 `ACCESS_TOKEN_SECRET`, and `CORS_ORIGINS` through its secret/environment
 settings. Set `NODE_ENV=production` and set `PORT` to the port assigned by the
@@ -315,17 +316,32 @@ For the admin frontend in that setup, build with
 frontend origin.
 
 ```sh
-docker build -f backend/Dockerfile -t tailor-api .
+docker build -f backend/Dockerfile -t tailor-api backend/
 ```
 
-Run migrations once as a release step before switching traffic to the new
-application version. The migration target includes Prisma CLI and runs
-`prisma migrate deploy`:
+The runtime image applies pending database migrations at startup
+(`prisma migrate deploy`) before the API starts serving, so application code
+never runs against an out-of-date schema. If migrations fail, the container
+exits instead of serving and the log names the failing migration. To manage
+migrations in a separate release step instead (see below), set
+`SKIP_DB_MIGRATE=1` on the service: the container then refuses to start while
+any migration is pending. The combined monorepo image built from the root
+`Dockerfile` behaves the same way.
+
+Migrations can also be applied as a controlled release step before switching
+traffic to the new application version. The migration target includes Prisma
+CLI and runs `prisma migrate deploy`:
 
 ```sh
-docker build -f backend/Dockerfile --target migrate -t tailor-api-migrate .
-docker run --rm --env-file .env tailor-api-migrate
+docker build -f backend/Dockerfile --target migrate -t tailor-api-migrate backend/
+docker run --rm -e DATABASE_URL="$DATABASE_URL" tailor-api-migrate
 ```
+
+If a running deployment logs `Invalid prisma.<query> invocation: The column
+User.<name> does not exist in the current database` (P2022), the database
+schema is behind the deployed code: run the migrate target (or
+`npm run db:migrate`) against that `DATABASE_URL`; the running containers pick
+the schema up without a rebuild.
 
 Configure the platform's health check to use `GET /backend/api/v1/ready` so it checks
 database connectivity; the image's Docker health check uses the liveness path
