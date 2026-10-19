@@ -127,8 +127,17 @@ jobs:
         run: |
           # Phase markers + log tails are emitted as ::error annotations on
           # failure (job logs are not always downloadable; annotations are).
-          annotate_tail() { tail -15 "$1" 2>/dev/null | sed -u -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/^/::error::E2E-LOG /' || true; }
-          fail() { echo "::error::E2E PHASE FAILED: $1"; annotate_tail /tmp/e2e-api.log; annotate_tail /tmp/e2e-web.log; annotate_tail /tmp/e2e-tests.log; annotate_tail /tmp/e2e-setup.log; exit 1; }
+          emit_annotated() { sed -u -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/^/::error::E2E-LOG /' || true; }
+          annotate_tail() { tail -15 "$1" 2>/dev/null | emit_annotated; }
+          fail() {
+            echo "::error::E2E PHASE FAILED: $1"
+            # Playwright failures first (annotations surface ~10 lines):
+            # failing test lines, then error snippets, then server tails.
+            grep -E "✘|✗|›.*(failed|timed out)" /tmp/e2e-tests.log 2>/dev/null | head -4 | emit_annotated || true
+            grep -A3 -E "Error:|expect\(" /tmp/e2e-tests.log 2>/dev/null | head -12 | emit_annotated || true
+            annotate_tail /tmp/e2e-api.log
+            exit 1
+          }
           NODE_ENV=test npm run db:migrate > /tmp/e2e-setup.log 2>&1 || fail "migrate"
           echo "E2E phase ok: migrate"
           NODE_ENV=test npm run db:seed >> /tmp/e2e-setup.log 2>&1 || fail "seed"

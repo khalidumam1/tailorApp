@@ -27,7 +27,9 @@ test('customer to order to payment', async ({ page }) => {
     .getAttribute('value');
   if (!customerValue) throw new Error(`Customer ${customerName} missing from the order form`);
   await customerSelect.selectOption(customerValue);
-  await orderForm.locator('label', { hasText: 'name' }).locator('input').first().fill(`E2E Garment ${suffix}`);
+  // The item-name label is template-driven ("<type> name"), so target the
+  // form's first free-text input instead of a label substring.
+  await orderForm.locator('input:not([type="number"]):not([type="datetime-local"]):not([type="date"])').first().fill(`E2E Garment ${suffix}`);
   await orderForm.getByLabel('Quantity').fill('1');
   await orderForm.getByLabel(/Unit price/).fill('1500');
   await orderForm.getByLabel('Due date').fill('2027-01-15T18:00');
