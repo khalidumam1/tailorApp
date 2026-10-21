@@ -1,9 +1,11 @@
 import type { RequestHandler } from 'express';
+import type { Prisma } from '@prisma/client';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { env } from '../config.js';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
+import { cachedPolicy } from '../policy-cache.js';
 import { assertBusinessModuleEnabled, moduleForBusinessPermission } from '../business-modules.js';
 import { asyncHandler } from './async-handler.js';
 
@@ -51,42 +53,62 @@ export const authenticate: RequestHandler = asyncHandler(async (req, _res, next)
     throw new HttpError(401, 'Access token is invalid or expired', 'INVALID_TOKEN');
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: claims.data.sub },
-    select: {
-      id: true,
-      active: true,
-      platformRole: true,
-      memberships: {
-        where: { id: claims.data.membershipId, active: true },
-        include: {
-          business: true,
-          role: { include: { grants: { include: { permission: true } } } },
+  // The membership id and user id are known from the signed token before any
+  // query runs, so every lookup filters on them directly and all of them run
+  // concurrently: one database round trip instead of a nested include tree
+  // that Prisma loads relation by relation.
+  const isBusinessScope = claims.data.scope === 'business';
+  const [user, business, rolePermissionKeys, platformPermissionKeys] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: claims.data.sub },
+      select: { id: true, active: true, platformRole: true },
+    }),
+    isBusinessScope
+      ? prisma.business.findFirst({
+        where: { memberships: { some: { id: claims.data.membershipId, userId: claims.data.sub, active: true } } },
+        select: { id: true, name: true, slug: true, timezone: true, status: true },
+      })
+      : Promise.resolve(null),
+    isBusinessScope
+      ? prisma.permission.findMany({
+        where: {
+          roleGrants: {
+            some: {
+              role: {
+                memberships: { some: { id: claims.data.membershipId, userId: claims.data.sub, active: true } },
+              },
+            },
+          },
         },
-      },
-      platformPermissions: { include: { permission: true } },
-    },
-  });
+        select: { key: true },
+      })
+      : Promise.resolve([]),
+    isBusinessScope
+      ? Promise.resolve([])
+      : prisma.permission.findMany({
+        where: { platformGrants: { some: { userId: claims.data.sub } } },
+        select: { key: true },
+      }),
+  ]);
   if (!user?.active) {
     throw new HttpError(401, 'Account is unavailable', 'ACCOUNT_UNAVAILABLE');
   }
 
-  if (claims.data.scope === 'business') {
-    const membership = user.memberships[0];
-    if (!membership || membership.business.status !== 'ACTIVE') {
+  if (isBusinessScope) {
+    if (!business || business.status !== 'ACTIVE') {
       throw new HttpError(403, 'Business membership is inactive', 'MEMBERSHIP_INACTIVE');
     }
     req.auth = {
       userId: user.id,
       scope: 'business',
-      membershipId: membership.id,
+      membershipId: claims.data.membershipId,
       business: {
-        id: membership.business.id,
-        name: membership.business.name,
-        slug: membership.business.slug,
-        timezone: membership.business.timezone,
+        id: business.id,
+        name: business.name,
+        slug: business.slug,
+        timezone: business.timezone,
       },
-      permissions: membership.role.grants.map((grant) => grant.permission.key),
+      permissions: rolePermissionKeys.map((permission) => permission.key),
       platformPermissions: [],
     };
   } else {
@@ -97,7 +119,7 @@ export const authenticate: RequestHandler = asyncHandler(async (req, _res, next)
       userId: user.id,
       scope: 'platform',
       permissions: [],
-      platformPermissions: user.platformPermissions.map((grant) => grant.permission.key),
+      platformPermissions: platformPermissionKeys.map((permission) => permission.key),
       platformRole: user.platformRole,
     };
   }
@@ -121,8 +143,12 @@ export function requireBusinessPermission(
     const paidMutation = !permission.startsWith('subscriptions:')
       && (permission.endsWith(':write') || permission.endsWith(':manage') || permission === 'orders:transition');
     const module = moduleForBusinessPermission(permission, explicitModule);
-    if (module) await assertBusinessModuleEnabled(req.auth.business.id, module);
-    await assertSubscriptionAccess(req.auth.business.id, permission, paidMutation, planFeature);
+    // Module and subscription policy checks are independent: run them together
+    // and let the route handler reuse the same module resolution via `req`.
+    await Promise.all([
+      module ? assertBusinessModuleEnabled(req.auth.business.id, module, req) : Promise.resolve(),
+      assertSubscriptionAccess(req.auth.business.id, permission, paidMutation, planFeature),
+    ]);
     next();
   });
   return handler;
@@ -134,26 +160,49 @@ export async function assertSubscriptionAccess(
   isPaidMutation = true,
   explicitFeature?: string,
 ): Promise<void> {
-  const setting = await prisma.platformSetting.findUnique({ where: { key: 'billing' }, select: { value: true } });
-  const billing = setting?.value;
-  const enforcementEnabled = typeof billing === 'object' && billing !== null
-    && 'enforcementEnabled' in billing && billing.enforcementEnabled === true;
-  if (!enforcementEnabled) return;
-  const now = new Date();
-  const entitlement = await prisma.subscription.findFirst({
-    where: {
+  // Policy lookups are cached briefly (see policy-cache.ts) and invalidated by
+  // subscription/billing writes, so steady-state requests skip the round trips.
+  const policy = await cachedPolicy(`billing-entitlement:${businessId}`, async () => {
+    const setting = await prisma.platformSetting.findUnique({ where: { key: 'billing' }, select: { value: true } });
+    const billing = setting?.value;
+    const enforcementEnabled = typeof billing === 'object' && billing !== null
+      && 'enforcementEnabled' in billing && billing.enforcementEnabled === true;
+    if (!enforcementEnabled) {
+      return { enforcementEnabled: false as const, entitlementId: null, planId: null, features: null };
+    }
+    const now = new Date();
+    const entitlementFilter: Prisma.SubscriptionWhereInput = {
       businessId,
       status: { in: ['TRIAL', 'ACTIVE', 'EXPIRED'] },
       startsAt: { lte: now },
       graceUntil: { gt: now },
-    },
-    orderBy: [{ endsAt: 'desc' }, { createdAt: 'desc' }],
-    include: { plan: { select: { features: true } } },
+    };
+    // The entitlement row and the plans referenced by matching entitlements are
+    // fetched concurrently; the ordered entitlement still decides which plan
+    // applies, so enforcement semantics are unchanged.
+    const [entitlement, candidatePlans] = await Promise.all([
+      prisma.subscription.findFirst({
+        where: entitlementFilter,
+        orderBy: [{ endsAt: 'desc' }, { createdAt: 'desc' }],
+        select: { id: true, planId: true },
+      }),
+      prisma.subscriptionPlan.findMany({
+        where: { subscriptions: { some: entitlementFilter } },
+        select: { id: true, features: true },
+      }),
+    ]);
+    return {
+      enforcementEnabled: true as const,
+      entitlementId: entitlement?.id ?? null,
+      planId: entitlement?.planId ?? null,
+      features: entitlement ? candidatePlans.find((plan) => plan.id === entitlement.planId)?.features ?? null : null,
+    };
   });
-  if (!entitlement && isPaidMutation) {
+  if (!policy.enforcementEnabled) return;
+  if (!policy.entitlementId && isPaidMutation) {
     throw new HttpError(402, 'Your subscription has expired. Submit a renewal payment to restore paid features.', 'SUBSCRIPTION_REQUIRED');
   }
-  if (!entitlement) return;
+  if (!policy.entitlementId) return;
 
   const feature = explicitFeature ?? (permission?.startsWith('customers:') ? 'customers'
     : permission?.startsWith('measurements:') ? 'measurements'
@@ -167,7 +216,7 @@ export async function assertSubscriptionAccess(
                     : permission?.startsWith('purchasing:') ? 'purchasing'
                       : permission?.startsWith('cashbook:') ? 'cashbook'
                         : permission?.startsWith('accounting:') ? 'accounting' : undefined);
-  const features = entitlement.plan.features;
+  const features = policy.features;
   if (feature && typeof features === 'object' && features !== null && !Array.isArray(features)
     && feature in features && features[feature] === false) {
     throw new HttpError(403, `Your current plan does not include ${feature}.`, 'SUBSCRIPTION_FEATURE_UNAVAILABLE');

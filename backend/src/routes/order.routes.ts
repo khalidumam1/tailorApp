@@ -227,7 +227,7 @@ router.use(authenticate);
 
 router.get('/', requireBusinessPermission('orders:read'), asyncHandler(async (req, res) => {
   const { businessId } = getContext(req);
-  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId);
+  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId, req);
   const canReadPayments = req.auth?.permissions.includes('payments:read') === true
     && moduleAccess.enabledModules.includes('payments');
   const query = orderQuerySchema.parse(req.query);
@@ -239,6 +239,10 @@ router.get('/', requireBusinessPermission('orders:read'), asyncHandler(async (re
     if (!cursorExists) throw new HttpError(400, 'Pagination cursor is invalid', 'INVALID_CURSOR');
   }
 
+  // The page of orders is fetched without relation includes on purpose: Prisma
+  // loads nested includes one database round trip per relation level, which
+  // makes this list crawl on any high-latency database link. The relations are
+  // then loaded as one concurrent batch of flat queries and assembled below.
   const orders = await prisma.order.findMany({
     where: {
       businessId,
@@ -257,40 +261,113 @@ router.get('/', requireBusinessPermission('orders:read'), asyncHandler(async (re
         },
       } : {}),
     },
-    include: {
-      customer: { select: { id: true, name: true, phone: true } },
-      items: {
-        include: {
-          customFieldValues: { include: { fieldDefinition: { select: { key: true } } } },
-        },
-      },
-      customFieldValues: { include: { fieldDefinition: { select: { key: true } } } },
-      currentWorkflowStage: true,
-    },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     take: query.limit + 1,
   });
   const hasMore = orders.length > query.limit;
   const page = hasMore ? orders.slice(0, query.limit) : orders;
-  const paymentTotals = canReadPayments && page.length ? await prisma.payment.groupBy({
-    by: ['orderId', 'kind'],
-    where: { businessId, orderId: { in: page.map((order) => order.id) } },
-    _sum: { amount: true },
-  }) : [];
+
+  if (!page.length) {
+    res.json({ data: { items: [], nextCursor: null } });
+    return;
+  }
+
+  const orderIds = page.map((order) => order.id);
+  const customerIds = [...new Set(page.map((order) => order.customerId))];
+  const stageIds = [...new Set(
+    page.map((order) => order.workflowStageId).filter((id): id is string => id !== null),
+  )];
+  const [
+    customerRows,
+    itemRows,
+    valueRows,
+    definitionRows,
+    stageRows,
+    paymentTotals,
+  ] = await Promise.all([
+    prisma.customer.findMany({
+      where: { id: { in: customerIds } },
+      select: { id: true, name: true, phone: true },
+    }),
+    prisma.orderItem.findMany({ where: { orderId: { in: orderIds } } }),
+    prisma.customFieldValue.findMany({
+      where: {
+        OR: [
+          { orderId: { in: orderIds } },
+          { orderItem: { orderId: { in: orderIds } } },
+        ],
+      },
+    }),
+    prisma.customFieldDefinition.findMany({
+      where: {
+        OR: [
+          { values: { some: { orderId: { in: orderIds } } } },
+          { values: { some: { orderItem: { orderId: { in: orderIds } } } } },
+        ],
+      },
+      select: { id: true, key: true },
+    }),
+    stageIds.length
+      ? prisma.workflowStage.findMany({ where: { id: { in: stageIds } } })
+      : Promise.resolve([]),
+    canReadPayments ? prisma.payment.groupBy({
+      by: ['orderId', 'kind'],
+      where: { businessId, orderId: { in: orderIds } },
+      _sum: { amount: true },
+    }) : Promise.resolve([]),
+  ]);
+
+  const customerById = new Map(customerRows.map((customer) => [customer.id, customer]));
+  const definitionKeyById = new Map(definitionRows.map((definition) => [definition.id, definition.key]));
+  const stageById = new Map(stageRows.map((stage) => [stage.id, stage]));
+  const itemsByOrderId = new Map<string, typeof itemRows>();
+  for (const item of itemRows) {
+    const bucket = itemsByOrderId.get(item.orderId);
+    if (bucket) bucket.push(item);
+    else itemsByOrderId.set(item.orderId, [item]);
+  }
+  const valuesByOrderId = new Map<string, typeof valueRows>();
+  for (const value of valueRows) {
+    if (!value.orderId) continue;
+    const bucket = valuesByOrderId.get(value.orderId);
+    if (bucket) bucket.push(value);
+    else valuesByOrderId.set(value.orderId, [value]);
+  }
+  const valuesByItemId = new Map<string, typeof valueRows>();
+  for (const value of valueRows) {
+    if (!value.orderItemId) continue;
+    const bucket = valuesByItemId.get(value.orderItemId);
+    if (bucket) bucket.push(value);
+    else valuesByItemId.set(value.orderItemId, [value]);
+  }
+  // Reproduces the include shape of the previous single-query version:
+  // every value row keeps its scalars and carries `fieldDefinition.key`.
+  const withFieldDefinition = <T extends { fieldDefinitionId: string }>(value: T) => ({
+    ...value,
+    fieldDefinition: { key: definitionKeyById.get(value.fieldDefinitionId) ?? '' },
+  });
 
   const items = page.map((order) => {
+    const orderValues = (valuesByOrderId.get(order.id) ?? []).map(withFieldDefinition);
     const payments = paymentTotals
       .filter((payment) => payment.orderId === order.id)
       .map((payment) => ({ kind: payment.kind, amount: payment._sum.amount ?? new Prisma.Decimal(0) }));
     const paid = calculateNetPaid(payments);
     return {
       ...order,
-      customFields: fieldValuesMap(order.customFieldValues),
-      items: order.items.map((item) => ({
-        ...item,
-        customFields: fieldValuesMap(item.customFieldValues),
-      })),
+      customer: customerById.get(order.customerId) ?? null,
+      customFieldValues: orderValues,
+      currentWorkflowStage: order.workflowStageId ? stageById.get(order.workflowStageId) ?? null : null,
+      customFields: fieldValuesMap(orderValues),
+      items: (itemsByOrderId.get(order.id) ?? []).map((item) => {
+        const itemValues = (valuesByItemId.get(item.id) ?? []).map(withFieldDefinition);
+        return {
+          ...item,
+          customFieldValues: itemValues,
+          customFields: fieldValuesMap(itemValues),
+        };
+      }),
       ...(canReadPayments ? {
         paid: paid.toFixed(2),
         outstanding: calculateOutstanding(order.total, payments).toFixed(2),
@@ -920,7 +997,7 @@ router.patch('/:orderId/alterations/:alterationId', requireBusinessPermission('o
 router.get('/:orderId', requireBusinessPermission('orders:read'), asyncHandler(async (req, res) => {
   const { businessId } = getContext(req);
   const orderId = idSchema.parse(req.params.orderId);
-  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId);
+  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId, req);
   const canReadPayments = req.auth?.permissions.includes('payments:read') === true
     && moduleAccess.enabledModules.includes('payments');
   const order = await prisma.order.findFirst({
@@ -958,7 +1035,7 @@ router.get('/:orderId', requireBusinessPermission('orders:read'), asyncHandler(a
 router.get('/:orderId/invoice.pdf', requireBusinessPermission('orders:read'), asyncHandler(async (req, res) => {
   const { businessId } = getContext(req);
   const orderId = idSchema.parse(req.params.orderId);
-  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId);
+  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId, req);
   const canReadPayments = req.auth?.permissions.includes('payments:read') === true
     && moduleAccess.enabledModules.includes('payments');
   const order = await prisma.order.findFirst({

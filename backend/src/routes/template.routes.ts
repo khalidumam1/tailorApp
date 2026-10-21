@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
+import { invalidateAllPolicy } from '../policy-cache.js';
 import { authenticate, requirePlatformPermission } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -391,6 +392,7 @@ router.post('/', requirePlatformPermission('platform:templates:manage'), asyncHa
   if (req.auth?.scope !== 'platform') throw new HttpError(403, 'Platform access is required', 'PLATFORM_ACCESS_DENIED');
   try {
     const template = await persistTemplate(input, req.auth.userId, req.requestId);
+    invalidateAllPolicy();
     res.status(201).json({ data: template });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
@@ -406,6 +408,7 @@ router.put('/:templateId', requirePlatformPermission('platform:templates:manage'
   if (req.auth?.scope !== 'platform') throw new HttpError(403, 'Platform access is required', 'PLATFORM_ACCESS_DENIED');
   try {
     const template = await persistTemplate(input, req.auth.userId, req.requestId, templateId);
+    invalidateAllPolicy();
     res.json({ data: template });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {

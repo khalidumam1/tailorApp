@@ -459,6 +459,7 @@ model Customer {
   @@unique([id, businessId])
   @@index([businessId, name])
   @@index([businessId, deletedAt])
+  @@index([businessId, deletedAt, createdAt])
 }
 
 model BusinessItem {
@@ -593,6 +594,7 @@ model Order {
   @@unique([id, businessId])
   @@index([businessId, status, promisedAt])
   @@index([businessId, customerId, createdAt])
+  @@index([businessId, deletedAt, createdAt])
 }
 
 model OrderItem {

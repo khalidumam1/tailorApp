@@ -42,7 +42,7 @@ router.use(authenticate);
 
 router.get('/dashboard', requireBusinessPermission('orders:read'), asyncHandler(async (req, res) => {
   const businessId = getBusinessId(req);
-  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId);
+  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId, req);
   if (!moduleAccess.enabledModules.includes('orders')) {
     throw new HttpError(403, 'The orders module is disabled for this business', 'BUSINESS_MODULE_DISABLED');
   }
@@ -109,7 +109,7 @@ router.get('/dashboard', requireBusinessPermission('orders:read'), asyncHandler(
 
 router.get('/summary', requireBusinessPermission('reports:read'), asyncHandler(async (req, res) => {
   const businessId = getBusinessId(req);
-  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId);
+  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId, req);
   if (!moduleAccess.enabledModules.includes('orders') || !moduleAccess.enabledModules.includes('payments')) {
     throw new HttpError(403, 'This report requires the orders and payments modules to be enabled', 'BUSINESS_MODULE_DISABLED');
   }

@@ -653,7 +653,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         throw new Error('The server returned configuration for another business');
       }
       await SecureStore.setItemAsync(cacheKey, JSON.stringify(parsed));
-      if (active) setBusinessConfiguration(parsed);
+      // Keep the previous object when nothing changed: a new identity here would
+      // retrigger every dependent effect and re-fetch all workspace lists.
+      if (active) {
+        setBusinessConfiguration((current) =>
+          current && JSON.stringify(current) === JSON.stringify(parsed) ? current : parsed);
+      }
     };
     void loadConfiguration().catch((configurationError: unknown) => {
       if (active) setError(configurationError instanceof Error ? configurationError.message : copy.error);
@@ -772,7 +777,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const ordersAllowed = canLoad('orders:read', 'orders');
       const catalogAllowed = canLoad('orders:read', 'catalog');
       const templatesAllowed = canLoad('measurements:read', 'measurements');
-      const [nextCustomers, nextOrders, nextCatalogItems, nextTemplates] = await Promise.all([
+      const [nextCustomers, nextOrders, nextCatalogItems, nextTemplates, dashboardResult] = await Promise.all([
         customersAllowed
           ? fetchAllPages<LocalCustomer>(async (cursor) => {
             const result = await erpRequest<{ items: RemoteCustomer[]; nextCursor?: string | null }>(
@@ -793,22 +798,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         templatesAllowed
           ? erpRequest<{ items: LocalTemplate[] }>('/measurements/templates').then((result) => result.items)
           : Promise.resolve([] as LocalTemplate[]),
+        // The dashboard loads alongside the lists instead of after them.
+        ordersAllowed
+          ? apiRequest<{ data: Record<string, unknown> }>(session, '/api/v1/reports/dashboard', {}, updateSession)
+            .then((result) => ({ ok: true as const, data: result.data }))
+            .catch((dashboardFailure: unknown) => ({ ok: false as const, error: dashboardFailure }))
+          : Promise.resolve({ ok: true as const, data: {} as Record<string, unknown> }),
       ]);
       if (!isCurrentWorkspace(generation, businessId)) return;
       setCustomers(nextCustomers);
       setOrders(nextOrders);
       setCatalogItems(nextCatalogItems);
       setTemplates(nextTemplates);
-      if (ordersAllowed) {
-        const result = await apiRequest<{ data: Record<string, unknown> }>(
-          session,
-          '/api/v1/reports/dashboard',
-          {},
-          updateSession,
-        );
-        if (isCurrentWorkspace(generation, businessId)) setDashboard(result.data);
-      } else if (isCurrentWorkspace(generation, businessId)) {
-        setDashboard({});
+      if (dashboardResult.ok) {
+        if (isCurrentWorkspace(generation, businessId)) setDashboard(dashboardResult.data);
+      } else {
+        // Same behaviour as before: lists stay visible, the failure surfaces as an error.
+        throw dashboardResult.error;
       }
     } catch (refreshFailure) {
       if (isCurrentWorkspace(generation, businessId)) {

@@ -139,7 +139,7 @@ router.post('/', requireBusinessPermission('purchasing:write'), asyncHandler(asy
   const { businessId, actorId } = context(req);
   const input = orderInputSchema.parse(req.body);
   const key = idempotencyKey(req);
-  await assertBusinessModuleEnabled(businessId, 'suppliers');
+  await assertBusinessModuleEnabled(businessId, 'suppliers', req);
   try {
     const result = await prisma.$transaction(async (tx) => {
       const replay = await tx.purchaseOrder.findUnique({
@@ -231,8 +231,10 @@ router.post('/:purchaseOrderId/receive', requireBusinessPermission('purchasing:w
   const purchaseOrderId = uuidSchema.parse(req.params.purchaseOrderId);
   const input = receiveSchema.parse(req.body);
   const key = idempotencyKey(req);
-  await assertBusinessModuleEnabled(businessId, 'inventory');
-  await assertBusinessModuleEnabled(businessId, 'suppliers');
+  await Promise.all([
+    assertBusinessModuleEnabled(businessId, 'inventory', req),
+    assertBusinessModuleEnabled(businessId, 'suppliers', req),
+  ]);
   try {
     const result = await prisma.$transaction(async (tx) => {
       const replay = await tx.purchaseReceipt.findUnique({
@@ -357,8 +359,10 @@ router.post('/:purchaseOrderId/settlements', requireBusinessPermission('purchasi
   const purchaseOrderId = uuidSchema.parse(req.params.purchaseOrderId);
   const input = settlementSchema.parse(req.body);
   const key = idempotencyKey(req);
-  await assertBusinessModuleEnabled(businessId, 'suppliers');
-  await assertBusinessModuleEnabled(businessId, 'cashbook');
+  await Promise.all([
+    assertBusinessModuleEnabled(businessId, 'suppliers', req),
+    assertBusinessModuleEnabled(businessId, 'cashbook', req),
+  ]);
   const amount = new Prisma.Decimal(input.amount).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
   try {
     const result = await prisma.$transaction(async (tx) => {
