@@ -788,8 +788,8 @@ function App() {
   const [reportFrom, setReportFrom] = useState(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
   const [reportTo, setReportTo] = useState(new Date().toISOString().slice(0, 10));
 
-  function toggleTheme() {
-    const nextTheme: ThemeMode = themeMode === 'dark' ? 'light' : 'dark';
+  function setTheme(nextTheme: ThemeMode) {
+    if (nextTheme === themeMode) return;
     setThemeOverride(nextTheme);
     try {
       localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
@@ -799,16 +799,30 @@ function App() {
   }
 
   const themeToggleButton = (
-    <button
-      className="button button-secondary theme-toggle"
-      type="button"
-      aria-label={`Use ${themeMode === 'dark' ? 'light' : 'dark'} theme`}
-      aria-pressed={themeMode === 'dark'}
-      onClick={toggleTheme}
-    >
-      <Icon name={themeMode === 'dark' ? 'sun' : 'moon'} />
-      <span>{themeMode === 'dark' ? 'Light theme' : 'Dark theme'}</span>
-    </button>
+    <div className="theme-switch" role="group" aria-label="Theme">
+      <button
+        type="button"
+        className={themeMode === 'light' ? 'theme-switch-option is-active' : 'theme-switch-option'}
+        aria-pressed={themeMode === 'light'}
+        aria-label="Use light theme"
+        title="Light theme"
+        onClick={() => setTheme('light')}
+      >
+        <Icon name="sun" />
+        <span>Light</span>
+      </button>
+      <button
+        type="button"
+        className={themeMode === 'dark' ? 'theme-switch-option is-active' : 'theme-switch-option'}
+        aria-pressed={themeMode === 'dark'}
+        aria-label="Use dark theme"
+        title="Dark theme"
+        onClick={() => setTheme('dark')}
+      >
+        <Icon name="moon" />
+        <span>Dark</span>
+      </button>
+    </div>
   );
 
   const clearSessionData = useCallback(() => {
@@ -4024,8 +4038,11 @@ function App() {
           <div className="page-head-actions">
             <span className="status-pill" title="Workspace currency and timezone">{businessConfiguration?.business.currency ?? 'PKR'} · Karachi</span>
             {themeToggleButton}
-            <span className="user-avatar" aria-hidden="true">{currentUser?.user.name.slice(0, 1).toUpperCase()}</span>
-            <span className="user-name">{currentUser?.user.name}</span>
+            <span className="user-chip">
+              <span className="user-avatar" aria-hidden="true">{currentUser?.user.name.slice(0, 1).toUpperCase()}</span>
+              <span className="user-name">{currentUser?.user.name}</span>
+            </span>
+            <span className="head-divider" aria-hidden="true" />
             <button className="button button-quiet" onClick={() => { setError(null); setPasswordDialogOpen(true); }}>Change password</button>
             <button className="button button-quiet" onClick={() => void signOut()}><Icon name="signOut" /> Sign out</button>
           </div>
