@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { api, type AccountingJournal, type BalanceSheetReport, type CashTransaction, type ErpAccount, type InventoryItem, type InventoryMovement, type InventoryValuationItem, type ProfitLossReport, type PurchaseOrder, type Supplier, type SupplierLedger, type TrialBalanceRow } from './api';
+import { DataTable } from './DataTable';
 import { Icon } from './Icons';
 
 type ErpModule = 'inventory' | 'suppliers' | 'purchasing' | 'cashbook' | 'accounting';
@@ -553,12 +554,51 @@ export function ErpWorkspace({
             <div className="platform-form-footer"><span className="fine-print">The stock item and every variant remain tenant-scoped.</span><button className="button button-primary" disabled={working || !online || !writeAllowed('inventory:write')}>Save variant</button></div>
           </form>
           <PanelTitle kicker="On hand" title="Stock by variant and location" />
-          <div className="table-wrap"><table><thead><tr><th>Item / variant</th><th>Location</th><th>On hand</th><th>Average cost</th><th>Value</th><th>Reorder point</th></tr></thead><tbody>
-            {inventoryItems.flatMap((item) => item.variants.flatMap((variant) => variant.balances.map((balance) => <tr key={`${variant.id}:${balance.location.id}`}><td><strong>{item.name} · {variant.name}</strong><span className="table-note">{item.kind.toLowerCase()} · {variant.sku ?? 'No SKU'}</span></td><td>{balance.location.name}</td><td>{formatQuantity(balance.quantity)} {item.baseUnit}</td><td>{money(balance.averageUnitCost)}</td><td>{money(valuationRows.find((row) => row.variant.id === variant.id && row.location.id === balance.location.id)?.value ?? '0.00')}</td><td>{item.reorderPoint ?? '—'}</td></tr>)))}
-            {!inventoryItems.length && <EmptyRow colSpan={6} text="No stock items yet. Add a material or supply to get started." />}
-          </tbody></table></div>
+          <DataTable
+            columns={[
+              {
+                key: 'item',
+                label: 'Item / variant',
+                search: (row) => `${row.item.name} ${row.variant.name} ${row.variant.sku ?? ''} ${row.item.kind} ${row.balance.location.name}`,
+                render: (row) => <><strong>{row.item.name} · {row.variant.name}</strong><span className="table-note">{row.item.kind.toLowerCase()} · {row.variant.sku ?? 'No SKU'}</span></>,
+              },
+              { key: 'location', label: 'Location', render: (row) => row.balance.location.name },
+              { key: 'onHand', label: 'On hand', align: 'right', render: (row) => <>{formatQuantity(row.balance.quantity)} {row.item.baseUnit}</> },
+              { key: 'cost', label: 'Average cost', align: 'right', render: (row) => money(row.balance.averageUnitCost) },
+              { key: 'value', label: 'Value', align: 'right', render: (row) => money(valuationRows.find((valuation) => valuation.variant.id === row.variant.id && valuation.location.id === row.balance.location.id)?.value ?? '0.00') },
+              { key: 'reorder', label: 'Reorder point', align: 'right', render: (row) => row.item.reorderPoint ?? '—' },
+            ]}
+            rows={inventoryItems.flatMap((item) => item.variants.flatMap((variant) => variant.balances.map((balance) => ({ item, variant, balance }))))}
+            rowKey={(row) => `${row.variant.id}:${row.balance.location.id}`}
+            emptyText="No stock items yet. Add a material or supply to get started."
+          />
           <PanelTitle kicker="Audit history" title="Recent movements" />
-          <div className="table-wrap"><table><thead><tr><th>Date</th><th>Item</th><th>Movement</th><th>Quantity</th><th>Unit cost</th><th>Location</th><th>Note</th><th>Correction</th></tr></thead><tbody>{inventoryMovements.map((movement) => <tr key={movement.id}><td>{dateText(movement.occurredAt, timezone)}</td><td><strong>{movement.variant?.stockItem.name ?? 'Stock item'}</strong><span className="table-note">{movement.variant?.name}</span></td><td><span className="status-pill">{movement.kind.replaceAll('_', ' ').toLowerCase()}</span></td><td>{movement.quantity}</td><td>{money(movement.unitCost)}</td><td>{movement.location?.name ?? '—'}</td><td>{movement.note ?? '—'}</td><td>{movement.sourceType === 'MANUAL' ? <button type="button" className="button button-quiet" disabled={working || !online || !writeAllowed('inventory:write')} onClick={() => reverseStockMovement(movement)}>Reverse</button> : <span className="fine-print">Original workflow</span>}</td></tr>)}{!inventoryMovements.length && <EmptyRow colSpan={8} text="No stock activity posted yet." />}</tbody></table></div>
+          <DataTable
+            columns={[
+              { key: 'date', label: 'Date', search: (movement) => movement.occurredAt, render: (movement) => dateText(movement.occurredAt, timezone) },
+              {
+                key: 'item',
+                label: 'Item',
+                search: (movement) => `${movement.variant?.stockItem.name ?? ''} ${movement.variant?.name ?? ''} ${movement.note ?? ''} ${movement.kind}`,
+                render: (movement) => <><strong>{movement.variant?.stockItem.name ?? 'Stock item'}</strong><span className="table-note">{movement.variant?.name}</span></>,
+              },
+              { key: 'movement', label: 'Movement', render: (movement) => <span className="status-pill">{movement.kind.replaceAll('_', ' ').toLowerCase()}</span> },
+              { key: 'quantity', label: 'Quantity', align: 'right', render: (movement) => movement.quantity },
+              { key: 'cost', label: 'Unit cost', align: 'right', render: (movement) => money(movement.unitCost) },
+              { key: 'location', label: 'Location', render: (movement) => movement.location?.name ?? '—' },
+              { key: 'note', label: 'Note', render: (movement) => movement.note ?? '—' },
+              {
+                key: 'correction',
+                label: 'Correction',
+                render: (movement) => movement.sourceType === 'MANUAL'
+                  ? <button type="button" className="button button-quiet" disabled={working || !online || !writeAllowed('inventory:write')} onClick={() => reverseStockMovement(movement)}>Reverse</button>
+                  : <span className="fine-print">Original workflow</span>,
+              },
+            ]}
+            rows={inventoryMovements}
+            rowKey={(movement) => movement.id}
+            emptyText="No stock activity posted yet."
+          />
         </>
       )}
 
@@ -570,8 +610,49 @@ export function ErpWorkspace({
             <div className="form-grid"><label>Name<input value={supplierForm.name} onChange={(event) => setSupplierForm((current) => ({ ...current, name: event.target.value }))} required /></label><label>Contact name<input value={supplierForm.contactName} onChange={(event) => setSupplierForm((current) => ({ ...current, contactName: event.target.value }))} /></label><label>Phone<input type="tel" value={supplierForm.phone} onChange={(event) => setSupplierForm((current) => ({ ...current, phone: event.target.value }))} /></label><label>Email<input type="email" value={supplierForm.email} onChange={(event) => setSupplierForm((current) => ({ ...current, email: event.target.value }))} /></label><label className="span-all">Address<input value={supplierForm.address} onChange={(event) => setSupplierForm((current) => ({ ...current, address: event.target.value }))} /></label></div>
             <div className="platform-form-footer"><span className="fine-print">{supplierEditingId ? 'Changes are version-checked and audited.' : 'Creation is idempotent; retrying does not duplicate the supplier.'}</span><div className="page-head-actions">{supplierEditingId && <button type="button" className="button button-secondary" onClick={() => { setSupplierEditingId(''); setSupplierForm({ name: '', contactName: '', phone: '', email: '', address: '' }); }}>Cancel edit</button>}<button className="button button-primary" disabled={working || !online || !writeAllowed('suppliers:write')}>{supplierEditingId ? 'Save changes' : 'Save supplier'}</button></div></div>
           </form>
-          <div className="table-wrap"><table><thead><tr><th>Supplier</th><th>Contact</th><th>Phone / email</th><th>Purchases</th><th>Status</th><th>Action</th></tr></thead><tbody>{suppliers.map((supplier) => <tr key={supplier.id}><td><strong>{supplier.name}</strong><span className="table-note">{supplier.code}</span></td><td>{supplier.contactName ?? '—'}</td><td>{supplier.phone ?? supplier.email ?? '—'}</td><td>{supplier._count?.purchaseOrders ?? 0}</td><td><span className="status-pill">{supplier.active ? 'Active' : 'Inactive'}</span></td><td><div className="page-head-actions"><button type="button" className="button button-quiet" disabled={!online} onClick={() => void loadSupplierLedger(supplier.id)}>Ledger</button><button type="button" className="button button-quiet" disabled={working || !online || !writeAllowed('suppliers:write')} onClick={() => { setSupplierEditingId(supplier.id); setSupplierForm({ name: supplier.name, contactName: supplier.contactName ?? '', phone: supplier.phone ?? '', email: supplier.email ?? '', address: supplier.address ?? '' }); }}>Edit</button><button type="button" className="button button-quiet" disabled={working || !online || !writeAllowed('suppliers:write')} onClick={() => void mutate((token) => api.updateSupplier(token, supplier.id, { version: supplier.version, active: !supplier.active }), supplier.active ? 'Supplier deactivated.' : 'Supplier reactivated.')}>{supplier.active ? 'Deactivate' : 'Reactivate'}</button></div></td></tr>)}{!suppliers.length && <EmptyRow colSpan={6} text="No suppliers yet. Add the businesses that provide your materials." />}</tbody></table></div>
-          {supplierLedger && <div className="panel"><PanelTitle kicker="Supplier subledger" title={`${supplierLedger.supplier.code} · ${supplierLedger.supplier.name}`} detail="Bills and settlements are shown in business-local time; payments reduce the outstanding payable." /><div className="erp-report-total is-total"><span>Supplier balance</span><strong>{money(supplierLedger.balance)}</strong></div><div className="table-wrap"><table><thead><tr><th>Date</th><th>Entry</th><th>Purchase order</th><th>Reference / note</th><th>Amount</th><th>Running balance</th></tr></thead><tbody>{supplierLedger.entries.map((entry) => <tr key={entry.id}><td>{dateText(entry.occurredAt, timezone)}</td><td>{entry.kind.toLowerCase()}</td><td>{entry.purchaseOrderNumber ?? '—'}</td><td>{entry.reference ?? entry.note ?? '—'}</td><td>{money(entry.amount)}</td><td>{money(entry.runningBalance)}</td></tr>)}{!supplierLedger.entries.length && <EmptyRow colSpan={6} text="No bills or settlements recorded for this supplier." />}</tbody></table></div><button type="button" className="button button-secondary" onClick={() => setSupplierLedger(null)}>Close ledger</button></div>}
+          <DataTable
+            columns={[
+              {
+                key: 'supplier',
+                label: 'Supplier',
+                search: (supplier) => `${supplier.name} ${supplier.code} ${supplier.contactName ?? ''} ${supplier.phone ?? ''} ${supplier.email ?? ''}`,
+                render: (supplier) => <><strong>{supplier.name}</strong><span className="table-note">{supplier.code}</span></>,
+              },
+              { key: 'contact', label: 'Contact', render: (supplier) => supplier.contactName ?? '—' },
+              { key: 'phone', label: 'Phone / email', render: (supplier) => supplier.phone ?? supplier.email ?? '—' },
+              { key: 'purchases', label: 'Purchases', align: 'right', render: (supplier) => supplier._count?.purchaseOrders ?? 0 },
+              { key: 'status', label: 'Status', search: (supplier) => supplier.active ? 'active' : 'inactive', render: (supplier) => <span className="status-pill">{supplier.active ? 'Active' : 'Inactive'}</span> },
+              {
+                key: 'action',
+                label: 'Action',
+                render: (supplier) => (
+                  <div className="page-head-actions">
+                    <button type="button" className="button button-quiet" disabled={!online} onClick={() => void loadSupplierLedger(supplier.id)}>Ledger</button>
+                    <button type="button" className="button button-quiet" disabled={working || !online || !writeAllowed('suppliers:write')} onClick={() => { setSupplierEditingId(supplier.id); setSupplierForm({ name: supplier.name, contactName: supplier.contactName ?? '', phone: supplier.phone ?? '', email: supplier.email ?? '', address: supplier.address ?? '' }); }}>Edit</button>
+                    <button type="button" className="button button-quiet" disabled={working || !online || !writeAllowed('suppliers:write')} onClick={() => void mutate((token) => api.updateSupplier(token, supplier.id, { version: supplier.version, active: !supplier.active }), supplier.active ? 'Supplier deactivated.' : 'Supplier reactivated.')}>{supplier.active ? 'Deactivate' : 'Reactivate'}</button>
+                  </div>
+                ),
+              },
+            ]}
+            rows={suppliers}
+            rowKey={(supplier) => supplier.id}
+            emptyText="No suppliers yet. Add the businesses that provide your materials."
+          />
+          {supplierLedger && <div className="panel"><PanelTitle kicker="Supplier subledger" title={`${supplierLedger.supplier.code} · ${supplierLedger.supplier.name}`} detail="Bills and settlements are shown in business-local time; payments reduce the outstanding payable." /><div className="erp-report-total is-total"><span>Supplier balance</span><strong>{money(supplierLedger.balance)}</strong></div>
+            <DataTable
+              columns={[
+                { key: 'date', label: 'Date', search: (entry) => entry.occurredAt, render: (entry) => dateText(entry.occurredAt, timezone) },
+                { key: 'entry', label: 'Entry', search: (entry) => `${entry.kind} ${entry.purchaseOrderNumber ?? ''} ${entry.reference ?? ''} ${entry.note ?? ''}`, render: (entry) => entry.kind.toLowerCase() },
+                { key: 'order', label: 'Purchase order', render: (entry) => entry.purchaseOrderNumber ?? '—' },
+                { key: 'reference', label: 'Reference / note', render: (entry) => entry.reference ?? entry.note ?? '—' },
+                { key: 'amount', label: 'Amount', align: 'right', render: (entry) => money(entry.amount) },
+                { key: 'balance', label: 'Running balance', align: 'right', render: (entry) => money(entry.runningBalance) },
+              ]}
+              rows={supplierLedger.entries}
+              rowKey={(entry) => entry.id}
+              emptyText="No bills or settlements recorded for this supplier."
+            />
+          <button type="button" className="button button-secondary" onClick={() => setSupplierLedger(null)}>Close ledger</button></div>}
         </>
       )}
 
@@ -595,7 +676,24 @@ export function ErpWorkspace({
             <div className="form-grid"><label>Purchase order<select value={settlementForm.orderId} onChange={(event) => setSettlementForm((current) => ({ ...current, orderId: event.target.value }))}><option value="">Choose order</option>{purchases.filter((order) => settlementForm.kind === 'PAYMENT' ? order.hasOutstanding : order.hasRefundCapacity).map((order) => <option key={order.id} value={order.id}>{order.orderNumber} · {order.supplier.name}</option>)}</select></label><label>Action<select value={settlementForm.kind} onChange={(event) => setSettlementForm((current) => ({ ...current, kind: event.target.value as typeof current.kind }))}><option value="PAYMENT">Payment</option><option value="REFUND">Refund received</option></select></label><label>Cash / bank account<select value={settlementForm.financialAccountId} onChange={(event) => setSettlementForm((current) => ({ ...current, financialAccountId: event.target.value }))}><option value="">Choose account</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.code} · {account.name}</option>)}</select></label><label>Amount ({currency})<input type="number" min="0.01" step="0.01" value={settlementForm.amount} onChange={(event) => setSettlementForm((current) => ({ ...current, amount: event.target.value }))} required /></label><label className="span-all">Reference / note<input value={settlementForm.note} onChange={(event) => setSettlementForm((current) => ({ ...current, note: event.target.value }))} /></label></div>
             <div className="platform-form-footer"><span className="fine-print">Refunds are explicit reversals; prior supplier payment records are preserved.</span><button className="button button-primary" disabled={working || !online || !writeAllowed('purchasing:write') || !writeAllowed('cashbook:write') || !enabledModules.includes('cashbook') || !enabledModules.includes('suppliers')}>Post settlement</button></div>
           </form>
-          <div className="table-wrap"><table><thead><tr><th>Purchase order</th><th>Supplier</th><th>Status</th><th>Ordered</th><th>Received</th><th>Supplier balance</th></tr></thead><tbody>{purchases.map((order) => <tr key={order.id}><td><strong>{order.orderNumber}</strong><span className="table-note">{order.lines.map((line) => `${line.variant.stockItem.name} ${line.receivedQuantity}/${line.orderedQuantity}`).join(' · ')}</span></td><td>{order.supplier.name}</td><td><span className="status-pill">{order.status.replaceAll('_', ' ').toLowerCase()}</span></td><td>{money(order.total)}</td><td>{money(order.receivedTotal ?? '0.00')}</td><td>{money(order.outstanding ?? order.total)}</td></tr>)}{!purchases.length && <EmptyRow colSpan={6} text="No purchase orders. Create an order before receiving goods." />}</tbody></table></div>
+          <DataTable
+            columns={[
+              {
+                key: 'order',
+                label: 'Purchase order',
+                search: (order) => `${order.orderNumber} ${order.supplier.name} ${order.status} ${order.lines.map((line) => `${line.variant.stockItem.name} ${line.variant.name}`).join(' ')}`,
+                render: (order) => <><strong>{order.orderNumber}</strong><span className="table-note">{order.lines.map((line) => `${line.variant.stockItem.name} ${line.receivedQuantity}/${line.orderedQuantity}`).join(' · ')}</span></>,
+              },
+              { key: 'supplier', label: 'Supplier', render: (order) => order.supplier.name },
+              { key: 'status', label: 'Status', render: (order) => <span className="status-pill">{order.status.replaceAll('_', ' ').toLowerCase()}</span> },
+              { key: 'ordered', label: 'Ordered', align: 'right', render: (order) => money(order.total) },
+              { key: 'received', label: 'Received', align: 'right', render: (order) => money(order.receivedTotal ?? '0.00') },
+              { key: 'balance', label: 'Supplier balance', align: 'right', render: (order) => money(order.outstanding ?? order.total) },
+            ]}
+            rows={purchases}
+            rowKey={(order) => order.id}
+            emptyText="No purchase orders. Create an order before receiving goods."
+          />
         </>
       )}
 
@@ -605,7 +703,21 @@ export function ErpWorkspace({
           <div className="metric-grid">{accounts.map((account) => <Metric key={account.id} label={`${account.code} · ${account.name}`} value={money(account.balance)} icon="payments" />)}</div>
           <div className="panel">
             <PanelTitle kicker="Cash and bank accounts" title="Edit account names" detail="Account codes and posted history remain stable; rename accounts without changing balances." />
-            <div className="table-wrap"><table><thead><tr><th>Account</th><th>Balance</th><th>Action</th></tr></thead><tbody>{accounts.map((account) => <tr key={account.id}><td><strong>{account.code} · {account.name}</strong></td><td>{money(account.balance)}</td><td><button type="button" className="button button-quiet" disabled={working || !online || !writeAllowed('cashbook:write')} onClick={() => setCashbookEditForm({ kind: 'ACCOUNT', accountId: account.id, name: account.name })}>Edit name</button></td></tr>)}{!accounts.length && <EmptyRow colSpan={3} text="Set up cash and bank accounts to get started." />}</tbody></table></div>
+            <DataTable
+              columns={[
+                {
+                  key: 'account',
+                  label: 'Account',
+                  search: (account) => `${account.code} ${account.name}`,
+                  render: (account) => <strong>{account.code} · {account.name}</strong>,
+                },
+                { key: 'balance', label: 'Balance', align: 'right', render: (account) => money(account.balance) },
+                { key: 'action', label: 'Action', render: (account) => <button type="button" className="button button-quiet" disabled={working || !online || !writeAllowed('cashbook:write')} onClick={() => setCashbookEditForm({ kind: 'ACCOUNT', accountId: account.id, name: account.name })}>Edit name</button> },
+              ]}
+              rows={accounts}
+              rowKey={(account) => account.id}
+              emptyText="Set up cash and bank accounts to get started."
+            />
             {cashbookEditForm.kind === 'ACCOUNT' && <form className="form-grid" onSubmit={handle(saveCashbookName)}><label>Account name<input value={cashbookEditForm.name} onChange={(event) => setCashbookEditForm((current) => ({ ...current, name: event.target.value }))} required /></label><div className="page-head-actions"><button className="button button-primary" disabled={working || !online || !writeAllowed('cashbook:write')}>Save name</button><button type="button" className="button button-secondary" onClick={() => setCashbookEditForm({ kind: '', accountId: '', name: '' })}>Cancel</button></div></form>}
           </div>
           <div className="erp-two-column">
@@ -624,16 +736,69 @@ export function ErpWorkspace({
             <div className="panel form-panel">
               <PanelTitle kicker="Editable categories" title="Income and expense categories" detail="Categories map cashbook entries to a general-ledger account and stay business-scoped." />
               <form onSubmit={handle(saveCategory)}><div className="form-grid"><label>Category name<input value={categoryForm.name} onChange={(event) => setCategoryForm((current) => ({ ...current, name: event.target.value }))} required /></label><label>Type<select value={categoryForm.type} onChange={(event) => setCategoryForm((current) => ({ ...current, type: event.target.value as typeof current.type }))}><option value="EXPENSE">Expense</option><option value="INCOME">Income</option></select></label></div><div className="platform-form-footer"><span className="fine-print">Categories remain business-scoped.</span><button className="button button-secondary" disabled={working || !online || !writeAllowed('cashbook:write')}>Add category</button></div></form>
-              <div className="table-wrap"><table><thead><tr><th>Code / category</th><th>Type</th><th>Action</th></tr></thead><tbody>{categories.filter((category) => ['INCOME', 'EXPENSE'].includes(category.type)).map((category) => <tr key={category.id}><td><strong>{category.code} · {category.name}</strong></td><td>{category.type.toLowerCase()}</td><td><button type="button" className="button button-quiet" disabled={working || !online || !writeAllowed('cashbook:write')} onClick={() => setCashbookEditForm({ kind: 'CATEGORY', accountId: category.id, name: category.name })}>Edit name</button></td></tr>)}{!categories.length && <EmptyRow colSpan={3} text="No income or expense categories." />}</tbody></table></div>
+              <DataTable
+                columns={[
+                  {
+                    key: 'category',
+                    label: 'Code / category',
+                    search: (category) => `${category.code} ${category.name} ${category.type}`,
+                    render: (category) => <strong>{category.code} · {category.name}</strong>,
+                  },
+                  { key: 'type', label: 'Type', render: (category) => category.type.toLowerCase() },
+                  { key: 'action', label: 'Action', render: (category) => <button type="button" className="button button-quiet" disabled={working || !online || !writeAllowed('cashbook:write')} onClick={() => setCashbookEditForm({ kind: 'CATEGORY', accountId: category.id, name: category.name })}>Edit name</button> },
+                ]}
+                rows={categories.filter((category) => ['INCOME', 'EXPENSE'].includes(category.type))}
+                rowKey={(category) => category.id}
+                emptyText="No income or expense categories."
+              />
               {cashbookEditForm.kind === 'CATEGORY' && <form className="form-grid" onSubmit={handle(saveCashbookName)}><label>Category name<input value={cashbookEditForm.name} onChange={(event) => setCashbookEditForm((current) => ({ ...current, name: event.target.value }))} required /></label><div className="page-head-actions"><button className="button button-primary" disabled={working || !online || !writeAllowed('cashbook:write')}>Save name</button><button type="button" className="button button-secondary" onClick={() => setCashbookEditForm({ kind: '', accountId: '', name: '' })}>Cancel</button></div></form>}
             </div>
             <form className="panel form-panel" onSubmit={handle(startReconciliation)}><PanelTitle kicker="Bank statement control" title="Start reconciliation" detail="Match posted cash/bank ledger lines with the statement, then close only when balances agree." /><div className="form-grid"><label>Account<select value={reconciliationForm.accountId} onChange={(event) => setReconciliationForm((current) => ({ ...current, accountId: event.target.value }))}><option value="">Choose account</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label><label>Opening balance<input type="number" step="0.01" value={reconciliationForm.openingBalance} onChange={(event) => setReconciliationForm((current) => ({ ...current, openingBalance: event.target.value }))} /></label><label>Statement starts<input type="datetime-local" value={reconciliationForm.statementStart} onChange={(event) => setReconciliationForm((current) => ({ ...current, statementStart: event.target.value }))} required /></label><label>Statement ends<input type="datetime-local" value={reconciliationForm.statementEnd} onChange={(event) => setReconciliationForm((current) => ({ ...current, statementEnd: event.target.value }))} required /></label><label>Closing balance<input type="number" step="0.01" value={reconciliationForm.closingBalance} onChange={(event) => setReconciliationForm((current) => ({ ...current, closingBalance: event.target.value }))} /></label></div><div className="platform-form-footer"><span className="fine-print">Dates are submitted with explicit UTC offsets.</span><button className="button button-secondary" disabled={working || !online || !writeAllowed('cashbook:write')}>Start reconciliation</button></div></form>
           </div>
           <div className="erp-two-column">
             <div className="panel"><PanelTitle kicker="Statement matching" title="Open reconciliations" /><div className="erp-reconciliation-list">{reconciliations.map((item) => <button type="button" key={item.id} className={reconciliationId === item.id ? 'erp-reconciliation is-active' : 'erp-reconciliation'} onClick={() => void loadReconciliationLines(item.id)}><strong>{item.account.name}</strong><span>{dateText(item.statementStart, timezone)} – {dateText(item.statementEnd, timezone)} · {item._count.matches} matched</span><span className="status-pill">{item.status.toLowerCase()}</span></button>)}{!reconciliations.length && <p className="muted">No reconciliations created yet.</p>}</div>
-              {reconciliationId && <><div className="table-wrap"><table><thead><tr><th>Match</th><th>Journal entry</th><th>Date</th><th>Memo</th><th>Signed amount</th></tr></thead><tbody>{reconciliationLines.map((line) => <tr key={line.id}><td><input type="checkbox" aria-label={`Match ${line.journalEntry.entryNumber}`} checked={line.matched || selectedLineIds.includes(line.id)} disabled={line.matched || !online || !writeAllowed('cashbook:write')} onChange={(event) => setSelectedLineIds((current) => event.target.checked ? [...current, line.id] : current.filter((id) => id !== line.id))} /></td><td>{line.journalEntry.entryNumber}</td><td>{dateText(line.journalEntry.entryDate, timezone)}</td><td><strong>{line.journalEntry.memo}</strong><span className="table-note">{line.journalEntry.sourceType}</span></td><td>{money(line.signedAmount)}</td></tr>)}{!reconciliationLines.length && <EmptyRow colSpan={5} text="No ledger lines in this statement period." />}</tbody></table></div><div className="platform-form-footer"><span className="fine-print">Closing is server-validated against statement opening + matched movements.</span><div className="page-head-actions"><button type="button" className="button button-secondary" onClick={matchSelectedLines} disabled={!online || !selectedLineIds.length || working || !writeAllowed('cashbook:write')}>Match selected</button><button type="button" className="button button-primary" onClick={closeReconciliation} disabled={!online || working || !writeAllowed('cashbook:write') || reconciliations.find((item) => item.id === reconciliationId)?.status === 'CLOSED'}>Close reconciliation</button></div></div></>}
+              {reconciliationId && <>
+                <DataTable
+                  columns={[
+                    {
+                      key: 'match',
+                      label: 'Match',
+                      search: (line) => `${line.journalEntry.entryNumber} ${line.journalEntry.memo} ${line.journalEntry.sourceType}`,
+                      render: (line) => (
+                        <input
+                          type="checkbox"
+                          aria-label={`Match ${line.journalEntry.entryNumber}`}
+                          checked={line.matched || selectedLineIds.includes(line.id)}
+                          disabled={line.matched || !online || !writeAllowed('cashbook:write')}
+                          onChange={(event) => setSelectedLineIds((current) => event.target.checked ? [...current, line.id] : current.filter((id) => id !== line.id))}
+                        />
+                      ),
+                    },
+                    { key: 'entry', label: 'Journal entry', render: (line) => line.journalEntry.entryNumber },
+                    { key: 'date', label: 'Date', search: (line) => line.journalEntry.entryDate, render: (line) => dateText(line.journalEntry.entryDate, timezone) },
+                    { key: 'memo', label: 'Memo', render: (line) => <><strong>{line.journalEntry.memo}</strong><span className="table-note">{line.journalEntry.sourceType}</span></> },
+                    { key: 'amount', label: 'Signed amount', align: 'right', render: (line) => money(line.signedAmount) },
+                  ]}
+                  rows={reconciliationLines}
+                  rowKey={(line) => line.id}
+                  emptyText="No ledger lines in this statement period."
+                />
+                <div className="platform-form-footer"><span className="fine-print">Closing is server-validated against statement opening + matched movements.</span><div className="page-head-actions"><button type="button" className="button button-secondary" onClick={matchSelectedLines} disabled={!online || !selectedLineIds.length || working || !writeAllowed('cashbook:write')}>Match selected</button><button type="button" className="button button-primary" onClick={closeReconciliation} disabled={!online || working || !writeAllowed('cashbook:write') || reconciliations.find((item) => item.id === reconciliationId)?.status === 'CLOSED'}>Close reconciliation</button></div></div>
+              </>}
             </div>
-            <div className="table-wrap"><table><thead><tr><th>Date</th><th>Kind</th><th>Account</th><th>Category / contra</th><th>Description</th><th>Amount</th></tr></thead><tbody>{transactions.map((transaction) => <tr key={transaction.id}><td>{dateText(transaction.occurredAt, timezone)}</td><td><span className="status-pill">{transaction.kind.toLowerCase()}</span></td><td>{transaction.financialAccount?.name ?? '—'}</td><td>{transaction.contraAccount?.name ?? '—'}</td><td>{transaction.memo}</td><td>{money(transaction.amount)}</td></tr>)}{!transactions.length && <EmptyRow colSpan={6} text="Cash receipts, expenses and transfers will appear here." />}</tbody></table></div>
+            <DataTable
+              columns={[
+                { key: 'date', label: 'Date', search: (transaction) => transaction.occurredAt, render: (transaction) => dateText(transaction.occurredAt, timezone) },
+                { key: 'kind', label: 'Kind', search: (transaction) => transaction.kind, render: (transaction) => <span className="status-pill">{transaction.kind.toLowerCase()}</span> },
+                { key: 'account', label: 'Account', search: (transaction) => `${transaction.financialAccount?.name ?? ''} ${transaction.contraAccount?.name ?? ''}`, render: (transaction) => transaction.financialAccount?.name ?? '—' },
+                { key: 'contra', label: 'Category / contra', render: (transaction) => transaction.contraAccount?.name ?? '—' },
+                { key: 'description', label: 'Description', search: (transaction) => transaction.memo, render: (transaction) => transaction.memo },
+                { key: 'amount', label: 'Amount', align: 'right', render: (transaction) => money(transaction.amount) },
+              ]}
+              rows={transactions}
+              rowKey={(transaction) => transaction.id}
+              emptyText="Cash receipts, expenses and transfers will appear here."
+            />
           </div>
         </>
       )}
@@ -648,24 +813,76 @@ export function ErpWorkspace({
             <div className="panel"><PanelTitle kicker="Position" title="Balance sheet" /><div className="erp-report-total"><span>Assets</span><strong>{money(balanceSheet?.totalAssets)}</strong></div><div className="erp-report-total"><span>Liabilities + equity</span><strong>{money(balanceSheet?.liabilitiesAndEquity)}</strong></div><div className="erp-report-total is-total"><span>Current earnings</span><strong>{money(balanceSheet?.currentEarnings)}</strong></div><div className="erp-report-list"><h4>Assets</h4>{balanceSheet?.assets.filter((row) => Number(row.balance) !== 0).map((row) => <div key={row.accountId}><span>{row.code} · {row.name}</span><strong>{money(row.balance)}</strong></div>)}</div></div>
           </div>
           <div className="erp-two-column">
-            <div className="panel"><PanelTitle kicker="Control" title="Trial balance" detail="Debits and credits must remain balanced." /><div className="table-wrap"><table><thead><tr><th>Account</th><th>Debit</th><th>Credit</th></tr></thead><tbody>{trialRows.filter((row) => Number(row.debitBalance) || Number(row.creditBalance)).map((row) => <tr key={row.accountId}><td><strong>{row.name}</strong><span className="table-note">{row.code} · {row.type.toLowerCase()}</span></td><td>{money(row.debitBalance)}</td><td>{money(row.creditBalance)}</td></tr>)}<tr className="erp-total-row"><td><strong>Total</strong></td><td>{money(trialTotals.debitTotal)}</td><td>{money(trialTotals.creditTotal)}</td></tr></tbody></table></div></div>
-            <div className="panel"><PanelTitle kicker="Chart of accounts" title="Accounts and categories" detail="Keep posted history intact; accounts can be deactivated, not deleted." /><div className="table-wrap"><table><thead><tr><th>Code / account</th><th>Type</th><th>Status</th><th>Cashbook</th><th>Action</th></tr></thead><tbody>{accounts.map((account) => <tr key={account.id}><td><strong>{account.code} · {account.name}</strong><span className="table-note">{account.systemKey ?? 'Custom account'}</span></td><td>{account.type.toLowerCase()}</td><td>{account.active === false ? 'Inactive' : 'Active'}</td><td>{account.cashbookEnabled ? 'Yes' : 'No'}</td><td>{account.isSystem ? <span className="fine-print">System</span> : <button className="button button-quiet" disabled={working || !online || !writeAllowed('accounting:manage')} onClick={() => { const name = window.prompt('Account name', account.name); if (name === null || !name.trim()) return; void mutate((token) => api.updateAccountingAccount(token, account.id, { version: account.version ?? 1, name: name.trim() }), 'Account updated.'); }}>{account.active === false ? 'Edit' : 'Edit'}</button>}</td></tr>)}{!accounts.length && <EmptyRow colSpan={5} text="Initialize the chart of accounts to view ledger accounts." />}</tbody></table></div></div>
+            <div className="panel"><PanelTitle kicker="Control" title="Trial balance" detail="Debits and credits must remain balanced." />
+              <DataTable
+                columns={[
+                  {
+                    key: 'account',
+                    label: 'Account',
+                    search: (row) => `${row.name} ${row.code} ${row.type}`,
+                    render: (row) => <><strong>{row.name}</strong><span className="table-note">{row.code} · {row.type.toLowerCase()}</span></>,
+                  },
+                  { key: 'debit', label: 'Debit', align: 'right', render: (row) => money(row.debitBalance) },
+                  { key: 'credit', label: 'Credit', align: 'right', render: (row) => money(row.creditBalance) },
+                ]}
+                rows={trialRows.filter((row) => Number(row.debitBalance) || Number(row.creditBalance))}
+                rowKey={(row) => row.accountId}
+                emptyText="No account balances yet."
+                footer={<tr className="erp-total-row"><td><strong>Total</strong></td><td>{money(trialTotals.debitTotal)}</td><td>{money(trialTotals.creditTotal)}</td></tr>}
+              />
+            </div>
+            <div className="panel"><PanelTitle kicker="Chart of accounts" title="Accounts and categories" detail="Keep posted history intact; accounts can be deactivated, not deleted." />
+              <DataTable
+                columns={[
+                  {
+                    key: 'account',
+                    label: 'Code / account',
+                    search: (account) => `${account.code} ${account.name} ${account.systemKey ?? ''} ${account.type}`,
+                    render: (account) => <><strong>{account.code} · {account.name}</strong><span className="table-note">{account.systemKey ?? 'Custom account'}</span></>,
+                  },
+                  { key: 'type', label: 'Type', render: (account) => account.type.toLowerCase() },
+                  { key: 'status', label: 'Status', render: (account) => account.active === false ? 'Inactive' : 'Active' },
+                  { key: 'cashbook', label: 'Cashbook', render: (account) => account.cashbookEnabled ? 'Yes' : 'No' },
+                  {
+                    key: 'action',
+                    label: 'Action',
+                    render: (account) => account.isSystem
+                      ? <span className="fine-print">System</span>
+                      : <button className="button button-quiet" disabled={working || !online || !writeAllowed('accounting:manage')} onClick={() => { const name = window.prompt('Account name', account.name); if (name === null || !name.trim()) return; void mutate((token) => api.updateAccountingAccount(token, account.id, { version: account.version ?? 1, name: name.trim() }), 'Account updated.'); }}>Edit</button>,
+                  },
+                ]}
+                rows={accounts}
+                rowKey={(account) => account.id}
+                emptyText="Initialize the chart of accounts to view ledger accounts."
+              />
+            </div>
           </div>
           <div className="panel">
             <PanelTitle kicker="Audit trail" title="Recent journal entries" detail="Posted entries are preserved. Correct mistakes with an audited reversal instead of editing posted history." />
-            <div className="table-wrap"><table><thead><tr><th>Entry</th><th>Date</th><th>Source</th><th>Debit / credit lines</th><th>Status</th><th>Action</th></tr></thead><tbody>
-              {journals.map((journal) => <tr key={journal.id}>
-                <td><strong>{journal.entryNumber}</strong><span className="table-note">{journal.memo}</span></td>
-                <td>{dateText(journal.entryDate, timezone)}</td>
-                <td>{journal.sourceType.replaceAll('_', ' ').toLowerCase()}</td>
-                <td>{journal.lines.map((line) => `${line.account.code} ${Number(line.debit) > 0 ? `Dr ${money(line.debit)}` : `Cr ${money(line.credit)}`}`).join(' · ')}</td>
-                <td><span className="status-pill">{journal.status.toLowerCase()}</span></td>
-                <td>{journal.status === 'POSTED' && !journal.reversalOfId
-                  ? <button className="button button-quiet" disabled={working || !online || !writeAllowed('accounting:write')} onClick={() => reverseJournal(journal)}>Reverse</button>
-                  : <span className="fine-print">—</span>}</td>
-              </tr>)}
-              {!journals.length && <EmptyRow colSpan={6} text="No journal entries have been posted yet." />}
-            </tbody></table></div>
+            <DataTable
+              columns={[
+                {
+                  key: 'entry',
+                  label: 'Entry',
+                  search: (journal) => `${journal.entryNumber} ${journal.memo} ${journal.sourceType} ${journal.status} ${journal.lines.map((line) => line.account.code).join(' ')}`,
+                  render: (journal) => <><strong>{journal.entryNumber}</strong><span className="table-note">{journal.memo}</span></>,
+                },
+                { key: 'date', label: 'Date', search: (journal) => journal.entryDate, render: (journal) => dateText(journal.entryDate, timezone) },
+                { key: 'source', label: 'Source', render: (journal) => journal.sourceType.replaceAll('_', ' ').toLowerCase() },
+                { key: 'lines', label: 'Debit / credit lines', render: (journal) => journal.lines.map((line) => `${line.account.code} ${Number(line.debit) > 0 ? `Dr ${money(line.debit)}` : `Cr ${money(line.credit)}`}`).join(' · ') },
+                { key: 'status', label: 'Status', render: (journal) => <span className="status-pill">{journal.status.toLowerCase()}</span> },
+                {
+                  key: 'action',
+                  label: 'Action',
+                  render: (journal) => journal.status === 'POSTED' && !journal.reversalOfId
+                    ? <button className="button button-quiet" disabled={working || !online || !writeAllowed('accounting:write')} onClick={() => reverseJournal(journal)}>Reverse</button>
+                    : <span className="fine-print">—</span>,
+                },
+              ]}
+              rows={journals}
+              rowKey={(journal) => journal.id}
+              emptyText="No journal entries have been posted yet."
+            />
           </div>
           {writeAllowed('accounting:manage') && <div className="erp-two-column">
             <form className="panel form-panel" onSubmit={handle(saveAccount)}><PanelTitle kicker="Chart maintenance" title="Add account" detail="Use a new, unique code. Existing posted records are never deleted." /><div className="form-grid"><label>Code<input value={accountForm.code} onChange={(event) => setAccountForm((current) => ({ ...current, code: event.target.value }))} required /></label><label>Name<input value={accountForm.name} onChange={(event) => setAccountForm((current) => ({ ...current, name: event.target.value }))} required /></label><label>Type<select value={accountForm.type} onChange={(event) => setAccountForm((current) => ({ ...current, type: event.target.value as typeof current.type }))}><option>ASSET</option><option>LIABILITY</option><option>EQUITY</option><option>INCOME</option><option>EXPENSE</option></select></label><label className="erp-checkbox"><input type="checkbox" checked={accountForm.cashbookEnabled} onChange={(event) => setAccountForm((current) => ({ ...current, cashbookEnabled: event.target.checked }))} /> Include as a cashbook account</label></div><div className="platform-form-footer"><span className="fine-print">Server permissions control chart edits.</span><button className="button button-secondary" disabled={working || !online}>Create account</button></div></form>
@@ -683,9 +900,6 @@ function PanelTitle({ kicker, title, detail }: { kicker?: string; title: string;
 }
 function Metric({ label, value, icon }: { label: string; value: string; icon: 'catalog' | 'orders' | 'warning' | 'home' | 'customers' | 'check' | 'payments' | 'reports' | 'trendUp' | 'inbox' }) {
   return <article className="metric-card"><span className="metric-icon"><Icon name={icon} /></span><span className="muted">{label}</span><strong>{value}</strong></article>;
-}
-function EmptyRow({ colSpan, text }: { colSpan: number; text: string }) {
-  return <tr><td colSpan={colSpan}><span className="muted">{text}</span></td></tr>;
 }
 function dateText(value: string, timezone: string) {
   try { return new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeZone: timezone }).format(new Date(value)); }
