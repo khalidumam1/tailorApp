@@ -1579,8 +1579,12 @@ export const api = {
       checkedAt: z.string(),
     }), { token });
   },
-  auditEvents(token: string) {
-    return request('/audit?limit=100', z.object({
+  auditEvents(token: string, options?: { q?: string; cursor?: string; limit?: number }) {
+    const params = new URLSearchParams();
+    params.set('limit', String(options?.limit ?? 100));
+    if (options?.q) params.set('q', options.q);
+    if (options?.cursor) params.set('cursor', options.cursor);
+    return request(`/audit?${params.toString()}`, z.object({
       items: z.array(auditEventSchema),
       nextCursor: z.string().nullable(),
     }), { token });

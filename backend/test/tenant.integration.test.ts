@@ -1410,3 +1410,66 @@ test('Meta send failures persist as Failed and verified webhooks alone confirm d
   assert.equal(delivered.status, 'DELIVERED');
   assert.equal(delivered.lastError, null);
 });
+
+test('platform audit search matches action and request id and pages by cursor', { skip: !enabled }, async () => {
+  const token = process.env.TENANT_TEST_PLATFORM_TOKEN;
+  if (!token) throw new Error('Platform staff test token was not initialized');
+  const auditPermission = await prisma.permission.upsert({
+    where: { key: 'platform:audit:read' },
+    update: {},
+    create: { key: 'platform:audit:read', description: 'Read platform audit history in tenant isolation test' },
+  });
+  await prisma.platformPermissionGrant.create({
+    data: { userId: platformStaffId, permissionId: auditPermission.id },
+  });
+  await prisma.auditEvent.createMany({
+    data: [
+      {
+        businessId: businessAId,
+        actorId: platformStaffId,
+        action: 'test.qsearch.alpha',
+        entityType: 'TEST_WIDGET',
+        metadata: {},
+        requestId: 'qreq-alpha-1',
+      },
+      {
+        businessId: businessAId,
+        actorId: platformStaffId,
+        action: 'test.qsearch.beta',
+        entityType: 'OTHER_WIDGET',
+        metadata: {},
+        requestId: 'qreq-beta-2',
+      },
+    ],
+  });
+  const headers = { authorization: `Bearer ${token}` };
+
+  const byAction = await fetch(`${baseUrl}/api/v1/audit?q=qsearch.alpha`, { headers });
+  assert.equal(byAction.status, 200);
+  const byActionBody = await byAction.json() as { data: { items: Array<{ action: string }> } };
+  assert.equal(byActionBody.data.items.length, 1);
+  assert.equal(byActionBody.data.items[0].action, 'test.qsearch.alpha');
+
+  const byRequestId = await fetch(`${baseUrl}/api/v1/audit?q=qreq-beta`, { headers });
+  assert.equal(byRequestId.status, 200);
+  const byRequestIdBody = await byRequestId.json() as { data: { items: Array<{ requestId: string }> } };
+  assert.equal(byRequestIdBody.data.items.length, 1);
+  assert.equal(byRequestIdBody.data.items[0].requestId, 'qreq-beta-2');
+
+  const noMatch = await fetch(`${baseUrl}/api/v1/audit?q=nothing-matches-this`, { headers });
+  assert.equal(noMatch.status, 200);
+  const noMatchBody = await noMatch.json() as { data: { items: unknown[]; nextCursor: string | null } };
+  assert.equal(noMatchBody.data.items.length, 0);
+  assert.equal(noMatchBody.data.nextCursor, null);
+
+  const firstPage = await fetch(`${baseUrl}/api/v1/audit?q=qsearch&limit=1`, { headers });
+  assert.equal(firstPage.status, 200);
+  const firstPageBody = await firstPage.json() as { data: { items: Array<{ action: string }>; nextCursor: string | null } };
+  assert.equal(firstPageBody.data.items.length, 1);
+  assert.ok(firstPageBody.data.nextCursor);
+  const secondPage = await fetch(`${baseUrl}/api/v1/audit?q=qsearch&limit=1&cursor=${firstPageBody.data.nextCursor}`, { headers });
+  assert.equal(secondPage.status, 200);
+  const secondPageBody = await secondPage.json() as { data: { items: Array<{ action: string }>; nextCursor: string | null } };
+  assert.equal(secondPageBody.data.items.length, 1);
+  assert.notEqual(secondPageBody.data.items[0].action, firstPageBody.data.items[0].action);
+});

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { StrictMode } from 'react';
 import ReactDOM from 'react-dom/client';
+import { DataTable } from './DataTable';
 import {
   accessibleTextColor,
   BRAND_LOGO_PRESETS,
@@ -714,6 +715,15 @@ function App() {
   const [platformStaff, setPlatformStaff] = useState<import('./api').PlatformStaff[]>([]);
   const [platformPermissions, setPlatformPermissions] = useState<import('./api').PlatformPermission[]>([]);
   const [platformAudit, setPlatformAudit] = useState<import('./api').AuditEvent[]>([]);
+  const [auditSearch, setAuditSearch] = useState('');
+  // Cursor paging for the audit log: cursors[i] fetches page i+1 and
+  // nextCursors[i] is that page's nextCursor. Page 1 always uses a null cursor.
+  const [auditPagerState, setAuditPagerState] = useState<{
+    pageIndex: number;
+    cursors: Array<string | null>;
+    nextCursors: Array<string | null>;
+    busy: boolean;
+  }>({ pageIndex: 1, cursors: [null], nextCursors: [null], busy: false });
   const [platformHealth, setPlatformHealth] = useState<{ status: string; database: string; checkedAt: string } | null>(null);
   const [staffPermissionDrafts, setStaffPermissionDrafts] = useState<Record<string, string[]>>({});
   const [businessName, setBusinessName] = useState('');
@@ -834,6 +844,8 @@ function App() {
     setPlatformStaff([]);
     setPlatformPermissions([]);
     setPlatformAudit([]);
+    setAuditSearch('');
+    setAuditPagerState({ pageIndex: 1, cursors: [null], nextCursors: [null], busy: false });
     setPlatformHealth(null);
     setBillingDashboard(null);
     setBillingPlans([]);
@@ -1259,8 +1271,8 @@ function App() {
             ? withSession(api.platformSubscriptionPlans).catch(() => ({ items: billingPlans }))
             : Promise.resolve({ items: billingPlans }),
           grants.includes('platform:audit:read')
-            ? withSession(api.auditEvents).catch(() => ({ items: platformAudit }))
-            : Promise.resolve({ items: platformAudit }),
+            ? withSession((token) => api.auditEvents(token, { limit: 25 })).catch(() => ({ items: platformAudit, nextCursor: null }))
+            : Promise.resolve({ items: platformAudit, nextCursor: null }),
           grants.includes('platform:system:health')
             ? withSession(api.platformHealth).catch(() => platformHealth)
             : Promise.resolve(platformHealth),
@@ -1270,6 +1282,7 @@ function App() {
         setBillingDashboard(billing);
         setBillingPlans(plans.items);
         setPlatformAudit(audit.items);
+        setAuditPagerState({ pageIndex: 1, cursors: [null], nextCursors: [audit.nextCursor ?? null], busy: false });
         setPlatformHealth(health);
         return;
       }
@@ -1318,8 +1331,11 @@ function App() {
           }));
         }
       } else if (platformView === 'audit' && currentUser.context.platformPermissions.includes('platform:audit:read')) {
-        const result = await withSession(api.auditEvents);
-        if (active) setPlatformAudit(result.items);
+        const result = await withSession((token) => api.auditEvents(token, { q: auditSearch || undefined, limit: 25 }));
+        if (active) {
+          setPlatformAudit(result.items);
+          setAuditPagerState({ pageIndex: 1, cursors: [null], nextCursors: [result.nextCursor], busy: false });
+        }
       } else if (platformView === 'health' && currentUser.context.platformPermissions.includes('platform:system:health')) {
         const result = await withSession(api.platformHealth);
         if (active) setPlatformHealth(result);
@@ -1362,7 +1378,7 @@ function App() {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [currentUser, platformBusinessStatusFilter, platformReloadToken, platformTemplateKey, platformView, session, withSession]);
+  }, [auditSearch, currentUser, platformBusinessStatusFilter, platformReloadToken, platformTemplateKey, platformView, session, withSession]);
 
   useEffect(() => {
     let active = true;
@@ -2552,7 +2568,7 @@ function App() {
     }
   }
 
-  async function searchSubscriptionPayments(event?: FormEvent<HTMLFormElement>, append = false) {
+  async function searchSubscriptionPayments(event?: FormEvent<HTMLFormElement>, append = false, queryOverride?: string) {
     event?.preventDefault();
     setLoading(true);
     setError(null);
@@ -2560,7 +2576,7 @@ function App() {
       const status = billingPaymentFilter === 'REVIEW' ? undefined : billingPaymentFilter;
       const cursor = append ? billingPaymentCursor ?? undefined : undefined;
       if (append && !cursor) return;
-      const result = await withSession((token) => api.subscriptionPayments(token, status, billingPaymentSearch, cursor));
+      const result = await withSession((token) => api.subscriptionPayments(token, status, queryOverride ?? billingPaymentSearch, cursor));
       setBillingPayments((current) => append ? [...current, ...result.items] : result.items);
       setBillingPaymentCursor(result.nextCursor);
     } catch (cause) {
@@ -2568,6 +2584,38 @@ function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // Cursor paging for the platform audit log. Each page is fetched on demand;
+  // Previous re-fetches through the remembered cursor stack so search results
+  // stay consistent while browsing pages.
+  async function loadAuditPage(cursor: string | null, pageIndex: number, cursors: Array<string | null>) {
+    setAuditPagerState((current) => ({ ...current, busy: true }));
+    try {
+      const result = await withSession((token) => api.auditEvents(token, { q: auditSearch || undefined, cursor: cursor ?? undefined, limit: 25 }));
+      setPlatformAudit(result.items);
+      setAuditPagerState((current) => {
+        const nextCursors = current.nextCursors.slice(0, pageIndex);
+        nextCursors[pageIndex - 1] = result.nextCursor;
+        return { pageIndex, cursors, nextCursors, busy: false };
+      });
+    } catch (cause) {
+      setAuditPagerState((current) => ({ ...current, busy: false }));
+      setError(messageFor(cause));
+    }
+  }
+
+  async function goAuditNext() {
+    const { pageIndex, cursors, nextCursors, busy } = auditPagerState;
+    const nextCursor = nextCursors[pageIndex - 1];
+    if (busy || !nextCursor) return;
+    await loadAuditPage(nextCursor, pageIndex + 1, [...cursors, nextCursor]);
+  }
+
+  async function goAuditPrev() {
+    const { pageIndex, cursors, busy } = auditPagerState;
+    if (busy || pageIndex <= 1) return;
+    await loadAuditPage(cursors[pageIndex - 2] ?? null, pageIndex - 1, cursors.slice(0, pageIndex - 1));
   }
 
   async function saveBillingSettings(event: FormEvent<HTMLFormElement>) {
@@ -3076,22 +3124,19 @@ function App() {
                 )}
               </div>
               {platformBusinesses.length ? (
-                <div className="table-wrap" style={{ marginTop: 12, boxShadow: 'none' }}>
-                  <table>
-                    <thead><tr><th>Business</th><th>Template</th><th>Owner</th><th>Status</th><th>Registered</th></tr></thead>
-                    <tbody>
-                      {recentBusinesses.map((business) => (
-                        <tr key={business.id}>
-                          <td><strong>{business.name}</strong><small className="table-note">{business.slug}</small></td>
-                          <td>{business.template?.name ?? '—'}</td>
-                          <td>{business.owner?.name ?? <span className="table-note-warn">Unassigned</span>}</td>
-                          <td><StatusPill status={business.status} /></td>
-                          <td>{karachiDate(business.createdAt)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable
+                  searchable={false}
+                  wrapStyle={{ marginTop: 12, boxShadow: 'none' }}
+                  columns={[
+                    { key: 'business', label: 'Business', render: (business) => <><strong>{business.name}</strong><small className="table-note">{business.slug}</small></> },
+                    { key: 'template', label: 'Template', render: (business) => business.template?.name ?? '—' },
+                    { key: 'owner', label: 'Owner', render: (business) => business.owner?.name ?? <span className="table-note-warn">Unassigned</span> },
+                    { key: 'status', label: 'Status', render: (business) => <StatusPill status={business.status} /> },
+                    { key: 'registered', label: 'Registered', render: (business) => karachiDate(business.createdAt) },
+                  ]}
+                  rows={recentBusinesses}
+                  rowKey={(business) => business.id}
+                />
               ) : <EmptyState title="No businesses yet" />}
             </section>
           </section>
@@ -3154,34 +3199,54 @@ function App() {
               </form>
             )}
             {loading ? <LoadingState /> : platformBusinesses.length ? (
-              <div className="table-wrap"><table><thead><tr><th>Business</th><th>Slug</th><th>Members</th><th>Status</th><th>Actions</th></tr></thead>
-                <tbody>{platformBusinesses.map((business) => (
-                  <tr key={business.id}>
-                    <td>
-                      <strong>{business.name}</strong>
-                      <small className="table-note">{business.template?.name ?? 'Tailor template'}</small>
-                      <small className={business.owner ? 'table-note' : 'table-note table-note-warn'}>
-                        {business.owner ? `Owner: ${business.owner.name}` : 'No owner assigned'}
-                      </small>
-                    </td>
-                    <td>{business.slug}</td>
-                    <td>
-                      <strong>{business.activeMemberships ?? business._count?.memberships ?? 0}</strong>
-                      <small className="table-note">{business._count?.memberships ?? 0} total</small>
-                    </td>
-                    <td><StatusPill status={business.status} /></td>
-                    <td><div className="row-actions">
-                      {grants.has('platform:businesses:read') && <button className="button button-secondary" disabled={!online} onClick={() => openBusinessMembers(business)}>Members</button>}
-                      {grants.has('platform:businesses:read') && grants.has('platform:businesses:manage') && <button className="button button-secondary" disabled={!online} onClick={() => openBusinessModules(business)}>Modules</button>}
-                      {grants.has('platform:businesses:manage') && !business.owner && <button className="button button-secondary" disabled={!online} onClick={() => setOwnerBusinessId(business.id)}>Assign owner</button>}
-                      {grants.has('platform:businesses:manage') && business.status !== 'ACTIVE' && business.status !== 'ARCHIVED' && <button className="button button-primary" disabled={working || !online || !business.owner} title={business.owner ? undefined : 'Assign an owner before activating'} onClick={() => void updateBusinessStatus(business, 'ACTIVE')}>Activate</button>}
-                      {grants.has('platform:businesses:manage') && business.status === 'ACTIVE' && <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void updateBusinessStatus(business, 'SUSPENDED')}>Suspend</button>}
-                      {grants.has('platform:businesses:manage') && business.status !== 'ARCHIVED' && <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void updateBusinessStatus(business, 'ARCHIVED')}>Archive</button>}
-                      {grants.has('platform:businesses:manage') && business.status === 'ARCHIVED' && <button className="button button-primary" disabled={working || !online || !business.owner} title={business.owner ? undefined : 'Assign an owner before restoring'} onClick={() => void updateBusinessStatus(business, 'ACTIVE')}>Restore</button>}
-                    </div></td>
-                  </tr>
-                ))}</tbody>
-              </table></div>
+              <DataTable
+                columns={[
+                  {
+                    key: 'business',
+                    label: 'Business',
+                    search: (business) => `${business.name} ${business.slug} ${business.owner?.name ?? ''} ${business.status}`,
+                    render: (business) => (
+                      <>
+                        <strong>{business.name}</strong>
+                        <small className="table-note">{business.template?.name ?? 'Tailor template'}</small>
+                        <small className={business.owner ? 'table-note' : 'table-note table-note-warn'}>
+                          {business.owner ? `Owner: ${business.owner.name}` : 'No owner assigned'}
+                        </small>
+                      </>
+                    ),
+                  },
+                  { key: 'slug', label: 'Slug', render: (business) => business.slug },
+                  {
+                    key: 'members',
+                    label: 'Members',
+                    render: (business) => (
+                      <>
+                        <strong>{business.activeMemberships ?? business._count?.memberships ?? 0}</strong>
+                        <small className="table-note">{business._count?.memberships ?? 0} total</small>
+                      </>
+                    ),
+                  },
+                  { key: 'status', label: 'Status', search: (business) => business.status, render: (business) => <StatusPill status={business.status} /> },
+                  {
+                    key: 'actions',
+                    label: 'Actions',
+                    render: (business) => (
+                      <div className="row-actions">
+                        {grants.has('platform:businesses:read') && <button className="button button-secondary" disabled={!online} onClick={() => openBusinessMembers(business)}>Members</button>}
+                        {grants.has('platform:businesses:read') && grants.has('platform:businesses:manage') && <button className="button button-secondary" disabled={!online} onClick={() => openBusinessModules(business)}>Modules</button>}
+                        {grants.has('platform:businesses:manage') && !business.owner && <button className="button button-secondary" disabled={!online} onClick={() => setOwnerBusinessId(business.id)}>Assign owner</button>}
+                        {grants.has('platform:businesses:manage') && business.status !== 'ACTIVE' && business.status !== 'ARCHIVED' && <button className="button button-primary" disabled={working || !online || !business.owner} title={business.owner ? undefined : 'Assign an owner before activating'} onClick={() => void updateBusinessStatus(business, 'ACTIVE')}>Activate</button>}
+                        {grants.has('platform:businesses:manage') && business.status === 'ACTIVE' && <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void updateBusinessStatus(business, 'SUSPENDED')}>Suspend</button>}
+                        {grants.has('platform:businesses:manage') && business.status !== 'ARCHIVED' && <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void updateBusinessStatus(business, 'ARCHIVED')}>Archive</button>}
+                        {grants.has('platform:businesses:manage') && business.status === 'ARCHIVED' && <button className="button button-primary" disabled={working || !online || !business.owner} title={business.owner ? undefined : 'Assign an owner before restoring'} onClick={() => void updateBusinessStatus(business, 'ACTIVE')}>Restore</button>}
+                      </div>
+                    ),
+                  },
+                ]}
+                rows={platformBusinesses}
+                rowKey={(business) => business.id}
+                emptyText="No businesses registered"
+              />
             ) : !loading && <EmptyState title="No businesses registered" detail="Create a pending business to begin onboarding." />}
           </section>
         )}
@@ -3363,23 +3428,84 @@ function App() {
                 )}
                 <section className="panel content-stack">
                   <div><h3>Upcoming expiry alerts</h3><p className="muted">Contact these businesses within the configured reminder window before access expires.</p></div>
-                  {billingDashboard.expiring.length ? <div className="table-wrap"><table><thead><tr><th>Business</th><th>Plan</th><th>Expires (Karachi)</th><th>Manage</th></tr></thead><tbody>
-                    {billingDashboard.expiring.map((item) => <tr key={item.id}><td>{item.business.name}</td><td>{item.plan.name}</td><td>{karachiDate(item.endsAt)}</td><td><button className="button button-secondary" onClick={() => setBillingBusinessId(item.business.id)}>View history</button></td></tr>)}
-                  </tbody></table></div> : <EmptyState title="No upcoming expiries" />}
+                  {billingDashboard.expiring.length ? (
+                    <DataTable
+                      columns={[
+                        { key: 'business', label: 'Business', search: (item) => `${item.business.name} ${item.plan.name}`, render: (item) => item.business.name },
+                        { key: 'plan', label: 'Plan', render: (item) => item.plan.name },
+                        { key: 'expires', label: 'Expires (Karachi)', search: (item) => item.endsAt, render: (item) => karachiDate(item.endsAt) },
+                        { key: 'manage', label: 'Manage', render: (item) => <button className="button button-secondary" onClick={() => setBillingBusinessId(item.business.id)}>View history</button> },
+                      ]}
+                      rows={billingDashboard.expiring}
+                      rowKey={(item) => item.id}
+                      emptyText="No upcoming expiries"
+                    />
+                  ) : <EmptyState title="No upcoming expiries" />}
                 </section>
                 {billingBusinessDetail && <section className="panel content-stack">
                   <div className="section-heading"><div><h3>{billingBusinessDetail.business.name} subscription history</h3><p className="muted">Business status: {billingBusinessDetail.business.status} · {billingBusinessDetail.business.slug}</p></div><button className="button button-quiet" onClick={() => setBillingBusinessId('')}>Close</button></div>
-                  {billingBusinessDetail.subscriptions.length ? <div className="table-wrap"><table><thead><tr><th>Plan</th><th>Status</th><th>Cycle</th><th>Period</th><th>Management</th></tr></thead><tbody>
-                    {billingBusinessDetail.subscriptions.map((subscription) => <tr key={subscription.id}><td>{subscription.plan.name}{subscription.grandfathered ? ' · Legacy access' : subscription.complimentary ? ' · Complimentary' : ''}</td><td>{subscription.status}</td><td>{subscription.cycle}</td><td>{karachiDate(subscription.startsAt)} – {karachiDate(subscription.endsAt)}</td><td><div className="row-actions">{grants.has('platform:subscriptions:manage') && subscription.status === 'ACTIVE' && <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void changeSubscriptionStatus(subscription.id, 'SUSPENDED')}>Suspend</button>}{grants.has('platform:subscriptions:manage') && subscription.status === 'SUSPENDED' && <button className="button button-primary" disabled={working || !online} onClick={() => void changeSubscriptionStatus(subscription.id, 'ACTIVE')}>Reactivate</button>}{grants.has('platform:subscriptions:manage') && !['CANCELLED', 'EXPIRED'].includes(subscription.status) && <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void changeSubscriptionStatus(subscription.id, 'CANCELLED')}>Cancel</button>}</div></td></tr>)}
-                  </tbody></table></div> : <EmptyState title="No subscription periods" />}
+                  {billingBusinessDetail.subscriptions.length ? (
+                    <DataTable
+                      columns={[
+                        { key: 'plan', label: 'Plan', search: (subscription) => `${subscription.plan.name} ${subscription.status} ${subscription.cycle}`, render: (subscription) => <>{subscription.plan.name}{subscription.grandfathered ? ' · Legacy access' : subscription.complimentary ? ' · Complimentary' : ''}</> },
+                        { key: 'status', label: 'Status', render: (subscription) => subscription.status },
+                        { key: 'cycle', label: 'Cycle', render: (subscription) => subscription.cycle },
+                        { key: 'period', label: 'Period', search: (subscription) => `${subscription.startsAt} ${subscription.endsAt}`, render: (subscription) => <>{karachiDate(subscription.startsAt)} – {karachiDate(subscription.endsAt)}</> },
+                        {
+                          key: 'management',
+                          label: 'Management',
+                          render: (subscription) => (
+                            <div className="row-actions">
+                              {grants.has('platform:subscriptions:manage') && subscription.status === 'ACTIVE' && <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void changeSubscriptionStatus(subscription.id, 'SUSPENDED')}>Suspend</button>}
+                              {grants.has('platform:subscriptions:manage') && subscription.status === 'SUSPENDED' && <button className="button button-primary" disabled={working || !online} onClick={() => void changeSubscriptionStatus(subscription.id, 'ACTIVE')}>Reactivate</button>}
+                              {grants.has('platform:subscriptions:manage') && !['CANCELLED', 'EXPIRED'].includes(subscription.status) && <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void changeSubscriptionStatus(subscription.id, 'CANCELLED')}>Cancel</button>}
+                            </div>
+                          ),
+                        },
+                      ]}
+                      rows={billingBusinessDetail.subscriptions}
+                      rowKey={(subscription) => subscription.id}
+                      emptyText="No subscription periods"
+                    />
+                  ) : <EmptyState title="No subscription periods" />}
                   <h3>Payments and system invoices</h3>
-                  {billingBusinessDetail.payments.length ? <div className="table-wrap"><table><thead><tr><th>Transaction</th><th>Amount</th><th>Status</th><th>Invoice</th><th>Submitted</th><th>Receipt</th></tr></thead><tbody>
-                    {billingBusinessDetail.payments.map((payment) => <tr key={payment.id}><td>{payment.transactionReference}</td><td>{money(payment.amount)}</td><td>{payment.status}</td><td>{payment.invoiceNumber ?? '—'}</td><td>{karachiDate(payment.createdAt)}</td><td><div className="row-actions">{payment.invoiceNumber && grants.has('platform:payments:review') && <button className="button button-quiet" disabled={working} onClick={() => void downloadSubscriptionReceipt(payment.id, true)}>Receipt PDF</button>}{payment.status === 'APPROVED' && canApprovePayments && <button className="button button-secondary" disabled={working || !online} onClick={() => void recordSubscriptionAdjustment(payment)}>Record refund/adjustment</button>}</div></td></tr>)}
-                  </tbody></table></div> : <EmptyState title="No subscription payments" />}
+                  {billingBusinessDetail.payments.length ? (
+                    <DataTable
+                      columns={[
+                        { key: 'transaction', label: 'Transaction', search: (payment) => `${payment.transactionReference} ${payment.invoiceNumber ?? ''} ${payment.status}`, render: (payment) => payment.transactionReference },
+                        { key: 'amount', label: 'Amount', align: 'right', render: (payment) => money(payment.amount) },
+                        { key: 'status', label: 'Status', render: (payment) => payment.status },
+                        { key: 'invoice', label: 'Invoice', render: (payment) => payment.invoiceNumber ?? '—' },
+                        { key: 'submitted', label: 'Submitted', search: (payment) => payment.createdAt, render: (payment) => karachiDate(payment.createdAt) },
+                        {
+                          key: 'receipt',
+                          label: 'Receipt',
+                          render: (payment) => (
+                            <div className="row-actions">
+                              {payment.invoiceNumber && grants.has('platform:payments:review') && <button className="button button-quiet" disabled={working} onClick={() => void downloadSubscriptionReceipt(payment.id, true)}>Receipt PDF</button>}
+                              {payment.status === 'APPROVED' && canApprovePayments && <button className="button button-secondary" disabled={working || !online} onClick={() => void recordSubscriptionAdjustment(payment)}>Record refund/adjustment</button>}
+                            </div>
+                          ),
+                        },
+                      ]}
+                      rows={billingBusinessDetail.payments}
+                      rowKey={(payment) => payment.id}
+                      emptyText="No subscription payments"
+                    />
+                  ) : <EmptyState title="No subscription payments" />}
                   <h3>Renewal and admin activity</h3>
-                  {billingBusinessDetail.events.length ? <div className="table-wrap"><table><thead><tr><th>Action</th><th>Details</th><th>Recorded (Karachi)</th></tr></thead><tbody>
-                    {billingBusinessDetail.events.map((event) => <tr key={event.id}><td>{event.action.replaceAll('.', ' ')}</td><td>{Object.entries(event.metadata).map(([key, value]) => `${key}: ${String(value)}`).join(' · ') || '—'}</td><td>{karachiDate(event.createdAt)}</td></tr>)}
-                  </tbody></table></div> : <EmptyState title="No subscription events recorded" />}
+                  {billingBusinessDetail.events.length ? (
+                    <DataTable
+                      columns={[
+                        { key: 'action', label: 'Action', search: (event) => `${event.action} ${Object.entries(event.metadata).map(([key, value]) => `${key}: ${String(value)}`).join(' ')}`, render: (event) => event.action.replaceAll('.', ' ') },
+                        { key: 'details', label: 'Details', render: (event) => Object.entries(event.metadata).map(([key, value]) => `${key}: ${String(value)}`).join(' · ') || '—' },
+                        { key: 'recorded', label: 'Recorded (Karachi)', search: (event) => event.createdAt, render: (event) => karachiDate(event.createdAt) },
+                      ]}
+                      rows={billingBusinessDetail.events}
+                      rowKey={(event) => event.id}
+                      emptyText="No subscription events recorded"
+                    />
+                  ) : <EmptyState title="No subscription events recorded" />}
                 </section>}
               </>
             ) : <EmptyState title="Subscription overview unavailable" />}
@@ -3408,30 +3534,90 @@ function App() {
               <div className="row-actions"><button className="button button-primary" disabled={working || !online}>{editingPlanId ? 'Save plan changes' : 'Create plan'}</button>{editingPlanId && <button type="button" className="button button-secondary" onClick={cancelPlanEdit}>Cancel editing</button>}</div>
               </form>
             </details>
-            {loading ? <LoadingState /> : billingPlans.length ? <div className="table-wrap"><table><thead><tr><th>Plan</th><th>Monthly</th><th>Yearly</th><th>Trial</th><th>Subscriptions</th><th>Default</th><th>Actions</th></tr></thead><tbody>
-              {billingPlans.map((plan) => <tr key={plan.id}><td><strong>{plan.name}</strong><small className="table-note">{plan.active ? 'Active' : 'Inactive'}{plan.description ? ` · ${plan.description}` : ''}</small></td><td>{money(plan.monthlyPrice)}</td><td>{money(plan.yearlyPrice)}</td><td>{plan.trialDays} days</td><td>{plan._count?.subscriptions ?? 0}</td><td>{plan.isDefault ? 'Yes' : 'No'}</td><td><div className="row-actions"><button className="button button-secondary" disabled={working || !online} onClick={() => editPlan(plan)}>Edit</button><button className="button button-secondary" disabled={working || !online || plan.isDefault || !plan.active} onClick={() => void togglePlan(plan, { isDefault: true })}>Make default</button><button className={plan.active ? 'button button-danger-quiet' : 'button button-primary'} disabled={working || !online || (plan.active && plan.isDefault)} title={plan.active && plan.isDefault ? 'Select another default plan first' : undefined} onClick={() => void togglePlan(plan, { active: !plan.active })}>{plan.active ? 'Deactivate' : 'Activate'}</button></div></td></tr>)}
-            </tbody></table></div> : <EmptyState title="No plans configured" />}
+            {loading ? <LoadingState /> : billingPlans.length ? (
+              <DataTable
+                columns={[
+                  {
+                    key: 'plan',
+                    label: 'Plan',
+                    search: (plan) => `${plan.name} ${plan.description ?? ''} ${plan.active ? 'active' : 'inactive'}`,
+                    render: (plan) => <><strong>{plan.name}</strong><small className="table-note">{plan.active ? 'Active' : 'Inactive'}{plan.description ? ` · ${plan.description}` : ''}</small></>,
+                  },
+                  { key: 'monthly', label: 'Monthly', align: 'right', render: (plan) => money(plan.monthlyPrice) },
+                  { key: 'yearly', label: 'Yearly', align: 'right', render: (plan) => money(plan.yearlyPrice) },
+                  { key: 'trial', label: 'Trial', render: (plan) => `${plan.trialDays} days` },
+                  { key: 'subscriptions', label: 'Subscriptions', align: 'right', render: (plan) => plan._count?.subscriptions ?? 0 },
+                  { key: 'default', label: 'Default', search: (plan) => plan.isDefault ? 'yes default' : 'no', render: (plan) => plan.isDefault ? 'Yes' : 'No' },
+                  {
+                    key: 'actions',
+                    label: 'Actions',
+                    render: (plan) => (
+                      <div className="row-actions">
+                        <button className="button button-secondary" disabled={working || !online} onClick={() => editPlan(plan)}>Edit</button>
+                        <button className="button button-secondary" disabled={working || !online || plan.isDefault || !plan.active} onClick={() => void togglePlan(plan, { isDefault: true })}>Make default</button>
+                        <button className={plan.active ? 'button button-danger-quiet' : 'button button-primary'} disabled={working || !online || (plan.active && plan.isDefault)} title={plan.active && plan.isDefault ? 'Select another default plan first' : undefined} onClick={() => void togglePlan(plan, { active: !plan.active })}>{plan.active ? 'Deactivate' : 'Activate'}</button>
+                      </div>
+                    ),
+                  },
+                ]}
+                rows={billingPlans}
+                rowKey={(plan) => plan.id}
+                emptyText="No plans configured"
+              />
+            ) : <EmptyState title="No plans configured" />}
           </section>
         )}
         {platformView === 'paymentQueue' && grants.has('platform:payments:review') && (
           <section className="content-stack">
             <div className="section-heading"><div><p className="eyebrow">Manual reconciliation</p><h2>Subscription payment review</h2><p className="muted">Verify transfer details independently. Shop submissions do not activate a plan.</p></div></div>
             <form className="billing-filter-bar" onSubmit={(event) => void searchSubscriptionPayments(event)}>
-              <div className="billing-filter-search">
-                <label className="visually-hidden" htmlFor="billing-payment-search">Search transaction reference, sender or business</label>
-                <input id="billing-payment-search" value={billingPaymentSearch} onChange={(event) => setBillingPaymentSearch(event.target.value)} placeholder="Business, transaction reference or sender" maxLength={120} />
-              </div>
               <div className="billing-filter-status">
                 <label className="visually-hidden" htmlFor="billing-payment-filter">Filter payment status</label>
                 <select id="billing-payment-filter" value={billingPaymentFilter} onChange={(event) => setBillingPaymentFilter(event.target.value)}>
                   <option value="REVIEW">Needs review</option><option value="ALL">All statuses</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option><option value="UNDER_REVIEW">Under review</option><option value="PENDING">Pending</option>
                 </select>
-                <button className="button button-secondary" type="submit" disabled={working || !online}>Search</button>
+                <button className="button button-secondary" type="submit" disabled={working || !online}>Apply status</button>
               </div>
             </form>
-            {loading ? <LoadingState /> : billingPayments.length ? <div className="table-wrap"><table><thead><tr><th>Business / plan</th><th>Amount</th><th>Method / date</th><th>Reference / sender</th><th>Review</th></tr></thead><tbody>
-              {billingPayments.map((payment) => <tr key={payment.id}><td><strong>{payment.business?.name}</strong><small className="table-note">{payment.plan.name}</small></td><td><strong>{money(payment.amount)}</strong></td><td>{payment.method}<small className="table-note">{payment.paymentDate.slice(0, 10)}</small></td><td>{payment.transactionReference}<small className="table-note">Sender: {payment.senderName}</small></td><td><StatusPill status={payment.status} />{payment.status === 'PENDING' || payment.status === 'UNDER_REVIEW' ? canApprovePayments ? <div className="row-actions payment-review-actions">{payment.status === 'PENDING' && <button className="button button-secondary" disabled={working || !online} onClick={() => void reviewSubscriptionPayment(payment, 'UNDER_REVIEW')}>Mark reviewing</button>}<button className="button button-primary" disabled={working || !online} onClick={() => void reviewSubscriptionPayment(payment, 'APPROVE')}>Approve</button>{rejectingSubscriptionPaymentId === payment.id ? <div className="reject-payment-form"><label className="visually-hidden" htmlFor={`reject-${payment.id}`}>Rejection reason</label><input id={`reject-${payment.id}`} placeholder="Reason required (5+ characters)" value={rejectionReasons[payment.id] ?? ''} onChange={(event) => setRejectionReasons((current) => ({ ...current, [payment.id]: event.target.value }))} maxLength={1000} /><button className="button button-danger-quiet" disabled={working || !online || (rejectionReasons[payment.id]?.trim().length ?? 0) < 5} onClick={() => void reviewSubscriptionPayment(payment, 'REJECT')}>Confirm reject</button><button className="button button-quiet" onClick={() => setRejectingSubscriptionPaymentId(null)}>Cancel</button></div> : <button className="button button-danger-quiet" disabled={working || !online} onClick={() => setRejectingSubscriptionPaymentId(payment.id)}>Reject</button>}</div> : <small className="table-note">Super Admin review required</small> : null}</td></tr>)}
-            </tbody></table></div> : <EmptyState title="No payments awaiting review" detail="Payment submissions will appear here after shop owners submit their transaction details." />}
+            {loading && !billingPayments.length ? <LoadingState /> : billingPayments.length ? (
+              <DataTable
+                columns={[
+                  {
+                    key: 'business',
+                    label: 'Business / plan',
+                    search: (payment) => `${payment.business?.name ?? ''} ${payment.plan.name} ${payment.transactionReference} ${payment.senderName} ${payment.status}`,
+                    render: (payment) => <><strong>{payment.business?.name}</strong><small className="table-note">{payment.plan.name}</small></>,
+                  },
+                  { key: 'amount', label: 'Amount', align: 'right', render: (payment) => <strong>{money(payment.amount)}</strong> },
+                  { key: 'method', label: 'Method / date', search: (payment) => `${payment.method} ${payment.paymentDate}`, render: (payment) => <>{payment.method}<small className="table-note">{payment.paymentDate.slice(0, 10)}</small></> },
+                  { key: 'reference', label: 'Reference / sender', render: (payment) => <>{payment.transactionReference}<small className="table-note">Sender: {payment.senderName}</small></> },
+                  {
+                    key: 'review',
+                    label: 'Review',
+                    render: (payment) => (
+                      <>
+                        <StatusPill status={payment.status} />
+                        {payment.status === 'PENDING' || payment.status === 'UNDER_REVIEW' ? canApprovePayments ? <div className="row-actions payment-review-actions">{payment.status === 'PENDING' && <button className="button button-secondary" disabled={working || !online} onClick={() => void reviewSubscriptionPayment(payment, 'UNDER_REVIEW')}>Mark reviewing</button>}<button className="button button-primary" disabled={working || !online} onClick={() => void reviewSubscriptionPayment(payment, 'APPROVE')}>Approve</button>{rejectingSubscriptionPaymentId === payment.id ? <div className="reject-payment-form"><label className="visually-hidden" htmlFor={`reject-${payment.id}`}>Rejection reason</label><input id={`reject-${payment.id}`} placeholder="Reason required (5+ characters)" value={rejectionReasons[payment.id] ?? ''} onChange={(event) => setRejectionReasons((current) => ({ ...current, [payment.id]: event.target.value }))} maxLength={1000} /><button className="button button-danger-quiet" disabled={working || !online || (rejectionReasons[payment.id]?.trim().length ?? 0) < 5} onClick={() => void reviewSubscriptionPayment(payment, 'REJECT')}>Confirm reject</button><button className="button button-quiet" onClick={() => setRejectingSubscriptionPaymentId(null)}>Cancel</button></div> : <button className="button button-danger-quiet" disabled={working || !online} onClick={() => setRejectingSubscriptionPaymentId(payment.id)}>Reject</button>}</div> : <small className="table-note">Super Admin review required</small> : null}
+                      </>
+                    ),
+                  },
+                ]}
+                rows={billingPayments}
+                rowKey={(payment) => payment.id}
+                emptyText="No payments awaiting review"
+                search={{
+                  value: billingPaymentSearch,
+                  onChange: (value) => {
+                    setBillingPaymentSearch(value);
+                    void searchSubscriptionPayments(undefined, false, value);
+                  },
+                  placeholder: 'Business, transaction reference or sender',
+                  inputId: 'billing-payment-search',
+                  debounceMs: 400,
+                }}
+                toolbarExtra={billingPaymentCursor ? <button className="button button-secondary" disabled={loading || working || !online} onClick={() => void searchSubscriptionPayments(undefined, true)}>Load more payments</button> : undefined}
+              />
+            ) : <EmptyState title="No payments awaiting review" detail="Payment submissions will appear here after shop owners submit their transaction details." />}
             {billingPaymentCursor && <button className="button button-secondary" disabled={loading || working || !online} onClick={() => void searchSubscriptionPayments(undefined, true)}>Load more payments</button>}
           </section>
         )}
@@ -3538,10 +3724,35 @@ function App() {
           </section>
         )}
         {platformView === 'audit' && grants.has('platform:audit:read') && (
-          <section className="content-stack"><div><h2>Platform audit history</h2><p className="muted">Privileged actions are recorded with actor, entity, timestamp and request ID.</p></div>
-            {loading ? <LoadingState /> : platformAudit.length ? <div className="table-wrap"><table><thead><tr><th>Action</th><th>Actor</th><th>Entity</th><th>Time (Karachi)</th><th>Request ID</th></tr></thead><tbody>
-              {platformAudit.map((event) => <tr key={event.id}><td><strong>{event.action}</strong></td><td>{event.actor?.name ?? 'System'}</td><td>{event.entityType}</td><td>{karachiDate(event.createdAt)}</td><td>{event.requestId}</td></tr>)}
-            </tbody></table></div> : <EmptyState title="No audit events" />}</section>
+          <section className="content-stack"><div><h2>Platform audit history</h2><p className="muted">Privileged actions are recorded with actor, entity, timestamp and request ID. Search runs on the server; pages load on demand.</p></div>
+            {loading && !platformAudit.length ? <LoadingState /> : (
+              <DataTable
+                columns={[
+                  { key: 'action', label: 'Action', render: (event: import('./api').AuditEvent) => <strong>{event.action}</strong>, search: (event) => event.action },
+                  { key: 'actor', label: 'Actor', render: (event: import('./api').AuditEvent) => event.actor?.name ?? 'System', search: (event) => `${event.actor?.name ?? ''} ${event.actor?.email ?? ''}` },
+                  { key: 'entity', label: 'Entity', render: (event: import('./api').AuditEvent) => <>{event.entityType}{event.entityId ? <small className="table-note">{event.entityId}</small> : null}</>, search: (event) => `${event.entityType} ${event.entityId ?? ''}` },
+                  { key: 'time', label: 'Time (Karachi)', render: (event: import('./api').AuditEvent) => karachiDate(event.createdAt), search: (event) => event.createdAt },
+                  { key: 'request', label: 'Request ID', render: (event: import('./api').AuditEvent) => <span className="table-note">{event.requestId}</span>, search: (event) => event.requestId },
+                ]}
+                rows={platformAudit}
+                rowKey={(event) => event.id}
+                emptyText="No audit events"
+                search={{
+                  value: auditSearch,
+                  onChange: setAuditSearch,
+                  placeholder: 'Search action, actor, entity, request ID…',
+                  debounceMs: 350,
+                }}
+                pager={{
+                  pageIndex: auditPagerState.pageIndex,
+                  hasMore: Boolean(auditPagerState.nextCursors[auditPagerState.pageIndex - 1]),
+                  busy: auditPagerState.busy,
+                  onNext: () => void goAuditNext(),
+                  onPrev: () => void goAuditPrev(),
+                }}
+              />
+            )}
+          </section>
         )}
         {platformView === 'health' && grants.has('platform:system:health') && (
           <section className="content-stack"><div><h2>System health</h2><p className="muted">Readiness check for the API's PostgreSQL connection.</p></div>
@@ -3971,25 +4182,30 @@ function App() {
                     )}
                   </div>
                   {recentOrders.length ? (
-                    <div className="table-wrap" style={{ marginTop: 12, boxShadow: 'none' }}>
-                      <table>
-                        <thead><tr><th>{term('order', 'Order')}</th><th>{term('customer', 'Customer')}</th><th>Stage</th><th>Total</th><th>Promised</th></tr></thead>
-                        <tbody>
-                          {recentOrders.map((order) => (
-                            <tr key={order.id}>
-                              <td><strong>{order.orderNumber}</strong><small className="table-note">{karachiDate(order.createdAt)}</small></td>
-                              <td>{order.customer.name}</td>
-                              <td><StatusPill status={order.currentWorkflowStage?.key ?? order.status} /></td>
-                              <td><strong>{money(order.total, businessConfiguration?.business.currency)}</strong>
-                                {moduleEnabled('payments') && permissions.has('payments:read') && Number(order.outstanding ?? 0) > 0
-                                  && <small className="table-note">{money(order.outstanding, businessConfiguration?.business.currency)} due</small>}
-                              </td>
-                              <td>{new Date(order.promisedAt).toLocaleDateString('en-PK', { day: 'numeric', month: 'short' })}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <DataTable
+                      searchable={false}
+                      wrapStyle={{ marginTop: 12, boxShadow: 'none' }}
+                      columns={[
+                        { key: 'order', label: term('order', 'Order'), render: (order) => <><strong>{order.orderNumber}</strong><small className="table-note">{karachiDate(order.createdAt)}</small></> },
+                        { key: 'customer', label: term('customer', 'Customer'), render: (order) => order.customer.name },
+                        { key: 'stage', label: 'Stage', render: (order) => <StatusPill status={order.currentWorkflowStage?.key ?? order.status} /> },
+                        {
+                          key: 'total',
+                          label: 'Total',
+                          align: 'right',
+                          render: (order) => (
+                            <>
+                              <strong>{money(order.total, businessConfiguration?.business.currency)}</strong>
+                              {moduleEnabled('payments') && permissions.has('payments:read') && Number(order.outstanding ?? 0) > 0
+                                && <small className="table-note">{money(order.outstanding, businessConfiguration?.business.currency)} due</small>}
+                            </>
+                          ),
+                        },
+                        { key: 'promised', label: 'Promised', render: (order) => new Date(order.promisedAt).toLocaleDateString('en-PK', { day: 'numeric', month: 'short' }) },
+                      ]}
+                      rows={recentOrders}
+                      rowKey={(order) => order.id}
+                    />
                   ) : <EmptyState title="No orders yet" detail="Create your first order to populate the dashboard." />}
                 </section>
               </>
@@ -4002,11 +4218,6 @@ function App() {
             <div className="section-heading">
               <div><h2>{term('customers', 'Customers')}</h2><p className="muted">{showArchivedCustomers ? 'Archived customers. Restore brings a customer back with all history.' : 'Search by name or phone number.'}</p></div>
               <label className="checkbox-row"><input type="checkbox" checked={showArchivedCustomers} onChange={(event) => setShowArchivedCustomers(event.target.checked)} /> Show archived</label>
-              <form className="search-form" onSubmit={(event) => { event.preventDefault(); void reloadCurrent(); }}>
-                <label className="visually-hidden" htmlFor="customer-search">Search customers</label>
-                <input id="customer-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name or phone" />
-                <button className="button button-secondary" type="submit">Search</button>
-              </form>
               {!showArchivedCustomers && <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadExport('customers')}>Export CSV</button>}
               <button className="button button-quiet" onClick={() => openGuide('customers')}>? Guide</button>
             </div>
@@ -4029,12 +4240,15 @@ function App() {
                 <button className="button button-primary" type="submit" disabled={working || !online}>{working ? 'Saving…' : 'Save customer'}</button>
               </form>
             )}
-            {loading ? <LoadingState /> : customers.length ? (
-              <div className="table-wrap">
-                <table><thead><tr><th>Customer</th><th>Phone</th><th>WhatsApp consent</th><th>Added</th>{permissions.has('customers:write') && <th>Actions</th>}</tr></thead>
-                  <tbody>{customers.map((customer) => (
-                    <tr key={customer.id}>
-                      <td>
+            {loading && !customers.length ? <LoadingState /> : customers.length ? (
+              <DataTable
+                columns={[
+                  {
+                    key: 'customer',
+                    label: 'Customer',
+                    search: (customer) => `${customer.name} ${customer.phone} ${customer.notes ?? ''} ${Object.values(customer.customFields ?? {}).map((value) => String(value)).join(' ')}`,
+                    render: (customer) => (
+                      <>
                         <strong>{customer.name}</strong>
                         {customer.notes && <small className="table-note">{customer.notes}</small>}
                         {Object.entries(customer.customFields ?? {}).map(([key, value]) => (
@@ -4042,9 +4256,15 @@ function App() {
                             {businessConfiguration?.fields.find((field) => field.key === key)?.label ?? key}: {displayFieldValue(value)}
                           </small>
                         ))}
-                      </td>
-                      <td>{customer.phone}</td>
-                      <td>
+                      </>
+                    ),
+                  },
+                  { key: 'phone', label: 'Phone', render: (customer) => customer.phone },
+                  {
+                    key: 'consent',
+                    label: 'WhatsApp consent',
+                    render: (customer) => (
+                      <>
                         <span className="notification-pill">{customer.whatsappConsent && !customer.whatsappOptedOutAt ? 'Opted in' : 'Not opted in'}</span>
                         {permissions.has('customers:write') && (
                           <button
@@ -4054,19 +4274,28 @@ function App() {
                             onClick={() => void toggleWhatsAppConsent(customer)}
                           >{customer.whatsappConsent ? 'Opt out' : 'Record consent'}</button>
                         )}
-                      </td>
-                      <td>{karachiDate(customer.createdAt)}</td>
-                      {permissions.has('customers:write') && (
-                        <td>
-                          {showArchivedCustomers
-                            ? <button className="button button-secondary" disabled={working || !online} onClick={() => void restoreCustomerAction(customer)}>Restore</button>
-                            : <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void archiveCustomerAction(customer)}>Archive</button>}
-                        </td>
-                      )}
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div>
+                      </>
+                    ),
+                  },
+                  { key: 'added', label: 'Added', search: (customer) => customer.createdAt, render: (customer) => karachiDate(customer.createdAt) },
+                  ...(permissions.has('customers:write') ? [{
+                    key: 'actions',
+                    label: 'Actions',
+                    render: (customer: Customer) => showArchivedCustomers
+                      ? <button className="button button-secondary" disabled={working || !online} onClick={() => void restoreCustomerAction(customer)}>Restore</button>
+                      : <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void archiveCustomerAction(customer)}>Archive</button>,
+                  }] : []),
+                ]}
+                rows={customers}
+                rowKey={(customer) => customer.id}
+                emptyText={showArchivedCustomers ? 'No archived customers' : 'No customers yet'}
+                search={{
+                  value: search,
+                  onChange: setSearch,
+                  placeholder: 'Name or phone',
+                  inputId: 'customer-search',
+                }}
+              />
             ) : <EmptyState title={showArchivedCustomers ? 'No archived customers' : 'No customers yet'} detail={showArchivedCustomers ? 'Archived customers will appear here.' : 'Add a customer above or try a broader search.'} />}
           </section>
         )}
@@ -4075,11 +4304,6 @@ function App() {
           <section className="content-stack">
             <div className="section-heading">
               <div><h2>{term('items', 'Catalog')}</h2><p className="muted">Manage reusable items and services for this business.</p></div>
-              <form className="search-form" onSubmit={(event) => { event.preventDefault(); void reloadCurrent(); }}>
-                <label className="visually-hidden" htmlFor="catalog-search">Search catalog</label>
-                <input id="catalog-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name or SKU" />
-                <button className="button button-secondary" type="submit">Search</button>
-              </form>
             </div>
             {permissions.has('settings:manage') && (
               <form className="panel form-panel" onSubmit={addCatalogItem}>
@@ -4123,33 +4347,61 @@ function App() {
                 {editingCatalogItemId && <button className="button button-secondary" type="button" onClick={() => { setEditingCatalogItemId(null); setCatalogName(''); setCatalogDescription(''); setCatalogSku(''); setCatalogUnitPrice(''); setCatalogStockVariantId(''); setCatalogCustomFields({}); }}>Cancel edit</button>}
               </form>
             )}
-            {loading ? <LoadingState /> : catalogItems.length ? (
-              <div className="table-wrap">
-                <table><thead><tr><th>{term('item', 'Item')}</th><th>Type</th><th>Code</th><th>Unit price</th><th>Stock tracking</th><th>Status</th><th>Action</th></tr></thead>
-                  <tbody>{catalogItems.map((item) => (
-                    <tr key={item.id}>
-                      <td><strong>{item.name}</strong>{Object.entries(item.customFields).map(([key, value]) => (
-                        <small className="table-note" key={key}>{catalogFields.find((field) => field.key === key)?.label ?? key}: {displayFieldValue(value)}</small>
-                      ))}</td>
-                      <td>{businessConfiguration?.itemTypes.find((type) => type.key === item.typeKey)?.label ?? item.typeKey}</td>
-                      <td>{item.sku ?? '—'}</td>
-                      <td>{item.unitPrice ? `${money(item.unitPrice, businessConfiguration?.business.currency)} / ${item.unit}` : `— / ${item.unit}`}</td>
-                      <td>{item.stockVariantId
-                        ? catalogInventoryItems.flatMap((stockItem) => stockItem.variants.map((variant) => ({ stockItem, variant })))
-                          .find(({ variant }) => variant.id === item.stockVariantId)
-                          ? (() => {
-                            const link = catalogInventoryItems.flatMap((stockItem) => stockItem.variants.map((variant) => ({ stockItem, variant })))
-                              .find(({ variant }) => variant.id === item.stockVariantId)!;
-                            return `${link.stockItem.name} / ${link.variant.name}`;
-                          })()
-                          : 'Linked stock variant unavailable'
-                        : 'Not linked'}</td>
-                      <td><span className="notification-pill">{item.active ? 'Active' : 'Inactive'}</span></td>
-                      <td>{permissions.has('settings:manage') && <><button className="button button-quiet" disabled={working || !online} onClick={() => editCatalogItem(item)}>Edit</button><button className="button button-quiet" disabled={working || !online} onClick={() => void setCatalogItemActive(item, !item.active)}>{item.active ? 'Deactivate' : 'Activate'}</button></>}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div>
+            {loading && !catalogItems.length ? <LoadingState /> : catalogItems.length ? (
+              <DataTable
+                columns={[
+                  {
+                    key: 'item',
+                    label: term('item', 'Item'),
+                    search: (item) => `${item.name} ${item.sku ?? ''} ${item.typeKey} ${Object.values(item.customFields).map((value) => String(value)).join(' ')}`,
+                    render: (item) => (
+                      <>
+                        <strong>{item.name}</strong>
+                        {Object.entries(item.customFields).map(([key, value]) => (
+                          <small className="table-note" key={key}>{catalogFields.find((field) => field.key === key)?.label ?? key}: {displayFieldValue(value)}</small>
+                        ))}
+                      </>
+                    ),
+                  },
+                  { key: 'type', label: 'Type', render: (item) => businessConfiguration?.itemTypes.find((type) => type.key === item.typeKey)?.label ?? item.typeKey },
+                  { key: 'code', label: 'Code', render: (item) => item.sku ?? '—' },
+                  { key: 'price', label: 'Unit price', align: 'right', render: (item) => item.unitPrice ? `${money(item.unitPrice, businessConfiguration?.business.currency)} / ${item.unit}` : `— / ${item.unit}` },
+                  {
+                    key: 'stock',
+                    label: 'Stock tracking',
+                    render: (item) => item.stockVariantId
+                      ? catalogInventoryItems.flatMap((stockItem) => stockItem.variants.map((variant) => ({ stockItem, variant })))
+                        .find(({ variant }) => variant.id === item.stockVariantId)
+                        ? (() => {
+                          const link = catalogInventoryItems.flatMap((stockItem) => stockItem.variants.map((variant) => ({ stockItem, variant })))
+                            .find(({ variant }) => variant.id === item.stockVariantId)!;
+                          return `${link.stockItem.name} / ${link.variant.name}`;
+                        })()
+                        : 'Linked stock variant unavailable'
+                      : 'Not linked',
+                  },
+                  { key: 'status', label: 'Status', search: (item) => item.active ? 'active' : 'inactive', render: (item) => <span className="notification-pill">{item.active ? 'Active' : 'Inactive'}</span> },
+                  {
+                    key: 'action',
+                    label: 'Action',
+                    render: (item) => permissions.has('settings:manage') && (
+                      <>
+                        <button className="button button-quiet" disabled={working || !online} onClick={() => editCatalogItem(item)}>Edit</button>
+                        <button className="button button-quiet" disabled={working || !online} onClick={() => void setCatalogItemActive(item, !item.active)}>{item.active ? 'Deactivate' : 'Activate'}</button>
+                      </>
+                    ),
+                  },
+                ]}
+                rows={catalogItems}
+                rowKey={(item) => item.id}
+                emptyText={`No ${term('items', 'catalog items').toLowerCase()} yet`}
+                search={{
+                  value: search,
+                  onChange: setSearch,
+                  placeholder: 'Name or SKU',
+                  inputId: 'catalog-search',
+                }}
+              />
             ) : <EmptyState title={`No ${term('items', 'catalog items').toLowerCase()} yet`} detail="Create a catalog item or search with a different term." />}
           </section>
         )}
@@ -4390,20 +4642,29 @@ function App() {
               </div>
             </div>
             {payments.length ? (
-              <div className="table-wrap">
-                <table><thead><tr><th>Receipt</th><th>Customer / order</th><th>Type</th><th>Method</th><th>Amount</th><th></th></tr></thead>
-                  <tbody>{payments.map((payment) => (
-                    <tr key={payment.id}>
-                      <td><strong>{payment.receiptNumber}</strong><small className="table-note">{karachiDate(payment.createdAt)}</small></td>
-                      <td>{payment.order.customer.name}<small className="table-note">{payment.order.orderNumber}</small></td>
-                      <td>{payment.kind === 'REVERSAL' ? 'Correction' : 'Payment'}</td>
-                      <td>{payment.method.toLowerCase()}</td>
-                      <td className={payment.kind === 'REVERSAL' ? 'negative-money' : ''}>{payment.kind === 'REVERSAL' ? '−' : ''}{money(payment.amount)}</td>
-                      <td><button className="button button-quiet" onClick={() => void showReceipt(payment.id)}>Receipt</button></td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div>
+              <DataTable
+                columns={[
+                  {
+                    key: 'receipt',
+                    label: 'Receipt',
+                    search: (payment) => `${payment.receiptNumber} ${payment.order.customer.name} ${payment.order.orderNumber} ${payment.method} ${payment.kind}`,
+                    render: (payment) => <><strong>{payment.receiptNumber}</strong><small className="table-note">{karachiDate(payment.createdAt)}</small></>,
+                  },
+                  { key: 'customer', label: 'Customer / order', render: (payment) => <>{payment.order.customer.name}<small className="table-note">{payment.order.orderNumber}</small></> },
+                  { key: 'type', label: 'Type', render: (payment) => payment.kind === 'REVERSAL' ? 'Correction' : 'Payment' },
+                  { key: 'method', label: 'Method', render: (payment) => payment.method.toLowerCase() },
+                  {
+                    key: 'amount',
+                    label: 'Amount',
+                    align: 'right',
+                    render: (payment) => <span className={payment.kind === 'REVERSAL' ? 'negative-money' : ''}>{payment.kind === 'REVERSAL' ? '−' : ''}{money(payment.amount)}</span>,
+                  },
+                  { key: 'actions', label: '', render: (payment) => <button className="button button-quiet" onClick={() => void showReceipt(payment.id)}>Receipt</button> },
+                ]}
+                rows={payments}
+                rowKey={(payment) => payment.id}
+                emptyText="No payments recorded"
+              />
             ) : <EmptyState title="No payments recorded" detail="Payments will appear here when an advance or partial payment is posted." />}
           </section>
         )}
@@ -4412,22 +4673,28 @@ function App() {
           <section className="content-stack">
             <div className="section-heading"><div><h2>WhatsApp delivery history</h2><p className="muted">Sent means accepted by Meta; Delivered and Read are confirmed by verified delivery webhooks.</p></div></div>
             {notifications.length ? (
-              <div className="table-wrap">
-                <table><thead><tr><th>Created</th><th>Customer number</th><th>Event</th><th>Status</th><th>Details</th></tr></thead>
-                  <tbody>{notifications.map((notification) => (
-                    <tr key={notification.id}>
-                      <td>{karachiDate(notification.createdAt)}</td>
-                      <td>{notification.recipientPhone || 'Invalid number'}</td>
-                      <td>{notification.kind.replaceAll('_', ' ').toLowerCase()}</td>
-                      <td><NotificationPill status={notification.status} /></td>
-                      <td>
+              <DataTable
+                columns={[
+                  { key: 'created', label: 'Created', search: (notification) => notification.createdAt, render: (notification) => karachiDate(notification.createdAt) },
+                  { key: 'number', label: 'Customer number', search: (notification) => notification.recipientPhone, render: (notification) => notification.recipientPhone || 'Invalid number' },
+                  { key: 'event', label: 'Event', search: (notification) => notification.kind.replaceAll('_', ' '), render: (notification) => notification.kind.replaceAll('_', ' ').toLowerCase() },
+                  { key: 'status', label: 'Status', search: (notification) => notification.status, render: (notification) => <NotificationPill status={notification.status} /> },
+                  {
+                    key: 'details',
+                    label: 'Details',
+                    search: (notification) => `${notification.renderedMessage ?? ''} ${notification.lastError ?? ''}`,
+                    render: (notification) => (
+                      <>
                         {notification.renderedMessage && <small className="table-note">{notification.renderedMessage}</small>}
                         {notification.lastError ?? (notification.readAt ? `Read ${karachiDate(notification.readAt)}` : notification.deliveredAt ? `Delivered ${karachiDate(notification.deliveredAt)}` : notification.sentAt ? `Sent ${karachiDate(notification.sentAt)}` : `Attempts: ${notification.attemptCount}`)}
-                      </td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div>
+                      </>
+                    ),
+                  },
+                ]}
+                rows={notifications}
+                rowKey={(notification) => notification.id}
+                emptyText="No WhatsApp notifications yet"
+              />
             ) : <EmptyState title="No WhatsApp notifications yet" detail="Order, payment and pickup notifications appear here after their changes commit." />}
           </section>
         )}
@@ -4711,9 +4978,33 @@ function App() {
                 )}
                 <section className="content-stack">
                   <div className="section-heading"><div><h3>Payment history and invoices</h3><p className="muted">Your transfer submissions and approved receipts.</p></div><span className="history-count">{shopSubscription.payments.length} records</span></div>
-                  {shopSubscription.payments.length ? <div className="table-wrap billing-history-table"><table><thead><tr><th>Submitted</th><th>Plan / cycle</th><th>Amount</th><th>Reference</th><th>Status</th><th>Receipt</th></tr></thead><tbody>
-                    {shopSubscription.payments.map((payment) => <tr key={payment.id}><td>{karachiDate(payment.createdAt)}</td><td>{payment.plan.name}<small className="table-note">{payment.cycle.toLowerCase()} · {payment.method}</small></td><td><strong>{money(payment.amount)}</strong></td><td>{payment.transactionReference}<small className="table-note">Sender: {payment.senderName}</small></td><td><StatusPill status={payment.status} />{payment.invoiceNumber && <small className="table-note">Invoice {payment.invoiceNumber}</small>}{payment.rejectionReason && <small className="table-note">Reason: {payment.rejectionReason}</small>}</td><td>{payment.invoiceNumber && <button className="button button-quiet" disabled={working || !online} onClick={() => void downloadSubscriptionReceipt(payment.id)}>PDF</button>}</td></tr>)}
-                  </tbody></table></div> : <EmptyState title="No subscription payment history" detail="Submitted plan payments will appear here for tracking." />}
+                  {shopSubscription.payments.length ? (
+                    <DataTable
+                      wrapClassName="billing-history-table"
+                      columns={[
+                        { key: 'submitted', label: 'Submitted', search: (payment) => payment.createdAt, render: (payment) => karachiDate(payment.createdAt) },
+                        { key: 'plan', label: 'Plan / cycle', search: (payment) => `${payment.plan.name} ${payment.cycle} ${payment.method}`, render: (payment) => <>{payment.plan.name}<small className="table-note">{payment.cycle.toLowerCase()} · {payment.method}</small></> },
+                        { key: 'amount', label: 'Amount', align: 'right', render: (payment) => <strong>{money(payment.amount)}</strong> },
+                        { key: 'reference', label: 'Reference', search: (payment) => `${payment.transactionReference} ${payment.senderName}`, render: (payment) => <>{payment.transactionReference}<small className="table-note">Sender: {payment.senderName}</small></> },
+                        {
+                          key: 'status',
+                          label: 'Status',
+                          search: (payment) => `${payment.status} ${payment.invoiceNumber ?? ''} ${payment.rejectionReason ?? ''}`,
+                          render: (payment) => (
+                            <>
+                              <StatusPill status={payment.status} />
+                              {payment.invoiceNumber && <small className="table-note">Invoice {payment.invoiceNumber}</small>}
+                              {payment.rejectionReason && <small className="table-note">Reason: {payment.rejectionReason}</small>}
+                            </>
+                          ),
+                        },
+                        { key: 'receipt', label: 'Receipt', render: (payment) => payment.invoiceNumber && <button className="button button-quiet" disabled={working || !online} onClick={() => void downloadSubscriptionReceipt(payment.id)}>PDF</button> },
+                      ]}
+                      rows={shopSubscription.payments}
+                      rowKey={(payment) => payment.id}
+                      emptyText="No subscription payment history"
+                    />
+                  ) : <EmptyState title="No subscription payment history" detail="Submitted plan payments will appear here for tracking." />}
                 </section>
               </>
             ) : <EmptyState title="Subscription details unavailable" action="Refresh" onAction={() => void reloadCurrent()} />}

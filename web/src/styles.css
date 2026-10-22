@@ -1098,6 +1098,34 @@ tbody td strong { display: block; color: var(--ink-900); font-size: .8125rem; fo
 .status-adjusted, .status-trial, .notification-sent { color: var(--violet-fg); background: var(--violet-bg); border-color: color-mix(in srgb, var(--violet-fg) 22%, var(--line)); }
 .table-note-warn { color: var(--warn-fg); font-weight: 600; }
 
+/* Reusable searchable/paginated data table (DataTable.tsx). */
+.data-table { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.data-table-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 10px;
+}
+.data-table-search {
+  width: min(100%, 320px); min-width: 0;
+}
+.data-table-search:hover { border-color: var(--ink-300); }
+.data-table-toolbar-end {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-left: auto;
+}
+.data-table-count { color: var(--ink-500); font-size: .75rem; white-space: nowrap; }
+.data-table-size {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--ink-500); font-size: .75rem; white-space: nowrap;
+}
+.data-table-size select {
+  min-height: 32px; padding: 2px 26px 2px 8px; font-size: .75rem;
+  background-position: calc(100% - 13px) 14px, calc(100% - 8px) 14px;
+}
+.data-table-pager { display: inline-flex; align-items: center; gap: 2px; }
+.data-table-pager .button { min-height: 32px; padding: 0 10px; font-size: .75rem; }
+.table-empty {
+  padding: 22px 14px; text-align: center; color: var(--ink-500);
+}
+
 .row-actions {
   display: flex;
   flex-wrap: wrap;

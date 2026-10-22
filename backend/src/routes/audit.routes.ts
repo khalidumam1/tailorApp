@@ -9,6 +9,7 @@ const router = express.Router();
 const querySchema = z.object({
   businessId: z.string().uuid().optional(),
   action: z.string().trim().min(1).max(100).optional(),
+  q: z.string().trim().min(1).max(200).optional(),
   from: z.string().datetime({ offset: true }).optional(),
   to: z.string().datetime({ offset: true }).optional(),
   cursor: z.string().uuid().optional(),
@@ -42,6 +43,18 @@ router.get('/', asyncHandler(async (req, res) => {
   const where = {
     ...(businessId ? { businessId } : {}),
     ...(query.action ? { action: query.action } : {}),
+    // Free-text search across the event identity and its actor so the audit
+    // table can find a request id or operator without scanning every page.
+    // (entityId is a uuid column and cannot be matched with LIKE.)
+    ...(query.q ? {
+      OR: [
+        { action: { contains: query.q, mode: 'insensitive' as const } },
+        { entityType: { contains: query.q, mode: 'insensitive' as const } },
+        { requestId: { contains: query.q, mode: 'insensitive' as const } },
+        { actor: { is: { name: { contains: query.q, mode: 'insensitive' as const } } } },
+        { actor: { is: { email: { contains: query.q, mode: 'insensitive' as const } } } },
+      ],
+    } : {}),
     ...(query.from || query.to ? {
       createdAt: {
         ...(query.from ? { gte: new Date(query.from) } : {}),
