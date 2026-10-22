@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
+import { invalidateAllPolicy, invalidateBusinessPolicy } from '../policy-cache.js';
 import { authenticate, requirePlatformPermission, requireSuperAdminPermission } from '../middleware/auth.js';
 import { generateSubscriptionReceiptPdf, queueSubscriptionPaymentNotification } from '../whatsapp.js';
 
@@ -211,6 +212,7 @@ router.post('/plans', requirePlatformPermission('platform:plans:manage'), asyncH
       });
       return created;
     });
+    invalidateAllPolicy();
     res.status(201).json({ data: plan });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
@@ -252,6 +254,7 @@ router.patch('/plans/:planId', requirePlatformPermission('platform:plans:manage'
       });
       return updated;
     });
+    invalidateAllPolicy();
     res.json({ data: plan });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
@@ -431,6 +434,7 @@ router.patch('/payments/:paymentId/review', requireSuperAdminPermission('platfor
     await queueSubscriptionPaymentNotification(tx, payment.id, 'SUBSCRIPTION_PAYMENT_APPROVED');
     return { payment: updated, subscription };
   }, { maxWait: 10_000, timeout: 30_000 });
+  invalidateBusinessPolicy(result.payment.businessId);
   res.json({ data: result });
 }));
 
@@ -514,6 +518,7 @@ router.post('/businesses/:businessId/subscriptions', requirePlatformPermission('
     });
     return created;
   });
+  invalidateBusinessPolicy(businessId);
   res.status(201).json({ data: subscription });
 }));
 
@@ -555,6 +560,7 @@ router.patch('/subscriptions/:subscriptionId/status', requirePlatformPermission(
     });
     return next;
   });
+  invalidateBusinessPolicy(subscription.businessId);
   res.json({ data: subscription });
 }));
 
@@ -598,6 +604,7 @@ router.post('/payments/:paymentId/adjustments', requireSuperAdminPermission('pla
     });
     return event;
   });
+  invalidateAllPolicy();
   res.status(201).json({ data: record });
 }));
 
@@ -620,6 +627,7 @@ router.put('/settings', requirePlatformPermission('platform:billing:settings'), 
     });
     return updated;
   });
+  invalidateAllPolicy();
   res.json({ data: billingSchema.parse(setting.value) });
 }));
 

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
+import { invalidateBusinessPolicy } from '../policy-cache.js';
 import { authenticate, requirePlatformPermission, requireSuperAdminPermission } from '../middleware/auth.js';
 import { businessPermissions, platformPermissions } from '../permissions.js';
 import { APPLICATION_BRANDING_SETTING_KEY, loadApplicationBranding } from '../application-branding.js';
@@ -304,7 +305,7 @@ router.get('/businesses/:businessId/modules', requirePlatformPermission('platfor
         template: { select: { key: true, name: true } },
       },
     }),
-    resolveBusinessModuleAccess(prisma, businessId),
+    resolveBusinessModuleAccess(prisma, businessId, req),
   ]);
   if (!business) throw new HttpError(404, 'Business not found', 'BUSINESS_NOT_FOUND');
   res.json({ data: {
@@ -405,6 +406,7 @@ router.put('/businesses/:businessId/modules', requirePlatformPermission('platfor
       unchanged,
     };
   });
+  invalidateBusinessPolicy(businessId);
   res.json({ data: result });
 }));
 

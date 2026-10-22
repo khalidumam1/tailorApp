@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { asyncHandler } from '../middleware/async-handler.js';
+import { invalidateBusinessPolicy } from '../policy-cache.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { resolveBusinessModuleAccess } from '../business-modules.js';
 import { businessRoleKey } from '../domain/orders.js';
@@ -432,6 +433,7 @@ router.put('/configuration/structure', authenticate, requireBusinessPermission('
       timeout: 60_000,
     });
 
+    invalidateBusinessPolicy(businessId);
     res.json({ data: saved });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError

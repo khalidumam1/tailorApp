@@ -154,7 +154,10 @@ router.get('/', requireBusinessPermission('customers:read'), asyncHandler(async 
 
   const search = query.q;
   const digits = search ? normalizePakistanPhone(search) : '';
-  const items = await prisma.customer.findMany({
+  // Flat fetch of the page, then one concurrent batch for custom field values
+  // and their definitions — nested includes would cost a round trip per
+  // relation level on high-latency database links.
+  const rows = await prisma.customer.findMany({
     where: {
       businessId,
       deletedAt: query.archived ? { not: null } : null,
@@ -165,18 +168,44 @@ router.get('/', requireBusinessPermission('customers:read'), asyncHandler(async 
         ],
       } : {}),
     },
-    include: {
-      customFieldValues: { include: { fieldDefinition: { select: { key: true, label: true, type: true } } } },
-    },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     take: query.limit + 1,
   });
-  const hasMore = items.length > query.limit;
-  const page = hasMore ? items.slice(0, query.limit) : items;
+  const hasMore = rows.length > query.limit;
+  const page = hasMore ? rows.slice(0, query.limit) : rows;
+
+  if (!page.length) {
+    res.json({ data: { items: [], nextCursor: null } });
+    return;
+  }
+
+  const customerIds = page.map((customer) => customer.id);
+  const [valueRows, definitionRows] = await Promise.all([
+    prisma.customFieldValue.findMany({ where: { customerId: { in: customerIds } } }),
+    prisma.customFieldDefinition.findMany({
+      where: { values: { some: { customerId: { in: customerIds } } } },
+      select: { id: true, key: true },
+    }),
+  ]);
+  const definitionKeyById = new Map(definitionRows.map((definition) => [definition.id, definition.key]));
+  const valuesByCustomerId = new Map<string, typeof valueRows>();
+  for (const value of valueRows) {
+    if (!value.customerId) continue;
+    const bucket = valuesByCustomerId.get(value.customerId);
+    if (bucket) bucket.push(value);
+    else valuesByCustomerId.set(value.customerId, [value]);
+  }
+  const items = page.map((customer) => withCustomFieldMap({
+    ...customer,
+    customFieldValues: (valuesByCustomerId.get(customer.id) ?? []).map((value) => ({
+      ...value,
+      fieldDefinition: { key: definitionKeyById.get(value.fieldDefinitionId) ?? '' },
+    })),
+  }));
   res.json({
     data: {
-      items: page.map(withCustomFieldMap),
+      items,
       nextCursor: hasMore ? page.at(-1)?.id ?? null : null,
     },
   });

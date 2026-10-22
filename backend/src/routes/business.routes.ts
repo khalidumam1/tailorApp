@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
 import { removedItemTypeKeys } from '../domain/item-types.js';
 import { asyncHandler } from '../middleware/async-handler.js';
+import { invalidateBusinessPolicy } from '../policy-cache.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { validateNotificationTemplateBody } from '../domain/notification-templates.js';
 import {
@@ -124,38 +125,81 @@ router.use(authenticate);
 
 router.get('/configuration', asyncHandler(async (req, res) => {
   const businessId = getBusinessId(req);
-  const business = await prisma.business.findUnique({
-    where: { id: businessId },
-    include: {
-      template: {
-        include: {
-          fields: { where: { active: true }, orderBy: [{ module: 'asc' }, { screen: 'asc' }, { sortOrder: 'asc' }] },
-          workflowStages: { where: { active: true }, orderBy: { sortOrder: 'asc' } },
-          workflowTransitions: true,
-        },
+  // The configuration payload reads from many relations. Loading them as one
+  // concurrent batch of flat queries keeps the request to a single database
+  // round trip; a nested include tree would serialize one round trip per
+  // relation level and this endpoint is the first call every app start makes.
+  const [
+    business,
+    template,
+    configuration,
+    templateFields,
+    templateStages,
+    templateTransitions,
+    tenantFields,
+    tenantStages,
+    tenantTransitions,
+    moduleAccess,
+  ] = await Promise.all([
+    prisma.business.findUnique({
+      where: { id: businessId },
+      select: {
+        id: true,
+        name: true,
+        logoUrl: true,
+        businessType: true,
+        currency: true,
+        timezone: true,
       },
-      configuration: true,
-      customFields: {
-        where: { active: true },
-        orderBy: [{ module: 'asc' }, { screen: 'asc' }, { sortOrder: 'asc' }],
+    }),
+    prisma.businessTemplate.findFirst({
+      where: { businesses: { some: { id: businessId } } },
+      select: {
+        id: true,
+        key: true,
+        name: true,
+        category: true,
+        terminology: true,
+        itemTypes: true,
+        paymentMethods: true,
+        dashboardWidgets: true,
+        version: true,
       },
-      workflowStages: { where: { active: true }, orderBy: { sortOrder: 'asc' } },
-      workflowTransitions: true,
-    },
-  });
+    }),
+    prisma.businessConfiguration.findUnique({ where: { businessId } }),
+    prisma.customFieldDefinition.findMany({
+      where: { template: { businesses: { some: { id: businessId } } }, active: true },
+      orderBy: [{ module: 'asc' }, { screen: 'asc' }, { sortOrder: 'asc' }],
+    }),
+    prisma.workflowStage.findMany({
+      where: { template: { businesses: { some: { id: businessId } } }, active: true },
+      orderBy: { sortOrder: 'asc' },
+    }),
+    prisma.workflowTransition.findMany({
+      where: { template: { businesses: { some: { id: businessId } } } },
+    }),
+    prisma.customFieldDefinition.findMany({
+      where: { businessId, active: true },
+      orderBy: [{ module: 'asc' }, { screen: 'asc' }, { sortOrder: 'asc' }],
+    }),
+    prisma.workflowStage.findMany({
+      where: { businessId, active: true },
+      orderBy: { sortOrder: 'asc' },
+    }),
+    prisma.workflowTransition.findMany({ where: { businessId } }),
+    resolveBusinessModuleAccess(prisma, businessId, req),
+  ]);
   if (!business) throw new HttpError(404, 'Business not found', 'BUSINESS_NOT_FOUND');
-  if (!business.template) throw new HttpError(409, 'Business has no assigned template', 'BUSINESS_TEMPLATE_MISSING');
-  const moduleAccess = await resolveBusinessModuleAccess(prisma, businessId);
+  if (!template) throw new HttpError(409, 'Business has no assigned template', 'BUSINESS_TEMPLATE_MISSING');
 
   const terminology = {
-    ...jsonObject(business.template.terminology),
-    ...jsonObject(business.configuration?.terminologyOverrides),
+    ...jsonObject(template.terminology),
+    ...jsonObject(configuration?.terminologyOverrides),
   };
-  const fieldsByKey = new Map(business.template.fields.map((field) => [field.key, field]));
-  for (const field of business.customFields) fieldsByKey.set(field.key, field);
-  const stages = business.workflowStages.length ? business.workflowStages : business.template.workflowStages;
-  const transitions = business.workflowStages.length
-    ? business.workflowTransitions : business.template.workflowTransitions;
+  const fieldsByKey = new Map(templateFields.map((field) => [field.key, field]));
+  for (const field of tenantFields) fieldsByKey.set(field.key, field);
+  const stages = tenantStages.length ? tenantStages : templateStages;
+  const transitions = tenantStages.length ? tenantTransitions : templateTransitions;
   res.json({
     data: {
       business: {
@@ -167,33 +211,33 @@ router.get('/configuration', asyncHandler(async (req, res) => {
         timezone: business.timezone,
       },
       template: {
-        id: business.template.id,
-        key: business.template.key,
-        name: business.template.name,
-        category: business.template.category,
+        id: template.id,
+        key: template.key,
+        name: template.name,
+        category: template.category,
       },
-      itemTypes: business.configuration?.itemTypes ?? business.template.itemTypes,
+      itemTypes: configuration?.itemTypes ?? template.itemTypes,
       availableModules: moduleAccess.platformEnabledModules,
-      availablePaymentMethods: business.template.paymentMethods,
-      availableDashboardWidgets: business.template.dashboardWidgets,
+      availablePaymentMethods: template.paymentMethods,
+      availableDashboardWidgets: template.dashboardWidgets,
       terminology,
       enabledModules: moduleAccess.enabledModules,
-      paymentMethods: business.configuration?.paymentMethods ?? business.template.paymentMethods,
-      dashboardWidgets: business.configuration?.dashboardWidgets ?? business.template.dashboardWidgets,
-      notificationTemplates: business.configuration?.notificationTemplates ?? {},
-      contactPhone: business.configuration?.contactPhone ?? null,
+      paymentMethods: configuration?.paymentMethods ?? template.paymentMethods,
+      dashboardWidgets: configuration?.dashboardWidgets ?? template.dashboardWidgets,
+      notificationTemplates: configuration?.notificationTemplates ?? {},
+      contactPhone: configuration?.contactPhone ?? null,
       fields: [...fieldsByKey.values()].filter((field) => field.active),
-      tenantFields: business.customFields,
+      tenantFields,
       workflow: {
         stages,
         transitions,
       },
-      workflowIsTenantScoped: business.workflowStages.length > 0,
-      version: business.configuration?.version ?? 0,
-      cacheVersion: (business.configuration?.version ?? 0) * 1_000_000 + business.template.version,
-      configurationVersion: business.configuration?.version ?? 0,
-      templateVersion: business.template.version,
-      publishedAt: business.configuration?.publishedAt ?? null,
+      workflowIsTenantScoped: tenantStages.length > 0,
+      version: configuration?.version ?? 0,
+      cacheVersion: (configuration?.version ?? 0) * 1_000_000 + template.version,
+      configurationVersion: configuration?.version ?? 0,
+      templateVersion: template.version,
+      publishedAt: configuration?.publishedAt ?? null,
     },
   });
 }));
@@ -416,6 +460,7 @@ router.put('/configuration', requireBusinessPermission('settings:manage'), async
       });
       return configuration;
     }, { maxWait: 20_000, timeout: 30_000 });
+    invalidateBusinessPolicy(businessId);
     res.json({ data: saved });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
