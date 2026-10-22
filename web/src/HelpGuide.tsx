@@ -60,10 +60,11 @@ export function HelpGuide({ audience, topic, onTopicChange }: {
     <section className="content-stack">
       <div className="section-heading">
         <div>
+          <p className="eyebrow">Help center</p>
           <h2>User Guide</h2>
           <p className="muted">Step-by-step help in simple English, with a Roman Urdu summary on every page. Content version: Phase 3.</p>
         </div>
-        <form className="search-form" onSubmit={(event) => event.preventDefault()}>
+        <form className="search-form guide-search" onSubmit={(event) => event.preventDefault()}>
           <label className="visually-hidden" htmlFor="guide-search">Search the guide</label>
           <input id="guide-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search: order, payment, password…" />
         </form>
@@ -82,8 +83,15 @@ export function HelpGuide({ audience, topic, onTopicChange }: {
         </nav>
         {selected ? (
           <article className="panel guide-article">
-            <h2 className="guide-title">{selected.title}</h2>
+            <header className="guide-hero">
+              <p className="guide-kicker">User guide</p>
+              <h2 className="guide-title">{selected.title}</h2>
+              <div className="guide-hero-rule" aria-hidden="true" />
+            </header>
             <GuideBody body={selected.body} />
+            <footer className="guide-footer">
+              Written in simple English · Roman Urdu summary included
+            </footer>
           </article>
         ) : <p className="muted">No guide pages available.</p>}
       </div>
