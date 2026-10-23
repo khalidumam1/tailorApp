@@ -59,8 +59,18 @@ const BusinessStructureEditors = lazy(() => import('./BusinessStructureEditors')
 const BusinessTeamAdmin = lazy(() => import('./BusinessTeamAdmin').then((module) => ({ default: module.BusinessTeamAdmin })));
 import { AreaChart, BarList, ColumnChart, DonutChart, paletteColor, Sparkline } from './Charts';
 import { Icon, type IconName } from './Icons';
+import { ThemeStudio } from './ThemeStudio';
+import {
+  accentColorFor,
+  DEFAULT_INTERFACE_PREFERENCES,
+  INTERFACE_PREFERENCES_STORAGE_KEY,
+  loadInterfacePreferences,
+  type ColorModePreference,
+  type InterfacePreferences,
+} from './theme';
 
 import './styles.css';
+import './workspace-theme.css';
 
 type View = 'dashboard' | 'orders' | 'catalog' | 'customers' | 'measurements' | 'payments' | 'notifications' | 'subscription' | 'configuration' | 'erp' | 'help';
 type PlatformView =
@@ -91,18 +101,24 @@ type ThemeMode = 'light' | 'dark';
 
 const THEME_STORAGE_KEY = 'tailorapp.theme.v1';
 
-function storedThemePreference(): ThemeMode | null {
+function storedThemePreference(): ColorModePreference | null {
   try {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    return stored === 'light' || stored === 'dark' ? stored : null;
+    return stored === 'light' || stored === 'dark' || stored === 'system' ? stored : null;
   } catch {
     return null;
   }
 }
 
+function systemThemeMode(): ThemeMode {
+  return typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
 const initialThemePreference = storedThemePreference();
 if (typeof document !== 'undefined') {
-  document.documentElement.dataset.theme = initialThemePreference ?? 'light';
+  document.documentElement.dataset.theme = initialThemePreference === 'system'
+    ? systemThemeMode()
+    : initialThemePreference ?? 'light';
 }
 
 /**
@@ -560,9 +576,12 @@ function App() {
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [applicationBranding, setApplicationBranding] = useState<ApplicationBranding>(DEFAULT_APPLICATION_BRANDING);
   const [applicationBrandingDraft, setApplicationBrandingDraft] = useState<ApplicationBranding>(DEFAULT_APPLICATION_BRANDING);
-  const [themeOverride, setThemeOverride] = useState<ThemeMode | null>(initialThemePreference);
+  const [themeOverride, setThemeOverride] = useState<ColorModePreference | null>(initialThemePreference);
+  const [systemMode, setSystemMode] = useState<ThemeMode>(systemThemeMode);
+  const [interfacePreferences, setInterfacePreferences] = useState<InterfacePreferences>(loadInterfacePreferences);
   const [businessLogoFailed, setBusinessLogoFailed] = useState(false);
-  const themeMode = themeOverride ?? applicationBranding.defaultTheme;
+  const colorMode = themeOverride ?? applicationBranding.defaultTheme;
+  const themeMode = themeOverride === 'system' ? systemMode : themeOverride ?? applicationBranding.defaultTheme;
   const [selection, setSelection] = useState<Selection | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -603,8 +622,16 @@ function App() {
   const [templates, setTemplates] = useState<MeasurementTemplate[]>([]);
   const [profiles, setProfiles] = useState<MeasurementProfile[]>([]);
   const [search, setSearch] = useState('');
+  const [workspaceSearch, setWorkspaceSearch] = useState('');
   const [showArchivedCustomers, setShowArchivedCustomers] = useState(false);
   const [showArchivedOrders, setShowArchivedOrders] = useState(false);
+  const [orderDisplayMode, setOrderDisplayMode] = useState<'table' | 'kanban'>(() => {
+    try {
+      return localStorage.getItem('tailorapp.orders.view') === 'table' ? 'table' : 'kanban';
+    } catch {
+      return 'kanban';
+    }
+  });
   const [platformBusinessStatusFilter, setPlatformBusinessStatusFilter] = useState<'' | 'ACTIVE' | 'SUSPENDED' | 'PENDING' | 'ARCHIVED'>('');
   const [resettingUserId, setResettingUserId] = useState('');
   const [resetPasswordValue, setResetPasswordValue] = useState('');
@@ -789,8 +816,8 @@ function App() {
   const [reportFrom, setReportFrom] = useState(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
   const [reportTo, setReportTo] = useState(new Date().toISOString().slice(0, 10));
 
-  function setTheme(nextTheme: ThemeMode) {
-    if (nextTheme === themeMode) return;
+  function setTheme(nextTheme: ColorModePreference) {
+    if (nextTheme === colorMode) return;
     setThemeOverride(nextTheme);
     try {
       localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
@@ -798,6 +825,26 @@ function App() {
       // Theme still applies for this visit when browser storage is unavailable.
     }
   }
+
+  const updateInterfacePreferences = (patch: Partial<InterfacePreferences>) => {
+    setInterfacePreferences((current) => ({ ...current, ...patch }));
+  };
+
+  const themeStudio = (
+    <ThemeStudio
+      preferences={interfacePreferences}
+      colorMode={colorMode}
+      onChange={updateInterfacePreferences}
+      onColorModeChange={setTheme}
+      onReset={() => {
+        setInterfacePreferences({ ...DEFAULT_INTERFACE_PREFERENCES });
+        setThemeOverride(null);
+        try {
+          localStorage.removeItem(THEME_STORAGE_KEY);
+        } catch { /* the in-memory reset still applies */ }
+      }}
+    />
+  );
 
   const themeToggleButton = (
     <div className="theme-switch" role="group" aria-label="Theme">
@@ -1050,9 +1097,13 @@ function App() {
 
   useEffect(() => {
     const preferenceChanged = (event: StorageEvent) => {
+      if (event.key === INTERFACE_PREFERENCES_STORAGE_KEY) {
+        setInterfacePreferences(loadInterfacePreferences());
+        return;
+      }
       if (event.key !== THEME_STORAGE_KEY) return;
       const next = event.newValue;
-      if (next === 'light' || next === 'dark') {
+      if (next === 'light' || next === 'dark' || next === 'system') {
         setThemeOverride(next);
       } else {
         setThemeOverride(null);
@@ -1061,6 +1112,26 @@ function App() {
     window.addEventListener('storage', preferenceChanged);
     return () => window.removeEventListener('storage', preferenceChanged);
   }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const updateSystemMode = () => setSystemMode(media.matches ? 'dark' : 'light');
+    updateSystemMode();
+    media.addEventListener('change', updateSystemMode);
+    return () => media.removeEventListener('change', updateSystemMode);
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(INTERFACE_PREFERENCES_STORAGE_KEY, JSON.stringify(interfacePreferences));
+    } catch { /* appearance remains available for this visit */ }
+  }, [interfacePreferences]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tailorapp.orders.view', orderDisplayMode);
+    } catch { /* the selected orders layout remains available for this visit */ }
+  }, [orderDisplayMode]);
 
   // Persist the session (and the screen the user is on) so a refresh resumes
   // where they left off instead of returning to the login screen. Signing
@@ -1116,15 +1187,23 @@ function App() {
 
   useEffect(() => {
     const root = document.documentElement;
+    const primaryColor = accentColorFor(interfacePreferences, applicationBranding.primaryColor);
     root.dataset.theme = themeMode;
-    root.style.setProperty('--configured-primary', applicationBranding.primaryColor);
-    root.style.setProperty('--configured-primary-foreground', accessibleTextColor(applicationBranding.primaryColor));
+    root.dataset.radius = interfacePreferences.radius;
+    root.dataset.scale = interfacePreferences.scale;
+    root.dataset.content = interfacePreferences.content;
+    root.dataset.sidebarVariant = interfacePreferences.sidebarVariant;
+    root.dataset.sidebarMode = interfacePreferences.sidebarMode;
+    root.dataset.font = interfacePreferences.font;
+    root.style.setProperty('--configured-primary', primaryColor);
+    root.style.setProperty('--configured-primary-foreground', accessibleTextColor(primaryColor));
     root.style.setProperty('--configured-accent', applicationBranding.accentColor);
+    root.style.setProperty('--brand-color', applicationBranding.primaryColor);
     document.title = `${applicationBranding.brandName} · ${currentUser?.context.scope === 'platform' ? 'Platform console' : currentUser ? 'Business workspace' : 'Sign in'}`;
     const description = document.querySelector<HTMLMetaElement>('meta[name="description"]');
     if (description) description.content = applicationBranding.description || 'Manage your business in one clear workspace.';
     const themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-    if (themeColor) themeColor.content = themeMode === 'dark' ? '#101714' : '#f4f7f5';
+    if (themeColor) themeColor.content = themeMode === 'dark' ? '#1d201f' : '#f4f5f3';
     let favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (!favicon) {
       favicon = document.createElement('link');
@@ -1142,7 +1221,7 @@ function App() {
       ? configurableLogoDataUri(parsedFavicon, applicationBranding.brandName)
       : (applicationBranding.faviconUrl || '/favicon.svg');
     favicon.referrerPolicy = 'no-referrer';
-  }, [applicationBranding, currentUser?.context.scope, themeMode]);
+  }, [applicationBranding, currentUser?.context.scope, interfacePreferences, themeMode]);
 
 
   useEffect(() => {
@@ -1554,6 +1633,16 @@ function App() {
       .sort((left, right) => right.value - left.value)
       .slice(0, 5);
   }, [orders]);
+
+  function submitWorkspaceSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const searchableViews: View[] = ['orders', 'customers', 'catalog'];
+    const nextView = searchableViews.includes(view) ? view : 'orders';
+    const shouldReload = nextView === view && search === workspaceSearch;
+    setSearch(workspaceSearch);
+    if (nextView !== view) setView(nextView);
+    if (shouldReload) void reloadCurrent();
+  }
 
   async function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2984,6 +3073,7 @@ function App() {
             <span><strong>{applicationBranding.brandName}</strong><small>Platform console</small></span>
           </div>
           <div className="platform-header-actions">
+            {themeStudio}
             {themeToggleButton}
             <span className="platform-access-badge"><span aria-hidden="true">●</span> Platform administrator</span>
             <div className="platform-identity">
@@ -3980,6 +4070,126 @@ function App() {
             : item.view === 'payments' ? term('payments', item.label) : item.label,
     }));
 
+  const workflowStageFor = (order: Order) => {
+    const stages = businessConfiguration?.workflow.stages ?? [];
+    const stageKey = order.workflowStageKey ?? order.currentWorkflowStage?.key ?? order.status;
+    return (order.workflowStageId ? stages.find((stage) => stage.id === order.workflowStageId) : undefined)
+      ?? stages.find((stage) => stage.key === stageKey)
+      ?? (stageKey === 'FINISHING' ? stages.find((stage) => stage.key === 'FITTING') : undefined)
+      ?? (stageKey === 'FITTING' ? stages.find((stage) => stage.key === 'FINISHING') : undefined)
+      ?? (stageKey === 'READY_FOR_PICKUP' ? stages.find((stage) => stage.key === 'READY') : undefined)
+      ?? (stageKey === 'READY' ? stages.find((stage) => stage.key === 'READY_FOR_PICKUP') : undefined)
+      ?? (stageKey === 'COLLECTED' ? stages.find((stage) => stage.key === 'DELIVERED' || stage.key === 'COMPLETED') : undefined)
+      ?? (order.status === 'NEW' ? stages.find((stage) => stage.isInitial) : undefined);
+  };
+
+  const configuredOrderStages = [...(businessConfiguration?.workflow.stages ?? [])].sort((a, b) => a.sortOrder - b.sortOrder);
+  const orderKanbanColumns = configuredOrderStages.length > 0
+    ? [
+      ...configuredOrderStages.map((stage) => ({
+        key: stage.id,
+        label: stage.label,
+        orders: orders.filter((order) => workflowStageFor(order)?.id === stage.id),
+      })),
+      ...(() => {
+        const unmatched = orders.filter((order) => !workflowStageFor(order));
+        return unmatched.length > 0 ? [{ key: 'other', label: 'Other', orders: unmatched }] : [];
+      })(),
+    ]
+    : Array.from(new Set(orders.map((order) => order.workflowStageKey ?? order.status))).map((key) => ({
+      key,
+      label: orders.find((order) => (order.workflowStageKey ?? order.status) === key)?.currentWorkflowStage?.label ?? key.replaceAll('_', ' '),
+      orders: orders.filter((order) => (order.workflowStageKey ?? order.status) === key),
+    }));
+
+  const renderOrderCard = (order: Order) => (
+    <article className="order-card" key={order.id}>
+      <div className="order-card-main">
+        <div className="order-heading"><span className="order-number">{order.orderNumber}</span><StatusPill status={order.currentWorkflowStage?.label ?? order.workflowStageKey ?? order.status} /></div>
+        <h3>{order.customer.name}</h3>
+        <p className="muted">{order.customer.phone} · Due {karachiDate(order.promisedAt)}</p>
+        <ul className="garment-list">{order.items.map((item) => (
+          <li key={item.id}>
+            {item.quantity} × {item.itemName ?? item.garmentName}
+            {Object.entries(item.customFields ?? {}).map(([key, value]) => (
+              <small className="table-note" key={key}>
+                {businessConfiguration?.fields.find((field) => field.key === key)?.label ?? key}: {displayFieldValue(value)}
+              </small>
+            ))}
+          </li>
+        ))}</ul>
+        {Object.entries(order.customFields ?? {}).map(([key, value]) => (
+          <p className="fine-print" key={key}>
+            {businessConfiguration?.fields.find((field) => field.key === key)?.label ?? key}: {displayFieldValue(value)}
+          </p>
+        ))}
+      </div>
+      <div className="order-card-side">
+        <span className="money-total">{money(order.total, businessConfiguration?.business.currency)}</span>
+        {moduleEnabled('payments') && permissions.has('payments:read') && (
+          <span className="muted">{money(order.outstanding, businessConfiguration?.business.currency)} outstanding</span>
+        )}
+        <div className="row-actions">
+          {permissions.has('orders:write') && (showArchivedOrders
+            ? <button className="button button-secondary" disabled={working || !online} onClick={() => void restoreOrderAction(order)}>Restore</button>
+            : <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void archiveOrderAction(order)}>Archive</button>)}
+          {!showArchivedOrders && permissions.has('orders:transition') && businessConfiguration?.workflow.transitions
+            .filter((transition) => {
+              const currentStage = workflowStageFor(order);
+              return transition.fromStageId === currentStage?.id;
+            })
+            .map((transition) => {
+              const stage = businessConfiguration.workflow.stages.find((item) => item.id === transition.toStageId);
+              const isTransitioningThis = transitioningOrderKey === (stage ? `${order.id}:${stage.key}` : '');
+              return stage ? <button
+                className="button button-secondary"
+                key={transition.id}
+                disabled={working || !online}
+                onClick={() => void changeWorkflowStage(order, stage.key)}
+              >{isTransitioningThis ? `Moving to ${stage.label}…` : `Move to ${stage.label}`}</button> : null;
+            })}
+          {!showArchivedOrders && permissions.has('orders:read') && (
+            <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadInvoice(order)}>Invoice PDF</button>
+          )}
+          {!showArchivedOrders && permissions.has('payments:write') && moduleEnabled('payments') && Number(order.outstanding ?? 0) > 0 && (
+            <button className="button button-secondary" onClick={() => { setPaymentOrderId(order.id); setPaymentAmount(order.outstanding ?? ''); }}>Record payment</button>
+          )}
+        </div>
+        {!showArchivedOrders && permissions.has('orders:read') && (
+          <div className="alterations-block">
+            <button className="button button-secondary" disabled={working || !online} onClick={() => void toggleAlterations(order)}>
+              {alterationsOpenFor === order.id ? 'Hide alterations' : 'Alterations'}
+              {alterationsByOrder[order.id] ? ` (${alterationsByOrder[order.id].filter((item) => item.status === 'OPEN').length} open)` : ''}
+            </button>
+            {alterationsOpenFor === order.id && (
+              <div className="alterations-panel">
+                {(alterationsByOrder[order.id] ?? []).length === 0 && <p className="muted">No alterations for this order yet.</p>}
+                {(alterationsByOrder[order.id] ?? []).map((alteration) => (
+                  <div className="alteration-row" key={alteration.id}>
+                    <div>
+                      <strong className={alteration.status === 'DONE' ? 'alteration-done' : ''}>{alteration.description}</strong>
+                      <p className="muted">{alteration.status === 'DONE' ? 'Done' : 'Open'}{alteration.dueAt ? ` · Due ${karachiDate(alteration.dueAt)}` : ''} · Added {karachiDate(alteration.createdAt)}</p>
+                    </div>
+                    {permissions.has('orders:write') && (alteration.status === 'OPEN'
+                      ? <button className="button button-secondary" disabled={working || !online} onClick={() => void setAlterationStatusAction(order, alteration, 'DONE')}>Mark done</button>
+                      : <button className="button button-secondary" disabled={working || !online} onClick={() => void setAlterationStatusAction(order, alteration, 'OPEN')}>Reopen</button>)}
+                  </div>
+                ))}
+                {permissions.has('orders:write') && (
+                  <form className="alteration-form" onSubmit={(event) => { event.preventDefault(); void addAlteration(order); }}>
+                    <label className="visually-hidden" htmlFor={`alteration-${order.id}`}>New alteration for order {order.orderNumber}</label>
+                    <input id={`alteration-${order.id}`} value={alterationDraft} onChange={(event) => setAlterationDraft(event.target.value)} placeholder="e.g. Shorten sleeves by 2 cm" maxLength={1000} required />
+                    <button className="button button-primary" type="submit" disabled={working || !online || !alterationDraft.trim()}>Add alteration</button>
+                  </form>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </article>
+  );
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -4029,6 +4239,7 @@ function App() {
                     key={item.view}
                     className={view === item.view ? 'nav-item active' : 'nav-item'}
                     aria-current={view === item.view ? 'page' : undefined}
+                    aria-label={item.label}
                     onClick={() => { setView(item.view); setError(null); }}
                   >
                     <span className="nav-icon"><Icon name={item.view === 'erp' ? 'reports' : item.view === 'help' ? 'notifications' : item.view} /></span>
@@ -4050,20 +4261,28 @@ function App() {
       </aside>
       <main className="workspace">
         <header className="workspace-header">
-          <div className="workspace-title">
-            <p className="eyebrow workspace-shop-name">{businessConfiguration?.business.name ?? currentUser?.context.business?.name ?? 'Business workspace'}</p>
-            <h1>{visibleNavigation.find((item) => item.view === view)?.label ?? 'Overview'}</h1>
-          </div>
+          <form className="workspace-search" role="search" onSubmit={submitWorkspaceSearch}>
+            <Icon name="search" />
+            <label className="sr-only" htmlFor="workspace-search">Search orders, customers, or catalog</label>
+            <input
+              id="workspace-search"
+              type="search"
+              value={workspaceSearch}
+              onChange={(event) => setWorkspaceSearch(event.target.value)}
+              placeholder="Type to search…"
+            />
+            <kbd>↵</kbd>
+          </form>
           <div className="page-head-actions workspace-account-actions">
-            <span className="status-pill" title="Workspace currency and timezone">{businessConfiguration?.business.currency ?? 'PKR'} · Karachi</span>
+            {themeStudio}
             {themeToggleButton}
             <span className="user-chip">
               <span className="user-avatar" aria-hidden="true">{currentUser?.user.name.slice(0, 1).toUpperCase()}</span>
               <span className="user-name">{currentUser?.user.name}</span>
             </span>
             <span className="head-divider" aria-hidden="true" />
-            <button className="button button-quiet" onClick={() => { setError(null); setPasswordDialogOpen(true); }}>Change password</button>
-            <button className="button button-quiet" onClick={() => void signOut()}><Icon name="signOut" /> Sign out</button>
+            <button className="button button-quiet account-password-action" onClick={() => { setError(null); setPasswordDialogOpen(true); }}>Change password</button>
+            <button className="button button-quiet" aria-label="Sign out" onClick={() => void signOut()}><Icon name="signOut" /><span className="account-action-label">Sign out</span></button>
           </div>
           <details className="mobile-account-menu">
             <summary className="mobile-account-summary" aria-label="Open account menu">
@@ -4076,11 +4295,22 @@ function App() {
               </div>
               <span className="status-pill" title="Workspace currency and timezone">{businessConfiguration?.business.currency ?? 'PKR'} · Karachi</span>
               <div className="mobile-theme-row"><span>Appearance</span>{themeToggleButton}</div>
+              {themeStudio}
               <button className="button button-secondary" onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); setError(null); setPasswordDialogOpen(true); }}>Change password</button>
               <button className="button button-quiet" onClick={() => void signOut()}><Icon name="signOut" /> Sign out</button>
             </div>
           </details>
         </header>
+        <section className="workspace-page-intro">
+          <div className="workspace-title">
+            <p className="eyebrow workspace-shop-name">{businessConfiguration?.business.name ?? currentUser?.context.business?.name ?? 'Business workspace'}</p>
+            <h1>{visibleNavigation.find((item) => item.view === view)?.label ?? 'Overview'}</h1>
+          </div>
+          <div className="workspace-page-context">
+            <span className={`connection-badge ${online ? 'is-online' : 'is-offline'}`}><span aria-hidden="true" />{online ? 'Live workspace' : 'Offline'}</span>
+            <span className="status-pill" title="Workspace currency and timezone">{businessConfiguration?.business.currency ?? 'PKR'} · {businessConfiguration?.business.timezone ?? 'Asia/Karachi'}</span>
+          </div>
+        </section>
 
         {error && <div className="alert alert-error" role="alert">{error}</div>}
         {notice && <div className="alert alert-success" role="status">{notice}<button aria-label="Dismiss" onClick={() => setNotice(null)}>×</button></div>}
@@ -4459,28 +4689,35 @@ function App() {
 
         {view === 'orders' && (
           <section className="content-stack">
-            <div className="section-heading">
-              <div><h2>{term('orders', 'Orders')}</h2><p className="muted">{showArchivedOrders ? 'Archived orders. Restore brings an order back with payments and history.' : `Follow each ${term('item', 'item').toLowerCase()} through the configured workflow.`}</p></div>
-              <label className="checkbox-row"><input type="checkbox" checked={showArchivedOrders} onChange={(event) => setShowArchivedOrders(event.target.checked)} /> Show archived</label>
-              <form className="search-form" onSubmit={(event) => { event.preventDefault(); void reloadCurrent(); }}>
-                <label className="visually-hidden" htmlFor="order-search">Search orders</label>
-                <input id="order-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Order number or customer" />
-                <button className="button button-secondary" type="submit">Search</button>
-              </form>
-              <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadExport('orders')}>Export CSV</button>
-              <button className="button button-quiet" onClick={() => openGuide('orders')}>? Guide</button>
+            <div className="section-heading orders-section-heading">
+              <div><p className="eyebrow">Workflow</p><h2>Order pipeline</h2><p className="muted">{showArchivedOrders ? 'Archived orders. Restore brings an order back with payments and history.' : `Follow each ${term('item', 'item').toLowerCase()} through the configured workflow.`}</p></div>
+              <div className="orders-toolbar">
+                <div className="view-switch" role="group" aria-label="Orders display">
+                  <button type="button" className={orderDisplayMode === 'table' ? 'is-active' : ''} aria-pressed={orderDisplayMode === 'table'} onClick={() => setOrderDisplayMode('table')}><Icon name="table" /><span>Table</span></button>
+                  <button type="button" className={orderDisplayMode === 'kanban' ? 'is-active' : ''} aria-pressed={orderDisplayMode === 'kanban'} onClick={() => setOrderDisplayMode('kanban')}><Icon name="kanban" /><span>Kanban</span></button>
+                </div>
+                <label className="checkbox-row"><input type="checkbox" checked={showArchivedOrders} onChange={(event) => setShowArchivedOrders(event.target.checked)} /> Show archived</label>
+                <form className="search-form" onSubmit={(event) => { event.preventDefault(); void reloadCurrent(); }}>
+                  <label className="visually-hidden" htmlFor="order-search">Search orders</label>
+                  <Icon name="search" />
+                  <input id="order-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Order number or customer" />
+                  <button className="button button-secondary" type="submit">Search</button>
+                </form>
+                <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadExport('orders')}>Export CSV</button>
+                <button className="button button-quiet" onClick={() => openGuide('orders')}>? Guide</button>
+              </div>
             </div>
-            {businessConfiguration && (
-              <section className="panel template-preview">
-                <h3>Configured {term('order', 'Order').toLowerCase()} workflow</h3>
-                <p className="fine-print">{businessConfiguration.workflow.stages.map((stage) => stage.label).join(' → ')}</p>
-              </section>
-            )}
+            <div className="metric-grid orders-metric-grid" aria-label="Order summary">
+              <MetricCard label="Total orders" value={String(orders.length)} icon="orders" />
+              <MetricCard label="In progress" value={String(dashboard?.inProgress ?? orders.filter((order) => !['DELIVERED', 'COLLECTED', 'CANCELLED'].includes(order.status)).length)} icon="progress" tone="blue" />
+              <MetricCard label="Due today" value={String(dashboard?.dueToday ?? 0)} icon="clock" tone="amber" />
+              <MetricCard label="Outstanding" value={money(String(orders.reduce((total, order) => total + Number(order.outstanding ?? 0), 0)), businessConfiguration?.business.currency)} icon="payments" />
+            </div>
             {permissions.has('orders:write') && (
               <form className="panel form-panel" onSubmit={addOrder}>
                 <div className="panel-heading"><h3>Start a new order</h3><p className="muted">The server assigns the order number and calculates the total.</p></div>
                 <div className="form-grid">
-                  <label>Customer<select value={orderCustomerId} onChange={(event) => setOrderCustomerId(event.target.value)} required>
+                  <label>Customer<select id="order-customer" value={orderCustomerId} onChange={(event) => setOrderCustomerId(event.target.value)} required>
                     <option value="">Choose customer</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name} · {customer.phone}</option>)}
                   </select></label>
                   {configuredItemTypes.length > 1 ? (
@@ -4534,104 +4771,46 @@ function App() {
               </form>
             )}
             {loading ? <LoadingState /> : orders.length ? (
-              <div className="order-list">
-                {orders.map((order) => (
-                  <article className="order-card" key={order.id}>
-                    <div className="order-card-main">
-                      <div className="order-heading"><span className="order-number">{order.orderNumber}</span><StatusPill status={order.currentWorkflowStage?.label ?? order.workflowStageKey ?? order.status} /></div>
-                      <h3>{order.customer.name}</h3>
-                      <p className="muted">{order.customer.phone} · Due {karachiDate(order.promisedAt)}</p>
-                      <ul className="garment-list">{order.items.map((item) => (
-                        <li key={item.id}>
-                          {item.quantity} × {item.itemName ?? item.garmentName}
-                          {Object.entries(item.customFields ?? {}).map(([key, value]) => (
-                            <small className="table-note" key={key}>
-                              {businessConfiguration?.fields.find((field) => field.key === key)?.label ?? key}: {displayFieldValue(value)}
-                            </small>
-                          ))}
-                        </li>
-                      ))}</ul>
-                      {Object.entries(order.customFields ?? {}).map(([key, value]) => (
-                        <p className="fine-print" key={key}>
-                          {businessConfiguration?.fields.find((field) => field.key === key)?.label ?? key}: {displayFieldValue(value)}
-                        </p>
-                      ))}
-                    </div>
-                    <div className="order-card-side">
-                      <span className="money-total">{money(order.total, businessConfiguration?.business.currency)}</span>
-                      {moduleEnabled('payments') && permissions.has('payments:read') && (
-                        <span className="muted">{money(order.outstanding, businessConfiguration?.business.currency)} outstanding</span>
-                      )}
-                      <div className="row-actions">
-                        {permissions.has('orders:write') && (showArchivedOrders
-                          ? <button className="button button-secondary" disabled={working || !online} onClick={() => void restoreOrderAction(order)}>Restore</button>
-                          : <button className="button button-danger-quiet" disabled={working || !online} onClick={() => void archiveOrderAction(order)}>Archive</button>)}
-                        {!showArchivedOrders && permissions.has('orders:transition') && businessConfiguration?.workflow.transitions
-                          .filter((transition) => {
-                            const stages = businessConfiguration.workflow.stages;
-                            const stageKey = order.workflowStageKey ?? order.currentWorkflowStage?.key ?? order.status;
-                            const currentStage = (order.workflowStageId ? stages.find((stage) => stage.id === order.workflowStageId) : undefined)
-                              ?? stages.find((stage) => stage.key === stageKey)
-                              ?? (stageKey === 'FINISHING' ? stages.find((stage) => stage.key === 'FITTING') : undefined)
-                              ?? (stageKey === 'FITTING' ? stages.find((stage) => stage.key === 'FINISHING') : undefined)
-                              ?? (stageKey === 'READY_FOR_PICKUP' ? stages.find((stage) => stage.key === 'READY') : undefined)
-                              ?? (stageKey === 'READY' ? stages.find((stage) => stage.key === 'READY_FOR_PICKUP') : undefined)
-                              ?? (stageKey === 'COLLECTED' ? stages.find((stage) => stage.key === 'DELIVERED' || stage.key === 'COMPLETED') : undefined)
-                              ?? (order.status === 'NEW' ? stages.find((stage) => stage.isInitial) : undefined);
-                            return transition.fromStageId === currentStage?.id;
-                          })
-                          .map((transition) => {
-                            const stage = businessConfiguration.workflow.stages.find((item) => item.id === transition.toStageId);
-                            const isTransitioningThis = transitioningOrderKey === (stage ? `${order.id}:${stage.key}` : '');
-                            return stage ? <button
-                              className="button button-secondary"
-                              key={transition.id}
-                              disabled={working || !online}
-                              onClick={() => void changeWorkflowStage(order, stage.key)}
-                            >{isTransitioningThis ? `Moving to ${stage.label}…` : `Move to ${stage.label}`}</button> : null;
-                          })}
-                        {!showArchivedOrders && permissions.has('orders:read') && (
-                          <button className="button button-secondary" disabled={working || !online} onClick={() => void downloadInvoice(order)}>Invoice PDF</button>
-                        )}
-                        {!showArchivedOrders && permissions.has('payments:write') && moduleEnabled('payments') && Number(order.outstanding ?? 0) > 0 && (
-                          <button className="button button-secondary" onClick={() => { setPaymentOrderId(order.id); setPaymentAmount(order.outstanding ?? ''); }}>Record payment</button>
-                        )}
+              orderDisplayMode === 'kanban' ? (
+                <div className="order-kanban" aria-label="Orders by workflow stage">
+                  {orderKanbanColumns.map((column, columnIndex) => (
+                    <section className="kanban-column" key={column.key} aria-labelledby={`kanban-column-${columnIndex}`}>
+                      <header className="kanban-column-header">
+                        <div><span className={`kanban-column-dot stage-${columnIndex % 6}`} aria-hidden="true" /><h3 id={`kanban-column-${columnIndex}`}>{column.label}</h3><span className="kanban-column-count">{column.orders.length}</span></div>
+                        {permissions.has('orders:write') && !showArchivedOrders && <button type="button" aria-label="Create a new order" title="Focus the new order form" onClick={() => document.getElementById('order-customer')?.focus()}><Icon name="plus" /></button>}
+                      </header>
+                      <div className="kanban-column-body">
+                        {column.orders.length > 0 ? column.orders.map(renderOrderCard) : <div className="kanban-empty"><Icon name="inbox" /><span>No orders</span></div>}
                       </div>
-                      {!showArchivedOrders && permissions.has('orders:read') && (
-                        <div className="alterations-block">
-                          <button className="button button-secondary" disabled={working || !online} onClick={() => void toggleAlterations(order)}>
-                            {alterationsOpenFor === order.id ? 'Hide alterations' : 'Alterations'}
-                            {alterationsByOrder[order.id] ? ` (${alterationsByOrder[order.id].filter((item) => item.status === 'OPEN').length} open)` : ''}
-                          </button>
-                          {alterationsOpenFor === order.id && (
-                            <div className="alterations-panel">
-                              {(alterationsByOrder[order.id] ?? []).length === 0 && <p className="muted">No alterations for this order yet.</p>}
-                              {(alterationsByOrder[order.id] ?? []).map((alteration) => (
-                                <div className="alteration-row" key={alteration.id}>
-                                  <div>
-                                    <strong className={alteration.status === 'DONE' ? 'alteration-done' : ''}>{alteration.description}</strong>
-                                    <p className="muted">{alteration.status === 'DONE' ? 'Done' : 'Open'}{alteration.dueAt ? ` · Due ${karachiDate(alteration.dueAt)}` : ''} · Added {karachiDate(alteration.createdAt)}</p>
-                                  </div>
-                                  {permissions.has('orders:write') && (alteration.status === 'OPEN'
-                                    ? <button className="button button-secondary" disabled={working || !online} onClick={() => void setAlterationStatusAction(order, alteration, 'DONE')}>Mark done</button>
-                                    : <button className="button button-secondary" disabled={working || !online} onClick={() => void setAlterationStatusAction(order, alteration, 'OPEN')}>Reopen</button>)}
-                                </div>
-                              ))}
-                              {permissions.has('orders:write') && (
-                                <form className="alteration-form" onSubmit={(event) => { event.preventDefault(); void addAlteration(order); }}>
-                                  <label className="visually-hidden" htmlFor={`alteration-${order.id}`}>New alteration for order {order.orderNumber}</label>
-                                  <input id={`alteration-${order.id}`} value={alterationDraft} onChange={(event) => setAlterationDraft(event.target.value)} placeholder="e.g. Shorten sleeves by 2 cm" maxLength={1000} required />
-                                  <button className="button button-primary" type="submit" disabled={working || !online || !alterationDraft.trim()}>Add alteration</button>
-                                </form>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </article>
-                ))}
-              </div>
+                    </section>
+                  ))}
+                </div>
+              ) : (
+                <section className="panel orders-table-panel" aria-label="Orders table">
+                  <DataTable
+                    rows={orders}
+                    rowKey={(order) => order.id}
+                    pageSize={10}
+                    searchable={false}
+                    wrapClassName="orders-table-wrap"
+                    columns={[
+                      { key: 'order', label: 'Order', render: (order) => <><strong className="order-number">{order.orderNumber}</strong><small className="table-note">{order.items.reduce((total, item) => total + item.quantity, 0)} items</small></> },
+                      { key: 'customer', label: 'Customer', render: (order) => <><strong>{order.customer.name}</strong><small className="table-note">{order.customer.phone}</small></> },
+                      { key: 'items', label: 'Items', render: (order) => <span className="order-table-items">{order.items.map((item) => `${item.quantity} × ${item.itemName ?? item.garmentName}`).join(', ')}</span> },
+                      { key: 'due', label: 'Due date', render: (order) => karachiDate(order.promisedAt) },
+                      { key: 'status', label: 'Status', render: (order) => <StatusPill status={order.currentWorkflowStage?.label ?? order.workflowStageKey ?? order.status} /> },
+                      { key: 'total', label: 'Total', align: 'right', render: (order) => <strong>{money(order.total, businessConfiguration?.business.currency)}</strong> },
+                      { key: 'outstanding', label: 'Outstanding', align: 'right', render: (order) => money(order.outstanding, businessConfiguration?.business.currency) },
+                      { key: 'actions', label: 'Actions', render: (order) => (
+                        <details className="order-row-menu">
+                          <summary className="button button-secondary">Manage <Icon name="chevronRight" /></summary>
+                          <div className="order-row-popover">{renderOrderCard(order)}</div>
+                        </details>
+                      ) },
+                    ]}
+                  />
+                </section>
+              )
             ) : <EmptyState title={showArchivedOrders ? 'No archived orders' : 'No orders found'} detail={showArchivedOrders ? 'Archived orders will appear here.' : 'Create an order or adjust your search.'} />}
           </section>
         )}
