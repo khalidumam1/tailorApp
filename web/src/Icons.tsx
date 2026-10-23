@@ -24,6 +24,10 @@ const common = {
 };
 
 export type IconName =
+  | 'search'
+  | 'table'
+  | 'kanban'
+  | 'chevronRight'
   | 'dashboard'
   | 'orders'
   | 'catalog'
@@ -225,6 +229,26 @@ const paths: Record<IconName, JSX.Element> = {
     </>
   ),
   moon: <path d="M20.2 15.1A8.5 8.5 0 0 1 8.9 3.8 8.5 8.5 0 1 0 20.2 15.1Z" />,
+  search: (
+    <>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="m16 16 4 4" />
+    </>
+  ),
+  table: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 9h18M3 14h18M9 9v11" />
+    </>
+  ),
+  kanban: (
+    <>
+      <rect x="3" y="4" width="5" height="13" rx="1" />
+      <rect x="10" y="4" width="5" height="16" rx="1" />
+      <rect x="17" y="4" width="4" height="9" rx="1" />
+    </>
+  ),
+  chevronRight: <path d="m9 5 7 7-7 7" />,
   // Bar chart — reports.
   reports: (
     <>
