@@ -431,9 +431,8 @@ export function ChatAssistant({ session, onNavigate }: ChatAssistantProps) {
     return (
       <button
         type="button"
-        className="button button-primary"
+        className="button button-primary assistant-launcher"
         onClick={() => setOpen(true)}
-        style={{ position: 'fixed', right: 16, bottom: 16, zIndex: 9999, borderRadius: 999, width: 56, height: 56, padding: 0, fontSize: 20 }}
         aria-label="Open assistant"
       >
         ?
@@ -442,8 +441,8 @@ export function ChatAssistant({ session, onNavigate }: ChatAssistantProps) {
   }
 
   return (
-    <div style={{ position: 'fixed', right: 16, bottom: 16, zIndex: 9999, width: 360, maxWidth: 'calc(100vw - 32px)' }}>
-      <div className="panel" style={{ display: 'flex', flexDirection: 'column', height: 480, maxHeight: 'calc(100vh - 32px)', boxShadow: '0 12px 40px rgba(0,0,0,0.18)' }}>
+    <div className="assistant-shell">
+      <div className="panel assistant-panel" role="dialog" aria-modal="true" aria-label="Offline assistant">
         <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border, #e5e7eb)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <strong>Assistant (offline)</strong>
           <button type="button" className="button button-quiet" onClick={() => setOpen(false)} aria-label="Close assistant" style={{ marginLeft: 'auto' }}>×</button>

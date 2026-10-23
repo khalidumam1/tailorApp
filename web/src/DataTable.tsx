@@ -208,8 +208,12 @@ export function DataTable<T>({
             {visibleRows.map((row) => (
               <tr key={rowKey(row)}>
                 {columns.map((column) => (
-                  <td key={column.key} style={column.align === 'right' ? { textAlign: 'right' } : undefined}>
-                    {column.render(row)}
+                  <td
+                    key={column.key}
+                    data-label={typeof column.label === 'string' ? column.label : column.key}
+                    style={column.align === 'right' ? { textAlign: 'right' } : undefined}
+                  >
+                    <div className="data-table-cell-content">{column.render(row)}</div>
                   </td>
                 ))}
               </tr>
