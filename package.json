@@ -35,7 +35,8 @@
     },
     "xcode": {
       "uuid": "11.1.1"
-    }
+    },
+    "vite": "8.3.5"
   },
   "allowScripts": {
     "@prisma/client@6.19.3": true,
