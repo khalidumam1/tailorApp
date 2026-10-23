@@ -1,7 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { StrictMode } from 'react';
 import ReactDOM from 'react-dom/client';
-import { DataTable } from './DataTable';
 import {
   accessibleTextColor,
   BRAND_LOGO_PRESETS,
@@ -57,9 +56,15 @@ const HelpGuide = lazy(() => import('./HelpGuide').then((module) => ({ default: 
 const ChatAssistant = lazy(() => import('./ChatAssistant'));
 const BusinessStructureEditors = lazy(() => import('./BusinessStructureEditors').then((module) => ({ default: module.BusinessStructureEditors })));
 const BusinessTeamAdmin = lazy(() => import('./BusinessTeamAdmin').then((module) => ({ default: module.BusinessTeamAdmin })));
-import { AreaChart, BarList, ColumnChart, DonutChart, paletteColor, Sparkline } from './Charts';
+const ThemeStudio = lazy(() => import('./ThemeStudio').then((module) => ({ default: module.ThemeStudio })));
+const AreaChart = lazy(() => import('./Charts').then((module) => ({ default: module.AreaChart })));
+const BarList = lazy(() => import('./Charts').then((module) => ({ default: module.BarList })));
+const ColumnChart = lazy(() => import('./Charts').then((module) => ({ default: module.ColumnChart })));
+const DonutChart = lazy(() => import('./Charts').then((module) => ({ default: module.DonutChart })));
+const Sparkline = lazy(() => import('./Charts').then((module) => ({ default: module.Sparkline })));
+import { paletteColor } from './chartPalette';
+import { DataTable } from './LazyDataTable';
 import { Icon, type IconName } from './Icons';
-import { ThemeStudio } from './ThemeStudio';
 import {
   accentColorFor,
   DEFAULT_INTERFACE_PREFERENCES,
@@ -5471,4 +5476,6 @@ function EmptyState({ title, detail, action, onAction }: { title: string; detail
   return <div className="empty-state"><span className="empty-icon" aria-hidden="true"><Icon name="inbox" /></span><h3>{title}</h3>{detail && <p className="muted">{detail}</p>}{action && onAction && <button className="button button-secondary" onClick={onAction}>{action}</button>}</div>;
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>);
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <StrictMode><Suspense fallback={<LoadingState />}><App /></Suspense></StrictMode>,
+);

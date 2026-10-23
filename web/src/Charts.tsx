@@ -1,4 +1,7 @@
 import { useId } from 'react';
+import { paletteColor } from './chartPalette';
+
+export { paletteColor } from './chartPalette';
 
 /**
  * Lightweight SVG chart primitives.
@@ -9,12 +12,6 @@ import { useId } from 'react';
  */
 
 export type SparkPoint = { label: string; value: number };
-
-const PALETTE = ['var(--brand-700)', '#4389c1', '#d39a38', '#816bd1', '#d55c59', '#20979b'];
-
-export function paletteColor(index: number): string {
-  return PALETTE[index % PALETTE.length];
-}
 
 function smoothPath(points: Array<{ x: number; y: number }>, tension = 0.28): string {
   if (points.length === 0) return '';
