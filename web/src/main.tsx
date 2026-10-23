@@ -574,6 +574,7 @@ function App() {
   const [scopeChoice, setScopeChoice] = useState<'business' | 'platform'>('business');
   const [businessChoice, setBusinessChoice] = useState('');
   const [view, setView] = useState<View>(() => initialStoredSession?.view ?? 'dashboard');
+  const mainNavRef = useRef<HTMLElement>(null);
   const [online, setOnline] = useState(navigator.onLine);
   const [loading, setLoading] = useState(false);
   const [working, setWorking] = useState(false);
@@ -1019,6 +1020,23 @@ function App() {
       setLoading(false);
     }
   }, [businessConfiguration?.enabledModules, currentUser?.context.permissions, currentUser?.context.scope, measurementCustomerId, measurementTemplateId, search, selectedSubscriptionPlanId, session, showArchivedCustomers, showArchivedOrders, subscriptionPayment.method, view, withSession]);
+
+  const currentUserScope = currentUser?.context.scope;
+  useEffect(() => {
+    if (currentUserScope !== 'business') return;
+    window.scrollTo({ top: 0, behavior: 'auto' });
+    const nav = mainNavRef.current;
+    if (!nav || !window.matchMedia('(max-width: 900px)').matches) return;
+    const activeItem = nav.querySelector<HTMLElement>('.nav-item.active');
+    if (!activeItem) return;
+    const navBounds = nav.getBoundingClientRect();
+    const itemBounds = activeItem.getBoundingClientRect();
+    const left = nav.scrollLeft + itemBounds.left - navBounds.left - (nav.clientWidth - itemBounds.width) / 2;
+    nav.scrollTo({
+      left: Math.max(0, left),
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
+  }, [currentUserScope, view]);
 
   useEffect(() => {
     const onlineChanged = () => setOnline(navigator.onLine);
@@ -3999,7 +4017,7 @@ function App() {
           <span><strong>{businessConfiguration?.business.name ?? currentUser?.context.business?.name ?? 'Business'}</strong><small>{businessConfiguration?.template.name ?? 'Business workspace'}</small></span>
         </div>
 
-        <nav aria-label="Main navigation" className="main-nav">
+        <nav aria-label="Main navigation" className="main-nav" ref={mainNavRef}>
           {navigationGroups.map((group) => {
             const items = visibleNavigation.filter((item) => group.views.includes(item.view));
             if (items.length === 0) return null;
@@ -4032,10 +4050,11 @@ function App() {
       </aside>
       <main className="workspace">
         <header className="workspace-header">
-          <div>
+          <div className="workspace-title">
+            <p className="eyebrow workspace-shop-name">{businessConfiguration?.business.name ?? currentUser?.context.business?.name ?? 'Business workspace'}</p>
             <h1>{visibleNavigation.find((item) => item.view === view)?.label ?? 'Overview'}</h1>
           </div>
-          <div className="page-head-actions">
+          <div className="page-head-actions workspace-account-actions">
             <span className="status-pill" title="Workspace currency and timezone">{businessConfiguration?.business.currency ?? 'PKR'} · Karachi</span>
             {themeToggleButton}
             <span className="user-chip">
@@ -4046,6 +4065,21 @@ function App() {
             <button className="button button-quiet" onClick={() => { setError(null); setPasswordDialogOpen(true); }}>Change password</button>
             <button className="button button-quiet" onClick={() => void signOut()}><Icon name="signOut" /> Sign out</button>
           </div>
+          <details className="mobile-account-menu">
+            <summary className="mobile-account-summary" aria-label="Open account menu">
+              <span className="user-avatar" aria-hidden="true">{currentUser?.user.name.slice(0, 1).toUpperCase()}</span>
+            </summary>
+            <div className="mobile-account-panel">
+              <div className="mobile-account-identity">
+                <span className="user-avatar" aria-hidden="true">{currentUser?.user.name.slice(0, 1).toUpperCase()}</span>
+                <span><strong>{currentUser?.user.name}</strong><small>{online ? 'Online' : 'Offline'} · Business workspace</small></span>
+              </div>
+              <span className="status-pill" title="Workspace currency and timezone">{businessConfiguration?.business.currency ?? 'PKR'} · Karachi</span>
+              <div className="mobile-theme-row"><span>Appearance</span>{themeToggleButton}</div>
+              <button className="button button-secondary" onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); setError(null); setPasswordDialogOpen(true); }}>Change password</button>
+              <button className="button button-quiet" onClick={() => void signOut()}><Icon name="signOut" /> Sign out</button>
+            </div>
+          </details>
         </header>
 
         {error && <div className="alert alert-error" role="alert">{error}</div>}
