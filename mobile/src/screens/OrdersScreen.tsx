@@ -16,7 +16,7 @@ import type { AlterationTask } from '../hooks/useWorkspace';
 import { shareDownloadedFile } from '../data/downloads';
 import { normalizePhone } from '../data/messaging';
 
-import { AreaChart } from '../components/AreaChart';
+import { AreaChart } from '../components/Charts';
 import { OrderForm } from '../components/OrderForm';
 import { PaymentForm } from '../components/PaymentForm';
 
@@ -101,21 +101,29 @@ export function OrdersScreen({
           <Text style={styles.pageTitle}>{ws.term('orders', copy.orders)}</Text>
           <Text style={styles.pageSubtitle}>{filtered.length} {ws.term('orders', copy.orders).toLowerCase()}</Text>
         </View>
+      </View>
+      {/* Actions sit below the title so two buttons never push the heading off
+          a 390px-wide screen. */}
+      <View style={styles.headerActions}>
         {ws.can('orders:read') ? (
-          <ActionButton
-            title="Export CSV"
-            secondary
-            onPress={() => void ws.downloadServerExport('orders', { archived: showArchived })
-              .then((file) => shareDownloadedFile(file.filename, file.bytes, file.mimeType))
-              .catch(() => { /* workspace banner shows the error */ })}
-          />
+          <View style={styles.headerAction}>
+            <ActionButton
+              title="Export CSV"
+              secondary
+              onPress={() => void ws.downloadServerExport('orders', { archived: showArchived })
+                .then((file) => shareDownloadedFile(file.filename, file.bytes, file.mimeType))
+                .catch(() => { /* workspace banner shows the error */ })}
+            />
+          </View>
         ) : null}
         {ws.can('orders:write') ? (
-          <ActionButton
-            title={`＋ ${copy.newOrder}`}
-            secondary={ws.orderForm}
-            onPress={() => { ws.setError(''); ws.setOrderForm(!ws.orderForm); }}
-          />
+          <View style={styles.headerAction}>
+            <ActionButton
+              title={`＋ ${copy.newOrder}`}
+              secondary={ws.orderForm}
+              onPress={() => { ws.setError(''); ws.setOrderForm(!ws.orderForm); }}
+            />
+          </View>
         ) : null}
       </View>
 
@@ -416,7 +424,7 @@ export function OrdersScreen({
             </Text>
           </View>
         </View>
-        <AreaChart data={summary.weeklyOrderValue} currency={currency} copyKey={copy.totalCount} />
+        <AreaChart data={summary.weeklyOrderValue} height={150} />
       </View>
     </>
   );

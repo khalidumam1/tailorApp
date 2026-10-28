@@ -80,21 +80,29 @@ export function CustomersScreen() {
           <Text style={styles.pageTitle}>{customerLabel}</Text>
           <Text style={styles.pageSubtitle}>{ws.customers.length} {customerLabel.toLowerCase()}</Text>
         </View>
+      </View>
+      {/* Actions sit below the title so two buttons never push the heading off
+          a 390px-wide screen. */}
+      <View style={styles.headerActions}>
         {ws.can('customers:read') && !showArchived ? (
-          <ActionButton
-            title="Export CSV"
-            secondary
-            onPress={() => void ws.downloadServerExport('customers')
-              .then((file) => shareDownloadedFile(file.filename, file.bytes, file.mimeType))
-              .catch(() => { /* workspace banner shows the error */ })}
-          />
+          <View style={styles.headerAction}>
+            <ActionButton
+              title="Export CSV"
+              secondary
+              onPress={() => void ws.downloadServerExport('customers')
+                .then((file) => shareDownloadedFile(file.filename, file.bytes, file.mimeType))
+                .catch(() => { /* workspace banner shows the error */ })}
+            />
+          </View>
         ) : null}
         {ws.can('customers:write') ? (
-          <ActionButton
-            title={`＋ ${copy.addCustomer}`}
-            secondary={ws.customerForm || editId !== null}
-            onPress={() => { ws.setError(''); ws.setCustomerForm(!ws.customerForm); setEditId(null); }}
-          />
+          <View style={styles.headerAction}>
+            <ActionButton
+              title={`＋ ${copy.addCustomer}`}
+              secondary={ws.customerForm || editId !== null}
+              onPress={() => { ws.setError(''); ws.setCustomerForm(!ws.customerForm); setEditId(null); }}
+            />
+          </View>
         ) : null}
       </View>
 

@@ -28,7 +28,7 @@ export function SubscriptionScreen() {
   const currency = ws.businessConfiguration?.business.currency;
 
   const shareInvoice = () => {
-    const latest = billing?.payments.find((payment) => payment.invoiceNumber) ?? billing?.payments[0];
+    const latest = billing?.payments?.find((payment) => payment.invoiceNumber) ?? billing?.payments?.[0];
     if (!latest) {
       Alert.alert(copy.shareInvoice, copy.noSubscriptionPayments);
       return;
@@ -71,23 +71,23 @@ export function SubscriptionScreen() {
             <Text style={styles.heroMeta}>{ws.term('orders', copy.orders)}: {ws.orders.length}</Text>
           </View>
 
-          <View style={styles.customerActions}>
+          <View style={styles.heroActions}>
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ expanded: plansVisible }}
-              android_ripple={{ color: palette.primarySoft }}
+              android_ripple={{ color: palette.heroPillBg }}
               onPress={() => setShowManage((open) => !open)}
               style={({ pressed }) => [pressed && styles.pressed]}
             >
-              <Text style={styles.customerAction}>{copy.managePlan}</Text>
+              <Text style={styles.heroAction}>{copy.managePlan}</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              android_ripple={{ color: palette.primarySoft }}
+              android_ripple={{ color: palette.heroPillBg }}
               onPress={shareInvoice}
               style={({ pressed }) => [pressed && styles.pressed]}
             >
-              <Text style={styles.customerAction}>{copy.shareInvoice}</Text>
+              <Text style={styles.heroAction}>{copy.shareInvoice}</Text>
             </Pressable>
           </View>
         </View>
@@ -152,8 +152,8 @@ export function SubscriptionScreen() {
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, marginTop: 16 }}>
         <Text style={styles.sectionTitle}>{copy.subscriptionHistory}</Text>
       </View>
-      {billing?.payments.length ? (
-        billing.payments.map((payment) => (
+      {billing?.payments?.length ? (
+        (billing?.payments ?? []).map((payment) => (
           <View key={payment.id} style={styles.listCard}>
             <View style={styles.listMain}>
               <Text style={styles.listTitle}>{payment.plan.name} · {payment.status}</Text>

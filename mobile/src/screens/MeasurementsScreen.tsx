@@ -68,8 +68,14 @@ export function MeasurementsScreen() {
           <Text style={styles.pageTitle}>{ws.term('measurements', copy.measurements)}</Text>
           <Text style={styles.pageSubtitle}>{interpolate(copy.totalCount, String(ws.measurements.length))}</Text>
         </View>
+      </View>
+      {/* Actions sit below the title so the button never pushes the heading off
+          a 390px-wide screen. */}
+      <View style={styles.headerActions}>
         {ws.can('measurements:write') ? (
-          <ActionButton title={`＋ ${copy.saveMeasurement}`} secondary={ws.measurementForm} onPress={openForm} />
+          <View style={styles.headerAction}>
+            <ActionButton title={`＋ ${copy.saveMeasurement}`} secondary={ws.measurementForm} onPress={openForm} />
+          </View>
         ) : null}
       </View>
 
