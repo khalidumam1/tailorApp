@@ -201,7 +201,7 @@ export function BusinessSettingsScreen() {
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
       <View style={styles.pageHeadingRow}>
-        <View>
+        <View style={styles.headingText}>
           <Text style={styles.pageTitle}>{copy.businessSettings}</Text>
           <Text style={styles.pageSubtitle}>{copy.businessSettingsSub}</Text>
         </View>

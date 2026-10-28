@@ -133,7 +133,7 @@ export function NotificationsScreen() {
           const chatUrl = whatsappUrl(n.recipientPhone);
           return (
             <View key={n.id} style={styles.listCard}>
-              <View style={styles.activityIcon}>
+              <View style={styles.wpIcon}>
                 <Text style={styles.wpIconText}>W</Text>
               </View>
               <View style={styles.listMain}>

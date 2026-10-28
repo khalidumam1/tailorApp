@@ -385,7 +385,12 @@ const orders = Array.from({ length: 28 }, (_, index) => {
   const total = quantity * unitPrice;
   const paidRatio = stageKey === 'COLLECTED' ? 1 : index % 4 === 0 ? 0 : index % 3 === 0 ? 0.5 : 0.25;
   const paid = Math.round(total * paidRatio);
-  const createdDaysAgo = Math.round((index + 1) * 4.6) + (index % 5);
+  // Spread creation dates across the last eight weeks so weekly trend charts
+  // and week-over-week deltas have data in every bucket, including the current
+  // one. Previously the newest order was ~5 days old at index 0 and the rest
+  // fell off a ~5-day-per-index ramp, which left the current week empty and
+  // every trend reading -100%.
+  const createdDaysAgo = 1 + Math.floor(index * 1.9);
   return {
     id: uuid(`order:${index + 1}`),
     orderNumber: `ORD-${String(1043 + index).padStart(5, '0')}`,
@@ -1128,11 +1133,19 @@ on('GET', '/payments/:id/receipt', (req, res) => ok(res, receiptFor(req.params.i
 
 on('GET', '/notifications', (_req, res) => ok(res, { items: notifications }));
 
+// Business-scoped billing payload. The API returns the shop's own subscription,
+// the plan catalogue, its payment history and the instructions to pay — not a
+// list of subscriptions. Both clients (web and mobile) parse this exact shape,
+// so returning `{ items: [...] }` here silently emptied the billing screens and
+// crashed the mobile one, which indexes `payments[0]` without a guard.
 on('GET', '/subscriptions', (_req, res) => ok(res, {
-  items: [businessSubscription],
-  payments: businessSubscriptionPayments,
+  subscription: businessSubscription,
   plans: subscriptionPlans,
+  payments: businessSubscriptionPayments,
   events: auditEvents.slice(0, 6),
+  paymentInstructions: billingSettings.paymentInstructions,
+  paymentMethods: billingSettings.paymentMethods,
+  supportContact: billingSettings.supportContact,
 }));
 on('POST', '/subscriptions/payments', (req, res) => {
   const payment = {

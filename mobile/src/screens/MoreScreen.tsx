@@ -1,84 +1,146 @@
 /**
- * More — clean hub for screens that don't have their own tab.
- * Each row opens its page with a back control.
+ * More — hub for the screens that do not own a tab.
+ *
+ * Grouped into sections (Insights / Workspace / Account) so the list reads as
+ * a menu rather than a wall of identical cards.
  */
-import { Pressable, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { useAppStyles } from '../theme/useAppStyles';
-import { useAppTheme } from '../theme/palette';
-import { Icon, type IconName } from '../Icons';
+import { Avatar, Card, MenuRow, Section, type Tone } from '../theme/primitives';
+import type { IconName } from '../Icons';
 import { useWorkspace } from '../hooks/useWorkspace';
 import type { NavPage, Navigate } from '../navigation';
 
-type Tone = 'primary' | 'mint' | 'amber' | 'blue' | 'violet' | 'red';
+type Item = { id: NavPage; label: string; hint: string; icon: IconName; tone: Tone; visible: boolean };
 
 export function MoreScreen({ onNavigate }: { onNavigate: Navigate }) {
   const styles = useAppStyles();
-  const { palette } = useAppTheme();
   const ws = useWorkspace();
   const copy = ws.copy;
 
-  const items: Array<{ id: NavPage; label: string; hint: string; icon: IconName; tone: Tone; visible: boolean }> = [
-    { id: 'analytics', label: copy.analytics, hint: copy.reportAction, icon: 'chart', tone: 'primary', visible: ws.can('orders:read') && ws.moduleEnabled('orders') && ws.moduleEnabled('reports') },
-    { id: 'customers', label: ws.term('customers', copy.customers), hint: copy.search, icon: 'customers', tone: 'blue', visible: ws.can('customers:read') && ws.moduleEnabled('customers') },
-    { id: 'measurements', label: ws.term('measurements', copy.measurements), hint: copy.latestRevision, icon: 'measurements', tone: 'violet', visible: ws.can('measurements:read') && ws.moduleEnabled('measurements') },
-    { id: 'notifications', label: copy.notifications, hint: copy.notificationHistory, icon: 'notifications', tone: 'mint', visible: ws.can('notifications:read') && ws.moduleEnabled('notifications') },
-    { id: 'catalog', label: copy.catalog, hint: copy.catalogHint, icon: 'catalog', tone: 'amber', visible: ws.can('orders:read') && ws.moduleEnabled('catalog') },
-    { id: 'erp', label: 'Operations & finance', hint: 'Inventory, purchasing, cash and accounting', icon: 'building', tone: 'mint', visible: (ws.moduleEnabled('inventory') && ws.can('inventory:read')) || (ws.moduleEnabled('suppliers') && ws.can('suppliers:read')) || (ws.moduleEnabled('purchasing') && ws.can('purchasing:read')) || (ws.moduleEnabled('cashbook') && ws.can('cashbook:read')) || (ws.moduleEnabled('accounting') && ws.can('accounting:read')) },
-    { id: 'subscription', label: copy.subscription, hint: copy.subscriptionTitle, icon: 'subscription', tone: 'blue', visible: ws.can('subscriptions:read') },
-    { id: 'business-settings', label: copy.businessSettings, hint: copy.customizeWorkspace, icon: 'settings', tone: 'red', visible: ws.can('settings:manage') },
-    { id: 'guide', label: 'Help / User Guide', hint: 'Tutorials, glossary and FAQ', icon: 'notifications', tone: 'violet', visible: true },
-    { id: 'settings', label: copy.settings, hint: copy.appearance, icon: 'palette', tone: 'primary', visible: true },
+  const groups: Array<{ title: string; items: Item[] }> = [
+    {
+      title: copy.analytics,
+      items: [
+        {
+          id: 'analytics',
+          label: copy.analytics,
+          hint: copy.reportAction,
+          icon: 'chart',
+          tone: 'brand',
+          visible: ws.can('orders:read') && ws.moduleEnabled('orders') && ws.moduleEnabled('reports'),
+        },
+      ],
+    },
+    {
+      title: copy.customizeWorkspace,
+      items: [
+        {
+          id: 'customers',
+          label: ws.term('customers', copy.customers),
+          hint: copy.search,
+          icon: 'customers',
+          tone: 'info',
+          visible: ws.can('customers:read') && ws.moduleEnabled('customers'),
+        },
+        {
+          id: 'measurements',
+          label: ws.term('measurements', copy.measurements),
+          hint: copy.latestRevision,
+          icon: 'measurements',
+          tone: 'violet',
+          visible: ws.can('measurements:read') && ws.moduleEnabled('measurements'),
+        },
+        {
+          id: 'catalog',
+          label: copy.catalog,
+          hint: copy.catalogHint,
+          icon: 'catalog',
+          tone: 'amber',
+          visible: ws.can('orders:read') && ws.moduleEnabled('catalog'),
+        },
+        {
+          id: 'erp',
+          label: 'Operations & finance',
+          hint: 'Inventory, purchasing, cash and accounting',
+          icon: 'building',
+          tone: 'mint',
+          visible: (ws.moduleEnabled('inventory') && ws.can('inventory:read'))
+            || (ws.moduleEnabled('suppliers') && ws.can('suppliers:read'))
+            || (ws.moduleEnabled('purchasing') && ws.can('purchasing:read'))
+            || (ws.moduleEnabled('cashbook') && ws.can('cashbook:read'))
+            || (ws.moduleEnabled('accounting') && ws.can('accounting:read')),
+        },
+      ],
+    },
+    {
+      title: copy.settings,
+      items: [
+        {
+          id: 'notifications',
+          label: copy.notifications,
+          hint: copy.notificationHistory,
+          icon: 'notifications',
+          tone: 'mint',
+          visible: ws.can('notifications:read') && ws.moduleEnabled('notifications'),
+        },
+        {
+          id: 'subscription',
+          label: copy.subscription,
+          hint: copy.subscriptionTitle,
+          icon: 'subscription',
+          tone: 'info',
+          visible: ws.can('subscriptions:read'),
+        },
+        {
+          id: 'business-settings',
+          label: copy.businessSettings,
+          hint: copy.customizeWorkspace,
+          icon: 'settings',
+          tone: 'muted',
+          visible: ws.can('settings:manage'),
+        },
+        { id: 'guide', label: 'Help / User Guide', hint: 'Tutorials, glossary and FAQ', icon: 'spark', tone: 'violet', visible: true },
+        { id: 'settings', label: copy.settings, hint: copy.appearance, icon: 'palette', tone: 'brand', visible: true },
+      ],
+    },
   ];
 
   return (
     <>
       <View style={styles.pageHeadingRow}>
-        <View>
-          <Text style={styles.pageTitle}>{copy.moreTab}</Text>
-          <Text style={styles.pageSubtitle}>{ws.branding.brandName} · {ws.session?.business.name}</Text>
+        <Avatar name={ws.session?.user.name ?? ws.branding.brandName} size="lg" />
+        <View style={{ flex: 1, marginLeft: 12 }}>
+          <Text style={styles.pageTitle}>{ws.session?.user.name ?? copy.moreTab}</Text>
+          <Text style={styles.pageSubtitle}>
+            {ws.branding.brandName} · {ws.session?.business.name}
+          </Text>
         </View>
       </View>
-      {items.filter((item) => item.visible).map((item) => (
-        <Pressable
-          key={item.id}
-          accessibilityRole="button"
-          accessibilityLabel={item.label}
-          android_ripple={{ color: palette.primarySoft }}
-          onPress={() => onNavigate(item.id)}
-          style={({ pressed }) => [styles.listCard, pressed && styles.pressed]}
-        >
-          <View style={[styles.iconDot, iconDotStyle(styles, item.tone)]}>
-            <Icon name={item.icon} size={20} color={iconColor(palette, item.tone)} />
+
+      {groups
+        .map((group) => ({ ...group, items: group.items.filter((item) => item.visible) }))
+        .filter((group) => group.items.length > 0)
+        .map((group) => (
+          <View key={group.title} style={{ marginBottom: 6 }}>
+            <Section title={group.title}>
+              <Card style={{ padding: 6 }}>
+                {group.items.map((item, index) => (
+                  <View key={item.id}>
+                    {index > 0 ? <View style={styles.divider} /> : null}
+                    <MenuRow
+                      icon={item.icon}
+                      title={item.label}
+                      meta={item.hint}
+                      tone={item.tone}
+                      onPress={() => onNavigate(item.id)}
+                    />
+                  </View>
+                ))}
+              </Card>
+            </Section>
           </View>
-          <View style={styles.listMain}>
-            <Text style={styles.listTitle}>{item.label}</Text>
-            <Text style={styles.listMeta}>{item.hint}</Text>
-          </View>
-          <Icon name="arrowRight" size={20} color={palette.mutedText} />
-        </Pressable>
-      ))}
+        ))}
     </>
   );
-}
-
-function iconDotStyle(styles: ReturnType<typeof useAppStyles>, tone: Tone) {
-  switch (tone) {
-    case 'mint': return styles.iconDotMint;
-    case 'amber': return styles.iconDotAmber;
-    case 'blue': return styles.iconDotBlue;
-    case 'violet': return styles.iconDotViolet;
-    case 'red': return styles.iconDotRed;
-    default: return styles.iconDot;
-  }
-}
-
-function iconColor(palette: ReturnType<typeof useAppTheme>['palette'], tone: Tone): string {
-  switch (tone) {
-    case 'mint': return palette.success;
-    case 'amber': return palette.warning;
-    case 'blue': return palette.info;
-    case 'violet': return '#a995e0';
-    case 'red': return palette.danger;
-    default: return palette.primaryText;
-  }
 }

@@ -38,7 +38,16 @@ reports CSV, PDF receipts).
 
 Responses mirror the zod schemas in `web/src/api.ts` exactly — including
 envelope shape (`{ data }`), UUIDs and `nextCursor` fields — because the client
-validates every response.
+validates every response. The mobile client parses the same routes with its own
+types in `mobile/src/api.ts`; where the two clients share a path the payload has
+to satisfy both. `GET /subscriptions` is the one to remember: it answers with
+the business-scoped billing payload (`subscription`, `plans`, `payments`,
+`events`, `paymentInstructions`, `paymentMethods`, `supportContact`), not a list
+of subscriptions — returning `{ items: [...] }` there silently empties the
+billing screens.
+
+Order fixture dates are spread across the last eight weeks on purpose, so
+weekly trend charts and week-over-week deltas have data in every bucket.
 
 ## Caveats
 

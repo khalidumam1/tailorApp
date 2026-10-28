@@ -96,3 +96,56 @@ sign-in, business configuration, customer/order screens, PDF receipt sharing,
 notifications and app restart/session restore. R8-enabled builds need this
 release-specific smoke test. The final APK size and device behavior cannot be
 verified by TypeScript checks alone.
+
+## Design system
+
+The mobile app and the web console share one visual language, so a shop owner
+moving between them sees the same product. The system lives in four places:
+
+| Layer | File | Responsibility |
+| --- | --- | --- |
+| Tokens | `src/theme/palette.tsx` | Every colour, radius, shadow and chart colour, derived from the configured brand. |
+| Styles | `src/theme/styles.ts` | The single `StyleSheet` every screen reads through `useAppStyles()`. |
+| Primitives | `src/theme/primitives.tsx` | Cards, KPI tiles, pills, rows, segmented controls, fields, buttons. |
+| Charts | `src/components/Charts.tsx` | Sparkline, area, column, bar list and donut — pure `react-native-svg`. |
+
+### Token rules
+
+- **Ink ramp, not black.** Text uses `ink900`→`ink300`. Small text never drops
+  below `ink500`, which keeps it legible in bright workshop light.
+- **Brand ramps are computed.** `brand900`…`brand50` are mixed from the
+  tenant's `primaryColor`, so chrome, charts and accents follow the brand
+  without hand-tuning. In dark mode the ramp runs the other way: the brand
+  colour is already the darkest usable value on a near-black surface, so lighter
+  steps mix toward white and `brandSolidBg` (deep) carries white text.
+- **Semantic tones ship in threes.** `okFg/okBg/okLine`, `warnFg/warnBg/warnLine`,
+  `badFg/…`, `infoFg/…`, `violetFg/violetBg` so a pill, banner and dot always agree.
+- **Radius scale.** 16 = card, 12 = control, 999 = pill.
+- **Separation by hairline + spacing**, not grey fills. Cards are white with a
+  1px `line` border and one of four elevation presets.
+
+Screens should compose primitives and describe *what* they show; the system
+decides how it looks. Adding a one-off colour inside a screen is a smell.
+
+### Accessibility guardrails
+
+- Body text meets 4.5:1 against its real composited background; large text
+  (≥24px, or ≥18.66px bold) meets 3:1.
+- Anything rendered on a brand-filled surface uses `heroFg`, `heroFgMuted` or
+  `onBrandSolid` — never a raw brand colour.
+- Layouts are checked at 360px and 390px width; headings stack their actions
+  below the title rather than competing with it.
+
+## Screenshots
+
+`docs/screenshots-mobile/` holds the current UI at phone width (light and dark).
+They are produced by exporting the app for web (`npx expo export --platform web`)
+against the demo API in `tools/demo-api`, then driving it in headless Chromium
+at 390×844 — the same review loop used for the web console. Regenerate them
+after any visual change:
+
+```sh
+cd tools/demo-api && node server.mjs &        # http://127.0.0.1:5000/api/v1
+cd mobile
+EXPO_PUBLIC_API_BASE_URL=http://127.0.0.1:5000 npx expo export --platform web
+```

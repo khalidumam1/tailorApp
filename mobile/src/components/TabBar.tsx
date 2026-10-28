@@ -1,6 +1,7 @@
 /**
- * Standard bottom tab bar — simple, clean, fixed at bottom.
- * No glassmorphism, no floating effect, just a clean navigation bar.
+ * Bottom tab bar — five destinations on a solid surface with a hairline top
+ * border. The active tab sits in a tinted pill so position is obvious at a
+ * glance without relying on colour alone.
  */
 import { Pressable, Text, View } from 'react-native';
 import { Icon, type IconName } from '../Icons';
@@ -35,11 +36,11 @@ export function TabBar({ tabs, active, onChange }: TabBarProps) {
               accessibilityRole="tab"
               accessibilityState={{ selected: isActive }}
               accessibilityLabel={tab.label}
-              android_ripple={{ color: palette.primarySoft, borderless: true }}
+              android_ripple={{ color: palette.brand50, borderless: true }}
               onPress={() => onChange(tab.key)}
-              style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}
+              style={({ pressed }) => [styles.tab, isActive && styles.tabActive, pressed && styles.tabPressed]}
             >
-              <Icon name={tab.icon} size={22} color={isActive ? palette.primary : palette.mutedText} />
+              <Icon name={tab.icon} size={21} color={isActive ? palette.brand700 : palette.ink400} />
               <Text numberOfLines={1} style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
                 {tab.label}
               </Text>
