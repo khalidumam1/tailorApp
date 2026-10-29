@@ -1,5 +1,5 @@
 /**
- * Charts for TailorApp mobile.
+ * Charts for Bizora mobile.
  *
  * Pure SVG through `react-native-svg` (already a dependency) — no charting
  * library, no webview. Every series defaults to the brand colour and falls

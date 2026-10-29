@@ -1,5 +1,5 @@
 /**
- * TailorApp mobile shell — simple, clean layout.
+ * Bizora mobile shell — simple, clean layout.
  *
  * Top header with brand + search + notifications.
  * Content area scrolls vertically.

@@ -1,5 +1,5 @@
 /**
- * UI primitives for TailorApp mobile.
+ * UI primitives for Bizora mobile.
  *
  * These are the shared building blocks every screen composes: cards, KPI
  * tiles, pills, rows, segmented controls and form controls. Keeping them here
