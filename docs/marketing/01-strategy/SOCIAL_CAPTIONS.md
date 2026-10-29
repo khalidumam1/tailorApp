@@ -164,12 +164,12 @@ and accounts in one place, on web and mobile.
 
 In this 60-second walkthrough:
 0:00  Three places. One business.
-0:12  Start from a template built for your trade
-0:20  Switch on only the modules you use
-0:30  Every job, stage by stage
-0:40  Payments, stock and accounts — when you need them
-0:48  Six numbers that run your day
-0:55  Book a free demo
+0:14  Start from a template built for your trade
+0:19  Switch on only the modules you use
+0:26  Every job, stage by stage
+0:32  Payments, stock and accounts — when you need them
+0:40  Six numbers that run your day
+0:49  Book a free demo
 
 Business templates: Tailor, Furniture, Carpenter, Auto Workshop, Printing and a
 configurable Generic workspace.

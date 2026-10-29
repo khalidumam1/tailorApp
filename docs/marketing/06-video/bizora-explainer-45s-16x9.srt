@@ -1,24 +1,19 @@
 1
-00:00:00,000 --> 00:00:06,800
+00:00:00,000 --> 00:00:04,400
 Two steps are ours. One is yours.
-Setting up Bizora takes three steps, and the first two are ours.
 
 2
-00:00:06,800 --> 00:00:13,900
+00:00:04,400 --> 00:00:09,810
 Tell us your business.
-Step one: tell us your business. What you sell, how work moves, who works with you.
 
 3
-00:00:13,900 --> 00:00:21,300
+00:00:09,810 --> 00:00:17,240
 We configure your workspace.
-Step two: we configure your workspace. Modules, stages, item types, payment methods, custom fields and your branding.
 
 4
-00:00:21,300 --> 00:00:31,100
+00:00:17,240 --> 00:00:24,690
 You run it — everywhere.
-Step three: you run it. Sign in on the web or the Android app, invite your team, and move every job stage by stage.
 
 5
-00:00:31,100 --> 00:00:39,100
+00:00:24,690 --> 00:00:29,940
 BOOK A FREE DEMO — bizora.app
-Book a free demo and we will show you the same screens, set up for your trade.

@@ -62,7 +62,9 @@ Start with [`MARKETING_PLAN.md`](MARKETING_PLAN.md) for the strategy and
 | `04-print/brochure-trifold.pdf` | 297×210 mm, 2 pages | Print double-sided, then fold (see [`BRAND_GUIDE.md`](BRAND_GUIDE.md#tri-fold-panel-map)) |
 | `04-print/poster-a3.pdf` | 297×420 mm | Shop windows, expo stands |
 | `04-print/business-card.pdf` | 85×55 mm, 2 pages | Standard business card |
-| `06-video/*.mp4` | 1920×1080 / 1080×1920, H.264 + AAC | Instagram, Facebook, YouTube, WhatsApp |
+| `06-video/*promo*.mp4` | 1920×1080 and 1080×1920, 52s | YouTube, LinkedIn, website, Facebook |
+| `06-video/*reel*.mp4` | 1080×1920, 17s | Reels, TikTok, story ads |
+| `06-video/*explainer*.mp4` | 1920×1080, 30s | Website, YouTube, sales follow-up |
 
 ---
 

@@ -23,8 +23,8 @@ never drift from the plan.
 | --- | --- | --- | --- |
 | `bizora-promo-60s-16x9.mp4` | 1920×1080 | 52s | YouTube, LinkedIn, website, Facebook landscape |
 | `bizora-promo-60s-9x16.mp4` | 1080×1920 | 52s | Instagram/Facebook reels, WhatsApp status |
-| `bizora-reel-30s-9x16.mp4` | 1080×1920 | ~25s | Reels, TikTok, story ads |
-| `bizora-explainer-45s-16x9.mp4` | 1920×1080 | ~40s | Website, YouTube, sales follow-up |
+| `bizora-reel-30s-9x16.mp4` | 1080×1920 | 17s | Reels, TikTok, story ads |
+| `bizora-explainer-45s-16x9.mp4` | 1920×1080 | 30s | Website, YouTube, sales follow-up |
 | `bizora-promo-60s-16x9.srt` and friends | captions | — | Upload alongside; most viewers watch muted |
 | `*-poster.png` | stills | — | Thumbnail fallback and link previews |
 
@@ -69,12 +69,12 @@ tail. Rebuild with `node .build/build-video.mjs`.
 | --- | --- | --- | --- | --- |
 | 1 | 0:00 | Register, chat thread and diary, desaturated | Three places. One business. | Slow push in on the mess. No Bizora branding yet — earn it. |
 | 2 | 0:06 | Bizora dashboard, clean desk, warm light | Or this. | Hard cut, snap zoom, subtle whoosh. Colour warms as the logo lands. |
-| 3 | 0:12 | Template chips animating across frame | Start from a template built for your trade. | Chips slide in left to right, one beat apart, gold on the active chip. |
-| 4 | 0:20 | Module toggles in Business settings; the menu reflows | Switch on only what you use. | Screen-recording feel — real cursor, real toggles, no fake UI. |
-| 5 | 0:30 | Orders board: a job card moves stage, history line appears | Every job, stage by stage. | Follow the card. Hold on the history entry for half a beat. |
-| 6 | 0:40 | Payments list, invoice PDF, then inventory and cashbook | Payments, stock and accounts — when you need them. | Quick cuts, one module per beat, all inside the same workspace chrome. |
-| 7 | 0:48 | Dashboard widgets lighting up one by one | Six numbers that run your day. | Count-up on each figure. Beat the voiceover to the last number. |
-| 8 | 0:55 | Web and phone side by side, then the lockup | BOOK A FREE DEMO · bizora.app | Hold a clean end card for 5 seconds. Mark, wordmark, URL, CTA. |
+| 3 | 0:14 | Template chips animating across frame | Start from a template built for your trade. | Chips slide in left to right, one beat apart, gold on the active chip. |
+| 4 | 0:19 | Module toggles in Business settings; the menu reflows | Switch on only what you use. | Screen-recording feel — real cursor, real toggles, no fake UI. |
+| 5 | 0:26 | Orders board: a job card moves stage, history line appears | Every job, stage by stage. | Follow the card. Hold on the history entry for half a beat. |
+| 6 | 0:32 | Payments list, invoice PDF, then inventory and cashbook | Payments, stock and accounts — when you need them. | Quick cuts, one module per beat, all inside the same workspace chrome. |
+| 7 | 0:40 | Dashboard widgets lighting up one by one | Six numbers that run your day. | Count-up on each figure. Beat the voiceover to the last number. |
+| 8 | 0:49 | Web and phone side by side, then the lockup | BOOK A FREE DEMO · bizora.app | Hold a clean end card for 5 seconds. Mark, wordmark, URL, CTA. |
 
 ### Production notes
 
@@ -89,7 +89,7 @@ tail. Rebuild with `node .build/build-video.mjs`.
 
 | | |
 | --- | --- |
-| **Length** | ~25 seconds (4 shots) |
+| **Length** | 17 seconds (4 shots) |
 | **Format** | 9:16 only |
 | **Audience** | Small business owners scrolling Instagram/Facebook in Urdu and English. Cold reach — assume no prior knowledge and no sound. |
 | **Key message** | Your business is not disorganised, it is scattered. Bizora gathers it into one workspace. |
@@ -108,9 +108,9 @@ tail. Rebuild with `node .build/build-video.mjs`.
 | # | Time | Visual | On-screen text | Direction |
 | --- | --- | --- | --- | --- |
 | 1 | 0:00 | Fast three-shot montage: register, chat, diary | Orders. Updates. Money. | Hard cuts on the beat, slight handheld grain. |
-| 2 | 0:05 | Phone UI scrolling dashboard → orders → payment | One workspace. | One continuous take, no cuts. |
-| 3 | 0:20 | Template chips and module toggles flashing past | Configured for your business. | Motion blur between frames; keep the green lockup pinned bottom. |
-| 4 | 0:26 | End card on brand green | BOOK A FREE DEMO · bizora.app | Logo pop, hold to the end. |
+| 2 | 0:04 | Phone UI scrolling dashboard → orders → payment | One workspace. | One continuous take, no cuts. |
+| 3 | 0:08 | Template chips and module toggles flashing past | Configured for your business. | Motion blur between frames; keep the green lockup pinned bottom. |
+| 4 | 0:14 | End card on brand green | BOOK A FREE DEMO · bizora.app | Logo pop, hold to the end. |
 
 ### Production notes
 
@@ -126,7 +126,7 @@ tail. Rebuild with `node .build/build-video.mjs`.
 
 | | |
 | --- | --- |
-| **Length** | ~40 seconds (5 shots) |
+| **Length** | 30 seconds (5 shots) |
 | **Format** | 16:9 |
 | **Audience** | Warm leads who clicked an ad or replied to outreach and want to know what happens after they say yes. Also sent as a follow-up after a demo. |
 | **Key message** | You are not buying software to configure yourself — Bizora configures it with you. |
@@ -149,10 +149,10 @@ tail. Rebuild with `node .build/build-video.mjs`.
 | # | Time | Visual | On-screen text | Direction |
 | --- | --- | --- | --- | --- |
 | 1 | 0:00 | Three numbered cards; 01 and 02 carry the mark, 03 a business owner | Two steps are ours. One is yours. | Cards stack from the bottom with a soft spring. |
-| 2 | 0:08 | Intake conversation: sticky notes with business name, items, stages, team | Tell us your business. | Warm human footage — hands, notebook, a real workshop in the background. |
-| 3 | 0:18 | Configuration pass: modules, stages reordering, fields, branding on an invoice | We configure your workspace. | Screen recording with a real cursor, speed-ramped 1.6×. |
-| 4 | 0:32 | Owner signs in on laptop and phone; a job card moves stage | You run it — everywhere. | Cut between devices on the word "everywhere". |
-| 5 | 0:40 | End card | BOOK A FREE DEMO · bizora.app | Hold 5 seconds with URL and email. |
+| 2 | 0:04 | Intake conversation: sticky notes with business name, items, stages, team | Tell us your business. | Warm human footage — hands, notebook, a real workshop in the background. |
+| 3 | 0:10 | Configuration pass: modules, stages reordering, fields, branding on an invoice | We configure your workspace. | Screen recording with a real cursor, speed-ramped 1.6×. |
+| 4 | 0:17 | Owner signs in on laptop and phone; a job card moves stage | You run it — everywhere. | Cut between devices on the word "everywhere". |
+| 5 | 0:25 | End card | BOOK A FREE DEMO · bizora.app | Hold 5 seconds with URL and email. |
 
 ### Production notes
 
