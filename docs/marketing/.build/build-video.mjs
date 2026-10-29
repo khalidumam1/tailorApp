@@ -62,25 +62,38 @@ let built = 0;
 for (const key of keys) {
   const video = COPY.video[key];
   const lines = video.scenes.map((_, i) => path.join(AUDIO, `${key}-${String(i + 1).padStart(2, '0')}.mp3`));
-  if (!lines.every((f) => fs.existsSync(f))) { console.log(`${key}: waiting for voiceover (${lines.filter((f) => !fs.existsSync(f)).length} clips missing)`); continue; }
+  const hasAudio = lines.every((f) => fs.existsSync(f));
+  let audios = [];
+  let shots;
+  let total;
 
-  // Decode first so shot lengths come from the real decoded audio, not the
-  // mp3 header, then pad each line so video and voice stay frame-accurate.
-  const raws = lines.map((f, i) => {
-    const wav = path.join(TMP, `${key}-raw${i}.wav`);
-    run(['-i', f, '-ar', '48000', '-ac', '2', wav]);
-    return wav;
-  });
-  const durs = raws.map(duration);
-  const shots = durs.map((d) => d + TAIL);
-  const total = shots.reduce((a, b) => a + b, 0);
-  const audios = raws.map((wav, i) => {
-    const padded = path.join(TMP, `${key}-a${i}.wav`);
-    run(['-i', wav,
-      '-filter_complex', `aevalsrc=0|0:d=${TAIL}:s=48000[sil];[0:a][sil]concat=n=2:v=0:a=1[a]`,
-      '-map', '[a]', '-ar', '48000', '-ac', '2', padded]);
-    return padded;
-  });
+  if (hasAudio) {
+    // Decode first so shot lengths come from the real decoded audio, not the
+    // mp3 header, then pad each line so video and voice stay frame-accurate.
+    const raws = lines.map((f, i) => {
+      const wav = path.join(TMP, `${key}-raw${i}.wav`);
+      run(['-i', f, '-ar', '48000', '-ac', '2', wav]);
+      return wav;
+    });
+    const durs = raws.map(duration);
+    shots = durs.map((d) => d + TAIL);
+    audios = raws.map((wav) => {
+      const padded = path.join(TMP, `${key}-a${wav.slice(-5)}`);
+      run(['-i', wav,
+        '-filter_complex', `aevalsrc=0|0:d=${TAIL}:s=48000[sil];[0:a][sil]concat=n=2:v=0:a=1[a]`,
+        '-map', '[a]', '-ar', '48000', '-ac', '2', padded]);
+      return padded;
+    });
+  } else {
+    // No narration recorded yet: hold each shot long enough to read the
+    // on-screen text and the caption, so the cut is still publishable.
+    console.log(`${key}: no voiceover found — building captioned silent cuts`);
+    shots = video.scenes.map((scene) => {
+      const words = `${scene.onScreen} ${video.voiceover[video.scenes.indexOf(scene)] ?? ''}`.trim().split(/\s+/).length;
+      return Math.max(2.6, words * 0.30 + 1.1);
+    });
+  }
+  total = shots.reduce((a, b) => a + b, 0);
 
   for (const cut of CUTS[key]) {
     const clips = [];
@@ -103,15 +116,18 @@ for (const key of keys) {
     const silent = path.join(TMP, `${key}-${cut.tag}-silent.mp4`);
     run(['-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', silent]);
 
-    const aListFile = path.join(TMP, `${key}-a.txt`);
-    fs.writeFileSync(aListFile, audios.map((c) => `file '${c}'`).join('\n'));
-    const voice = path.join(TMP, `${key}-voice.wav`);
-    run(['-f', 'concat', '-safe', '0', '-i', aListFile, '-c', 'copy', voice]);
-
     const finalPath = path.join(OUT, `${cut.name}.mp4`);
-    run(['-i', silent, '-i', voice, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
-      '-movflags', '+faststart', '-shortest', finalPath]);
-    console.log(`${cut.name}.mp4  ${total.toFixed(1)}s  ${cut.w}x${cut.h}  ${(fs.statSync(finalPath).size / 1e6).toFixed(1)} MB`);
+    if (hasAudio) {
+      const aListFile = path.join(TMP, `${key}-a.txt`);
+      fs.writeFileSync(aListFile, audios.map((c) => `file '${c}'`).join('\n'));
+      const voice = path.join(TMP, `${key}-voice.wav`);
+      run(['-f', 'concat', '-safe', '0', '-i', aListFile, '-c', 'copy', voice]);
+      run(['-i', silent, '-i', voice, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
+        '-movflags', '+faststart', '-shortest', finalPath]);
+    } else {
+      run(['-i', silent, '-c', 'copy', '-movflags', '+faststart', finalPath]);
+    }
+    console.log(`${cut.name}.mp4  ${total.toFixed(1)}s  ${cut.w}x${cut.h}  ${hasAudio ? 'voiceover' : 'silent'}  ${(fs.statSync(finalPath).size / 1e6).toFixed(1)} MB`);
     built += 1;
   }
 
@@ -121,7 +137,8 @@ for (const key of keys) {
   fs.writeFileSync(srt, video.scenes.map((scene, i) => {
     const start = t;
     t += shots[i];
-    return `${i + 1}\n${srtTime(start)} --> ${srtTime(t)}\n${scene.onScreen.replace(/\s*·\s*/g, ' — ')}\n`;
+    const caption = hasAudio ? scene.onScreen : `${scene.onScreen}\n${video.voiceover[i] ?? ''}`.trim();
+    return `${i + 1}\n${srtTime(start)} --> ${srtTime(t)}\n${caption.replace(/\s*·\s*/g, ' — ')}\n`;
   }).join('\n'));
   console.log(`${path.basename(srt)}  ${video.scenes.length} cues`);
 
