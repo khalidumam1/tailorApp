@@ -1,5 +1,5 @@
 /**
- * Vela-style sheet for TailorApp mobile.
+ * Vela-style sheet for Bizora mobile.
  *
  * Every screen pulls this through `useAppStyles()`, so the look of the whole
  * app is decided here. Rules of the system:

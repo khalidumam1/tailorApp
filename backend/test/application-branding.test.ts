@@ -69,13 +69,13 @@ test('parseConfigurableLogoUrl distinguishes external custom URLs from configura
   assert.equal(external.monogram, 'AL');
 
   const empty = parseConfigurableLogoUrl('', {
-    fallbackName: 'TailorApp',
+    fallbackName: 'Bizora',
     primaryColor: '#117a5c',
     accentColor: '#c08a33',
   });
   assert.equal(empty.isConfigurablePreset, true);
   assert.equal(empty.style, 'shears');
-  assert.equal(empty.monogram, 'TA');
+  assert.equal(empty.monogram, 'BI');
 });
 
 test('renderConfigurableLogoSvg generates valid SVG for every preset style and badge shape', () => {

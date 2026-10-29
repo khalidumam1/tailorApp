@@ -17,9 +17,23 @@
  *
  * Usage
  * -----
- *   npm run platform:grants:backfill                 # repair every super admin
- *   npm run platform:grants:backfill -- --check      # report only, change nothing
+ *   npm run platform:grants:backfill                   # repair every super admin
+ *   npm run platform:grants:backfill -- --check        # report only, change nothing
  *   npm run platform:grants:backfill -- --email=a@b.c  # repair a single account
+ *   npm run platform:grants:backfill -- --help
+ *
+ * Where to run it
+ * ---------------
+ * It needs `tsx` (a dev dependency) and the `scripts/` folder, neither of which
+ * exist in the production runtime image (`npm ci --omit=dev`, only `dist/` is
+ * shipped). Run it from a dev shell — or from CI — with `DATABASE_URL` pointing
+ * at the target database. If you cannot, run
+ * `scripts/backfill-platform-grants.sql` against the same database with psql;
+ * it does exactly the same thing and needs no Node toolchain.
+ *
+ * `npm run db:seed` is NOT an alternative: it throws in production
+ * ("Demo seed data cannot be created in production") and creates demo
+ * businesses everywhere else.
  */
 import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
@@ -31,6 +45,16 @@ loadEnvironmentFile();
 const prisma = new PrismaClient();
 
 const args = new Set(process.argv.slice(2));
+if (args.has('--help') || args.has('-h')) {
+  console.info(`Backfill platform permission grants for super admins.
+
+  --check            Report what is missing without changing anything.
+  --email=<address>  Only repair this account.
+
+Run this from the backend folder with DATABASE_URL set. The production runtime
+image has no tsx; use scripts/backfill-platform-grants.sql there instead.`);
+  process.exit(0);
+}
 const checkOnly = args.has('--check');
 const emailArgument = [...args].find((argument) => argument.startsWith('--email='));
 const emailFilter = emailArgument?.slice('--email='.length).trim().toLowerCase();

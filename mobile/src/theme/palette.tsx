@@ -1,5 +1,5 @@
 /**
- * Vela-style design tokens for TailorApp mobile.
+ * Vela-style design tokens for Bizora mobile.
  *
  * The palette is the single source of truth for colour. It mirrors the web
  * console's design system so both clients read as one product:
@@ -199,7 +199,7 @@ const BRAND_SHADE = '#08291f';
 const ACCENT_SHADE = '#082f49';
 
 const FALLBACK_BRANDING = {
-  brandName: 'TailorApp',
+  brandName: 'Bizora',
   primaryColor: '#117a5c',
   accentColor: '#c08a33',
   defaultTheme: 'light',

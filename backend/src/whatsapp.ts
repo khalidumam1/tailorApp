@@ -736,7 +736,9 @@ export async function generateSubscriptionReceiptPdf(input: {
   invoiceNumber: string;
   startsAt: string;
   endsAt: string;
+  brandName?: string;
 }): Promise<Buffer> {
+  const platformName = input.brandName ?? 'Bizora';
   const document = new PDFDocument({
     size: 'A4',
     margin: 52,
@@ -748,7 +750,7 @@ export async function generateSubscriptionReceiptPdf(input: {
     document.on('end', () => resolve(Buffer.concat(chunks)));
     document.on('error', reject);
   });
-  document.fontSize(22).fillColor('#17324d').text('TailorApp');
+  document.fontSize(22).fillColor('#17324d').text(platformName);
   document.moveDown(0.25).fontSize(11).fillColor('#68788a').text('SUBSCRIPTION PAYMENT RECEIPT');
   document.moveDown(1).fontSize(12).fillColor('#17202a').text(input.businessName);
   document.moveDown(0.5).fontSize(10).fillColor('#52616f');
@@ -762,7 +764,7 @@ export async function generateSubscriptionReceiptPdf(input: {
   document.text(`Transaction reference: ${input.transactionReference}`);
   document.text(`Sender name: ${input.senderName}`);
   document.moveDown(2).fontSize(9).fillColor('#68788a')
-    .text('This receipt confirms the subscription payment recorded by TailorApp. It does not represent an external bank or wallet refund.');
+    .text(`This receipt confirms the subscription payment recorded by ${platformName}. It does not represent an external bank or wallet refund.`);
   document.end();
   return output;
 }

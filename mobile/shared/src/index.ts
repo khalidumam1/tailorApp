@@ -182,10 +182,10 @@ export const applicationBrandingSchema = z.object({
 export type ApplicationBranding = z.infer<typeof applicationBrandingSchema>;
 
 export const DEFAULT_APPLICATION_BRANDING: ApplicationBranding = {
-  brandName: 'TailorApp',
-  tagline: 'Made for the workroom',
-  description: 'Keep customers, measurements, stitching progress and payments in one clear place.',
-  loginTitle: 'Good work starts with a good fit.',
+  brandName: 'Bizora',
+  tagline: 'One platform. Every business.',
+  description: 'Keep customers, orders, jobs, payments and accounts in one clear place.',
+  loginTitle: 'Run your business in one place.',
   logoUrl: '',
   faviconUrl: '',
   primaryColor: '#117a5c',
@@ -293,7 +293,7 @@ export function brandInitials(name: string | null | undefined, maxChars = 2): st
   return single.slice(0, maxChars).toUpperCase();
 }
 
-export function sanitizeLogoMonogram(value: string | null | undefined, fallbackName = 'TailorApp'): string {
+export function sanitizeLogoMonogram(value: string | null | undefined, fallbackName = 'Bizora'): string {
   const cleaned = (value ?? '')
     .toUpperCase()
     .replace(/[^A-Z0-9&+]/g, '')
