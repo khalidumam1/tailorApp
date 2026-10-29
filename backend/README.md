@@ -190,6 +190,64 @@ monthly-order limits, are enforced server-side. Expiry alert windows are driven
 by the configured reminder-day settings; this release does not configure an
 external reminder delivery service.
 
+## Runbook: a super admin is missing platform permission grants
+
+**Symptom.** Screens are missing from the platform console sidebar, or the
+console shows: *"This super admin account is missing N platform grant(s) …
+so those screens are hidden."*
+
+**Cause.** Console navigation is grant-driven: an item renders only when the
+signed-in account holds a `PlatformPermissionGrant` row for it
+(`src/middleware/auth.ts`). Grants are written **once, at account creation** —
+by `prisma/seed.ts` or `scripts/bootstrap-platform-admin.ts` — from the catalog
+in `src/permissions.ts`. When a release adds a permission to that catalog
+(`platform:application:manage`, `platform:billing:settings`,
+`platform:reports:read`, …), accounts created earlier never receive it, so the
+new screens stay hidden forever. Nothing errors; the item just disappears.
+
+**Do not use `npm run db:seed` for this.** In production it throws
+`Demo seed data cannot be created in production`, and outside production it
+creates demo businesses you do not want.
+
+### Fix 1 — SQL (always works, including the production runtime image)
+
+```sh
+psql "$DATABASE_URL" -f scripts/backfill-platform-grants.sql
+```
+
+Idempotent and add-only: it creates any missing `Permission` rows, grants every
+`platform:%` permission to every `SUPER_ADMIN`, and leaves platform staff
+untouched. It ends with a verification query — every super admin should report
+13 grants and 0 missing. The runtime image ships no dev dependencies, so this is
+the reliable route there.
+
+### Fix 2 — script (from a dev shell or CI)
+
+```sh
+cd backend
+npm run platform:grants:backfill -- --check        # report only
+npm run platform:grants:backfill                   # repair all super admins
+npm run platform:grants:backfill -- --email=a@b.c  # one account
+```
+
+Needs `tsx` and `scripts/`, so it cannot run inside the production image
+(`npm ci --omit=dev`, only `dist/` is shipped). Point `DATABASE_URL` at the
+target database (loaded from `backend/.env` or the repository root `.env`).
+
+**Afterwards**, have the admin **sign out and back in** — the web app caches the
+grant list for the session.
+
+To inspect what an account holds:
+
+```sql
+select u.email, p.key
+from "PlatformPermissionGrant" g
+join "User" u on u.id = g."userId"
+join "Permission" p on p.id = g."permissionId"
+where u."platformRole" = 'SUPER_ADMIN'
+order by 1, 2;
+```
+
 ## Checks
 
 ```sh
