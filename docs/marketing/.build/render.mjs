@@ -1200,239 +1200,248 @@ const prints = [
   { name: 'business-card-back', w: CARD_W, h: CARD_H, html: cardBack, pdf: [mm(85), mm(55)], preview: 1000 },
 ];
 
-const only = process.argv[2];
-const runJobs = only ? jobs.filter((j) => j.name.includes(only)) : jobs;
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+  const only = process.argv[2];
+  const runJobs = only ? jobs.filter((j) => j.name.includes(only)) : jobs;
 
-/* logo vector files */
-fs.writeFileSync(path.join(OUT, '05-brand', 'logo-primary.svg'), markSvg({ size: 64, tile: true }).replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" '));
-fs.writeFileSync(path.join(OUT, '05-brand', 'logo-mono.svg'), markSvg({ size: 64, tile: false, mono: '#0E1A16' }).replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" '));
-fs.writeFileSync(path.join(OUT, '05-brand', 'logo-white.svg'), markSvg({ size: 64, tile: false, mono: '#FFFFFF' }).replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" '));
-fs.writeFileSync(path.join(OUT, '05-brand', 'logo-square.svg'), markSvg({ size: 64, tile: true, radius: 0 }).replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" '));
+  /* logo vector files */
+  fs.writeFileSync(path.join(OUT, '05-brand', 'logo-primary.svg'), markSvg({ size: 64, tile: true }).replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" '));
+  fs.writeFileSync(path.join(OUT, '05-brand', 'logo-mono.svg'), markSvg({ size: 64, tile: false, mono: '#0E1A16' }).replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" '));
+  fs.writeFileSync(path.join(OUT, '05-brand', 'logo-white.svg'), markSvg({ size: 64, tile: false, mono: '#FFFFFF' }).replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" '));
+  fs.writeFileSync(path.join(OUT, '05-brand', 'logo-square.svg'), markSvg({ size: 64, tile: true, radius: 0 }).replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" '));
 
-const browser = await puppeteer.launch({
-  args: [...chromium.args, '--no-sandbox', '--single-process', '--allow-file-access-from-files', '--font-render-hinting=none'],
-  executablePath: await chromium.executablePath(),
-  headless: 'shell',
-});
-const p = await browser.newPage();
-
-const problems = [];
-
-/**
- * Legibility + contrast QA. Effective size accounts for CSS `zoom` and
- * transforms; contrast falls back to the artboard base colour when the
- * background is a gradient (data-bg on the wrap).
- */
-async function qa(w, h, label) {
-  return p.evaluate(() => {
-    const parse = (c) => {
-      const m = String(c).match(/rgba?\(([^)]+)\)/);
-      if (!m) return null;
-      const [r, g, b, a = '1'] = m[1].split(',').map((v) => parseFloat(v));
-      return { r, g, b, a: parseFloat(a) };
-    };
-    const lum = ({ r, g, b }) => {
-      const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
-      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
-    };
-    const ratio = (a, b) => {
-      const l1 = lum(a), l2 = lum(b);
-      return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
-    };
-    const bgNode = document.querySelector('[data-bg]');
-    const base = (bgNode && parse(getComputedStyle(bgNode).backgroundColor)) || { r: 255, g: 255, b: 255, a: 1 };
-    const baseHex = bgNode?.dataset.bg;
-    const baseCol = baseHex ? { r: parseInt(baseHex.slice(1, 3), 16), g: parseInt(baseHex.slice(3, 5), 16), b: parseInt(baseHex.slice(5, 7), 16) } : base;
-
-    const known = { cta: { r: 17, g: 122, b: 92 }, 'cta-gold': { r: 201, g: 152, b: 71 } };
-    const bgOf = (el) => {
-      if (el.classList.contains('cta')) return el.classList.contains('gold') ? known['cta-gold'] : known.cta;
-      let node = el;
-      while (node && node !== document.documentElement) {
-        const cs = getComputedStyle(node);
-        if (cs.backgroundImage && cs.backgroundImage !== 'none') {
-          if (node.dataset.bg) return baseCol;
-          const solid = parse(cs.backgroundColor);
-          if (solid && solid.a > 0.55) return solid;
-          return null; // gradient of unknown colour — do not judge
-        }
-        const c = parse(cs.backgroundColor);
-        if (c && c.a > 0.6) return c;
-        node = node.parentElement;
-      }
-      return baseCol;
-    };
-    const effPx = (el) => {
-      const px = parseFloat(getComputedStyle(el).fontSize);
-      let z = 1, node = el;
-      while (node && node !== document.documentElement) {
-        const cs = getComputedStyle(node);
-        z *= parseFloat(cs.zoom || '1') || 1;
-        if (cs.transform && cs.transform !== 'none') {
-          const m = cs.transform.match(/matrix\(([^,]+)/);
-          if (m) z *= Math.abs(parseFloat(m[1]));
-        }
-        node = node.parentElement;
-      }
-      return px * z;
-    };
-
-    let tiny = 0, contrast = 0;
-    const tinyList = [], contrastList = [];
-    const seen = new Set();
-    for (const el of document.querySelectorAll('body *')) {
-      const direct = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim().length > 1);
-      if (!direct) continue;
-      const r = el.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) continue;
-      if (el.closest('[data-clip]')) continue;
-      const size = effPx(el);
-      if (size < 9.5) { tiny += 1; if (tinyList.length < 4) tinyList.push(`${size.toFixed(1)}px "${el.textContent.trim().replace(/\s+/g, ' ').slice(0, 30)}"`); }
-      const cs = getComputedStyle(el);
-      const fg = parse(cs.color);
-      if (!fg || fg.a < 0.5) continue;
-      const bg = bgOf(el);
-      if (!bg) continue;
-      const cr = ratio(fg, bg);
-      const large = size >= 24 || (size >= 18.66 && parseInt(cs.fontWeight, 10) >= 700);
-      const need = large ? 3 : 4.5;
-      if (cr < need) {
-        contrast += 1;
-        const key = `${cs.color}|${Math.round(size)}`;
-        if (!seen.has(key) && seen.size < 4) {
-          seen.add(key);
-          contrastList.push(`${cr.toFixed(2)}<${need} ${size.toFixed(0)}px ${cs.color} "${el.textContent.trim().replace(/\s+/g, ' ').slice(0, 28)}"`);
-        }
-      }
-    }
-    return { tiny, contrast, tinyList, contrastList };
-  }).then((r) => {
-    for (const t of r.tinyList) console.log(`      small: ${t}`);
-    for (const c of r.contrastList) console.log(`      low-ct: ${c}`);
-    return r;
+  const browser = await puppeteer.launch({
+    args: [...chromium.args, '--no-sandbox', '--single-process', '--allow-file-access-from-files', '--font-render-hinting=none'],
+    executablePath: await chromium.executablePath(),
+    headless: 'shell',
   });
-}
+  const p = await browser.newPage();
 
-/** Last-resort safety net: if a print piece is still taller than its page, zoom it down. */
-async function shrinkToFit(pageH) {
-  return p.evaluate((H) => {
-    const out = [];
-    for (const el of document.querySelectorAll('.shrink')) {
-      el.style.zoom = '1';
-      const natural = el.getBoundingClientRect().height / (parseFloat(getComputedStyle(el).zoom) || 1);
-      const over = el.scrollHeight;
-      const k = Math.min(1, (H - 2.5) / Math.max(over, natural));
-      if (k < 1) { el.style.zoom = String(k); out.push(Math.round(k * 100) / 100); }
-    }
-    return out;
-  }, pageH);
-}
+  const problems = [];
 
-/** Scale every `.fit` element down until it fits its `.fitbox` parent. */
-async function autofit() {
-  return p.evaluate(() => {
-    const applied = [];
-    for (const box of document.querySelectorAll('.fitbox')) {
-      const items = [...box.children].filter((c) => c.classList && c.classList.contains('fit'));
-      if (!items.length) continue;
-      const br = box.getBoundingClientRect();
-      const cs = getComputedStyle(box);
-      const gap = parseFloat(cs.rowGap) || 0;
-      const isRow = cs.flexDirection.startsWith('row');
-      const n = items.length;
-      for (const it of items) {
-        const nw = Number(it.dataset.w) || 1, nh = Number(it.dataset.h) || 1;
-        const availW = isRow ? (br.width - gap * (n - 1)) / n : br.width;
-        const availH = isRow ? br.height : (br.height - gap * (n - 1)) / n;
-        const k = Math.max(0.05, Math.min(1.6, Math.min(availW / nw, availH / nh) * 0.995));
-        it.style.zoom = String(k);
-        applied.push(Math.round(k * 100) / 100);
+  /**
+   * Legibility + contrast QA. Effective size accounts for CSS `zoom` and
+   * transforms; contrast falls back to the artboard base colour when the
+   * background is a gradient (data-bg on the wrap).
+   */
+  async function qa(w, h, label) {
+    return p.evaluate(() => {
+      const parse = (c) => {
+        const m = String(c).match(/rgba?\(([^)]+)\)/);
+        if (!m) return null;
+        const [r, g, b, a = '1'] = m[1].split(',').map((v) => parseFloat(v));
+        return { r, g, b, a: parseFloat(a) };
+      };
+      const lum = ({ r, g, b }) => {
+        const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+      };
+      const ratio = (a, b) => {
+        const l1 = lum(a), l2 = lum(b);
+        return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+      };
+      const bgNode = document.querySelector('[data-bg]');
+      const base = (bgNode && parse(getComputedStyle(bgNode).backgroundColor)) || { r: 255, g: 255, b: 255, a: 1 };
+      const baseHex = bgNode?.dataset.bg;
+      const baseCol = baseHex ? { r: parseInt(baseHex.slice(1, 3), 16), g: parseInt(baseHex.slice(3, 5), 16), b: parseInt(baseHex.slice(5, 7), 16) } : base;
+
+      const known = { cta: { r: 17, g: 122, b: 92 }, 'cta-gold': { r: 201, g: 152, b: 71 } };
+      const bgOf = (el) => {
+        if (el.classList.contains('cta')) return el.classList.contains('gold') ? known['cta-gold'] : known.cta;
+        let node = el;
+        while (node && node !== document.documentElement) {
+          const cs = getComputedStyle(node);
+          if (cs.backgroundImage && cs.backgroundImage !== 'none') {
+            if (node.dataset.bg) return baseCol;
+            const solid = parse(cs.backgroundColor);
+            if (solid && solid.a > 0.55) return solid;
+            return null; // gradient of unknown colour — do not judge
+          }
+          const c = parse(cs.backgroundColor);
+          if (c && c.a > 0.6) return c;
+          node = node.parentElement;
+        }
+        return baseCol;
+      };
+      const effPx = (el) => {
+        const px = parseFloat(getComputedStyle(el).fontSize);
+        let z = 1, node = el;
+        while (node && node !== document.documentElement) {
+          const cs = getComputedStyle(node);
+          z *= parseFloat(cs.zoom || '1') || 1;
+          if (cs.transform && cs.transform !== 'none') {
+            const m = cs.transform.match(/matrix\(([^,]+)/);
+            if (m) z *= Math.abs(parseFloat(m[1]));
+          }
+          node = node.parentElement;
+        }
+        return px * z;
+      };
+
+      let tiny = 0, contrast = 0;
+      const tinyList = [], contrastList = [];
+      const seen = new Set();
+      for (const el of document.querySelectorAll('body *')) {
+        const direct = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim().length > 1);
+        if (!direct) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) continue;
+        if (el.closest('[data-clip]')) continue;
+        const size = effPx(el);
+        if (size < 9.5) { tiny += 1; if (tinyList.length < 4) tinyList.push(`${size.toFixed(1)}px "${el.textContent.trim().replace(/\s+/g, ' ').slice(0, 30)}"`); }
+        const cs = getComputedStyle(el);
+        const fg = parse(cs.color);
+        if (!fg || fg.a < 0.5) continue;
+        const bg = bgOf(el);
+        if (!bg) continue;
+        const cr = ratio(fg, bg);
+        const large = size >= 24 || (size >= 18.66 && parseInt(cs.fontWeight, 10) >= 700);
+        const need = large ? 3 : 4.5;
+        if (cr < need) {
+          contrast += 1;
+          const key = `${cs.color}|${Math.round(size)}`;
+          if (!seen.has(key) && seen.size < 4) {
+            seen.add(key);
+            contrastList.push(`${cr.toFixed(2)}<${need} ${size.toFixed(0)}px ${cs.color} "${el.textContent.trim().replace(/\s+/g, ' ').slice(0, 28)}"`);
+          }
+        }
       }
-    }
-    return applied;
-  });
-}
-async function check(w, h, label) {
-  return p.evaluate((W, H) => {
-    const bad = [];
-    for (const el of document.querySelectorAll('body *')) {
-      if (el.closest('[data-clip]')) continue;
-      const cls = String(el.className ?? '');
-      if (cls.split(/\s+/).some((c) => c === 'glow' || c === 'grid')) continue;
-      const r = el.getBoundingClientRect();
-      if (r.width === 0 && r.height === 0) continue;
-      const over = Math.max(r.right - W, r.bottom - H, -r.left, -r.top);
-      if (over > 1.5) {
-        bad.push({
-          over: Math.round(over),
-          tag: el.tagName,
-          cls: cls.slice(0, 26),
-          text: String(el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 42),
-          box: `${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)}`,
-          edge: r.right > W + 1.5 ? 'right' : (r.bottom > H + 1.5 ? 'bottom' : (r.left < -1.5 ? 'left' : 'top')),
-        });
-      }
-    }
-    bad.sort((a, b) => b.over - a.over);
-    return { bad: bad.slice(0, 6), count: bad.length, worst: bad[0]?.over ?? 0 };
-  }, w, h).then((found) => {
-    if (found.count > 0) {
-      problems.push(`${label}: ${found.count} clipped, worst +${found.worst}px`);
-      for (const b of found.bad) console.log(`    ! +${String(b.over).padStart(4)}px ${b.edge.padEnd(6)} <${b.tag.toLowerCase()} ${b.cls ? '.' + b.cls : ''}> [${b.box}] "${b.text}"`);
-    }
-    return found;
-  });
-}
-
-for (const j of runJobs) {
-  await p.setViewport({ width: j.w, height: j.h, deviceScaleFactor: 1 });
-  await p.setContent(j.html, { waitUntil: 'domcontentloaded' });
-  await p.evaluate(() => document.fonts.ready);
-  const fit1 = await autofit();
-  await new Promise((r) => setTimeout(r, 220));
-  const m = await check(j.w, j.h, j.name);
-  const q = await qa(j.w, j.h, j.name);
-  await p.screenshot({ path: path.join(OUT, j.dir, j.name) });
-  console.log(`${j.name.padEnd(32)} ${String(j.w).padStart(4)}x${String(j.h).padEnd(4)} clip:${String(m.count).padStart(2)} tiny:${String(q.tiny).padStart(2)} contrast:${String(q.contrast).padStart(2)} fit:${fit1.join('/') || '-'}`);
-}
-
-for (const pr of prints) {
-  if (only && !pr.name.includes(only)) continue;
-  await p.setViewport({ width: pr.w, height: pr.h, deviceScaleFactor: 1 });
-  await p.setContent(page(pr.html()), { waitUntil: 'domcontentloaded' });
-  await p.evaluate(() => document.fonts.ready);
-  let fitp = await autofit();
-  const shrank = await shrinkToFit(pr.h);
-  if (shrank.length) { await autofit(); fitp = [...fitp, ...shrank.map((v) => 'x' + v)]; }
-  await new Promise((r) => setTimeout(r, 160));
-  const pm = await check(pr.w, pr.h, pr.name);
-  const qp = await qa(pr.w, pr.h, pr.name);
-  const pdfPath = path.join(OUT, '04-print', `${pr.name}.pdf`);
-  await p.pdf({ path: pdfPath, width: `${pr.pdf[0]}px`, height: `${pr.pdf[1]}px`, printBackground: true, margin: 0, pageRanges: '1' });
-  const prevH = Math.round((pr.preview * pr.h) / pr.w);
-  await p.setViewport({ width: pr.preview, height: prevH, deviceScaleFactor: 1 });
-  await p.setContent(page(`<div style="width:${pr.preview}px;height:${prevH}px;overflow:hidden" data-clip="1">
-      <div style="width:${pr.w}px;height:${pr.h}px;transform:scale(${pr.preview / pr.w});transform-origin:top left">${pr.html()}</div></div>`), { waitUntil: 'domcontentloaded' });
-  await p.evaluate(() => document.fonts.ready);
-  await new Promise((r) => setTimeout(r, 160));
-  await p.screenshot({ path: path.join(OUT, '04-print', `${pr.name}.png`) });
-  console.log(`${pr.name.padEnd(32)} ${String(pr.w).padStart(4)}x${String(pr.h).padEnd(4)} clip:${String(pm.count).padStart(2)} tiny:${String(qp.tiny).padStart(2)} contrast:${String(qp.contrast).padStart(2)} fit:${fitp.join('/') || '-'}`);
-}
-
-/* join the two-sided print pieces */
-async function join(outName, parts) {
-  const merged = await PDFDocument.create();
-  for (const part of parts) {
-    const src = await PDFDocument.load(fs.readFileSync(path.join(OUT, '04-print', `${part}.pdf`)));
-    const [first] = await merged.copyPages(src, [0]);
-    merged.addPage(first);
+      return { tiny, contrast, tinyList, contrastList };
+    }).then((r) => {
+      for (const t of r.tinyList) console.log(`      small: ${t}`);
+      for (const c of r.contrastList) console.log(`      low-ct: ${c}`);
+      return r;
+    });
   }
-  fs.writeFileSync(path.join(OUT, '04-print', outName), await merged.save());
-  console.log(`joined ${outName} ← ${parts.join(' + ')}`);
-}
-await join('flyer-a4.pdf', ['flyer-a4-front', 'flyer-a4-back']);
-await join('brochure-trifold.pdf', ['brochure-trifold-outside', 'brochure-trifold-inside']);
-await join('business-card.pdf', ['business-card-front', 'business-card-back']);
 
-console.log(`\nclipping problems: ${problems.length ? '\n  ' + problems.join('\n  ') : 'none'}`);
-await browser.close();
+  /** Last-resort safety net: if a print piece is still taller than its page, zoom it down. */
+  async function shrinkToFit(pageH) {
+    return p.evaluate((H) => {
+      const out = [];
+      for (const el of document.querySelectorAll('.shrink')) {
+        el.style.zoom = '1';
+        const natural = el.getBoundingClientRect().height / (parseFloat(getComputedStyle(el).zoom) || 1);
+        const over = el.scrollHeight;
+        const k = Math.min(1, (H - 2.5) / Math.max(over, natural));
+        if (k < 1) { el.style.zoom = String(k); out.push(Math.round(k * 100) / 100); }
+      }
+      return out;
+    }, pageH);
+  }
+
+  /** Scale every `.fit` element down until it fits its `.fitbox` parent. */
+  async function autofit() {
+    return p.evaluate(() => {
+      const applied = [];
+      for (const box of document.querySelectorAll('.fitbox')) {
+        const items = [...box.children].filter((c) => c.classList && c.classList.contains('fit'));
+        if (!items.length) continue;
+        const br = box.getBoundingClientRect();
+        const cs = getComputedStyle(box);
+        const gap = parseFloat(cs.rowGap) || 0;
+        const isRow = cs.flexDirection.startsWith('row');
+        const n = items.length;
+        for (const it of items) {
+          const nw = Number(it.dataset.w) || 1, nh = Number(it.dataset.h) || 1;
+          const availW = isRow ? (br.width - gap * (n - 1)) / n : br.width;
+          const availH = isRow ? br.height : (br.height - gap * (n - 1)) / n;
+          const k = Math.max(0.05, Math.min(1.6, Math.min(availW / nw, availH / nh) * 0.995));
+          it.style.zoom = String(k);
+          applied.push(Math.round(k * 100) / 100);
+        }
+      }
+      return applied;
+    });
+  }
+  async function check(w, h, label) {
+    return p.evaluate((W, H) => {
+      const bad = [];
+      for (const el of document.querySelectorAll('body *')) {
+        if (el.closest('[data-clip]')) continue;
+        const cls = String(el.className ?? '');
+        if (cls.split(/\s+/).some((c) => c === 'glow' || c === 'grid')) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) continue;
+        const over = Math.max(r.right - W, r.bottom - H, -r.left, -r.top);
+        if (over > 1.5) {
+          bad.push({
+            over: Math.round(over),
+            tag: el.tagName,
+            cls: cls.slice(0, 26),
+            text: String(el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 42),
+            box: `${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)}`,
+            edge: r.right > W + 1.5 ? 'right' : (r.bottom > H + 1.5 ? 'bottom' : (r.left < -1.5 ? 'left' : 'top')),
+          });
+        }
+      }
+      bad.sort((a, b) => b.over - a.over);
+      return { bad: bad.slice(0, 6), count: bad.length, worst: bad[0]?.over ?? 0 };
+    }, w, h).then((found) => {
+      if (found.count > 0) {
+        problems.push(`${label}: ${found.count} clipped, worst +${found.worst}px`);
+        for (const b of found.bad) console.log(`    ! +${String(b.over).padStart(4)}px ${b.edge.padEnd(6)} <${b.tag.toLowerCase()} ${b.cls ? '.' + b.cls : ''}> [${b.box}] "${b.text}"`);
+      }
+      return found;
+    });
+  }
+
+  for (const j of runJobs) {
+    await p.setViewport({ width: j.w, height: j.h, deviceScaleFactor: 1 });
+    await p.setContent(j.html, { waitUntil: 'domcontentloaded' });
+    await p.evaluate(() => document.fonts.ready);
+    const fit1 = await autofit();
+    await new Promise((r) => setTimeout(r, 220));
+    const m = await check(j.w, j.h, j.name);
+    const q = await qa(j.w, j.h, j.name);
+    await p.screenshot({ path: path.join(OUT, j.dir, j.name) });
+    console.log(`${j.name.padEnd(32)} ${String(j.w).padStart(4)}x${String(j.h).padEnd(4)} clip:${String(m.count).padStart(2)} tiny:${String(q.tiny).padStart(2)} contrast:${String(q.contrast).padStart(2)} fit:${fit1.join('/') || '-'}`);
+  }
+
+  for (const pr of prints) {
+    if (only && !pr.name.includes(only)) continue;
+    await p.setViewport({ width: pr.w, height: pr.h, deviceScaleFactor: 1 });
+    await p.setContent(page(pr.html()), { waitUntil: 'domcontentloaded' });
+    await p.evaluate(() => document.fonts.ready);
+    let fitp = await autofit();
+    const shrank = await shrinkToFit(pr.h);
+    if (shrank.length) { await autofit(); fitp = [...fitp, ...shrank.map((v) => 'x' + v)]; }
+    await new Promise((r) => setTimeout(r, 160));
+    const pm = await check(pr.w, pr.h, pr.name);
+    const qp = await qa(pr.w, pr.h, pr.name);
+    const pdfPath = path.join(OUT, '04-print', `${pr.name}.pdf`);
+    await p.pdf({ path: pdfPath, width: `${pr.pdf[0]}px`, height: `${pr.pdf[1]}px`, printBackground: true, margin: 0, pageRanges: '1' });
+    const prevH = Math.round((pr.preview * pr.h) / pr.w);
+    await p.setViewport({ width: pr.preview, height: prevH, deviceScaleFactor: 1 });
+    await p.setContent(page(`<div style="width:${pr.preview}px;height:${prevH}px;overflow:hidden" data-clip="1">
+        <div style="width:${pr.w}px;height:${pr.h}px;transform:scale(${pr.preview / pr.w});transform-origin:top left">${pr.html()}</div></div>`), { waitUntil: 'domcontentloaded' });
+    await p.evaluate(() => document.fonts.ready);
+    await new Promise((r) => setTimeout(r, 160));
+    await p.screenshot({ path: path.join(OUT, '04-print', `${pr.name}.png`) });
+    console.log(`${pr.name.padEnd(32)} ${String(pr.w).padStart(4)}x${String(pr.h).padEnd(4)} clip:${String(pm.count).padStart(2)} tiny:${String(qp.tiny).padStart(2)} contrast:${String(qp.contrast).padStart(2)} fit:${fitp.join('/') || '-'}`);
+  }
+
+  /* join the two-sided print pieces */
+  async function join(outName, parts) {
+    const merged = await PDFDocument.create();
+    for (const part of parts) {
+      const src = await PDFDocument.load(fs.readFileSync(path.join(OUT, '04-print', `${part}.pdf`)));
+      const [first] = await merged.copyPages(src, [0]);
+      merged.addPage(first);
+    }
+    fs.writeFileSync(path.join(OUT, '04-print', outName), await merged.save());
+    console.log(`joined ${outName} ← ${parts.join(' + ')}`);
+  }
+  await join('flyer-a4.pdf', ['flyer-a4-front', 'flyer-a4-back']);
+  await join('brochure-trifold.pdf', ['brochure-trifold-outside', 'brochure-trifold-inside']);
+  await join('business-card.pdf', ['business-card-front', 'business-card-back']);
+
+  console.log(`\nclipping problems: ${problems.length ? '\n  ' + problems.join('\n  ') : 'none'}`);
+  await browser.close();
+}
+
+export {
+  page, BASE, mm, esc, fitbox, fitArt, browserFrame, phoneFrame,
+  appShell, uiDashboard, uiOrders, uiTable, uiModules, uiMobile,
+  bgLight, bgDark, bgGreen, markSvg, logoLockup, C, CONTACT, BRAND,
+};
