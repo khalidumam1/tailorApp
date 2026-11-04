@@ -166,18 +166,27 @@ jobs:
         shell: bash
         env:
           PGPASSWORD: ci-test-password
+          # Keep in step with the postgres service image above.
+          PG_IMAGE: postgres:16.15-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         run: |
           set -euo pipefail
           START=$SECONDS
-          pg_dump -h localhost -U tailor -d tailor -n e2e -Fc -f /tmp/e2e-backup.dump
-          psql -h localhost -U tailor -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE tailor_restore'
-          pg_restore -h localhost -U tailor -d tailor_restore --no-owner /tmp/e2e-backup.dump
-          USERS=$(psql -h localhost -U tailor -d tailor_restore -tAc 'SELECT count(*) FROM e2e."User"')
-          ORDERS=$(psql -h localhost -U tailor -d tailor_restore -tAc 'SELECT count(*) FROM e2e."Order"')
+          # The dump and the restore use the server's own client rather than the
+          # one preinstalled on the runner: pg_dump writes SET statements for
+          # settings the dumped server has, so a newer client produces a dump
+          # that an older server rejects - 17's SET transaction_timeout on the
+          # 16 server below, which is exactly how this step started failing
+          # when ubuntu-latest moved to a runner image shipping a 17 client.
+          pg() { docker run --rm -i --network host -e PGPASSWORD "$PG_IMAGE" "$@"; }
+          pg pg_dump -h localhost -U tailor -d tailor -n e2e -Fc > /tmp/e2e-backup.dump
+          pg psql -h localhost -U tailor -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE tailor_restore'
+          pg pg_restore -h localhost -U tailor -d tailor_restore --no-owner < /tmp/e2e-backup.dump
+          USERS=$(pg psql -h localhost -U tailor -d tailor_restore -tAc 'SELECT count(*) FROM e2e."User"')
+          ORDERS=$(pg psql -h localhost -U tailor -d tailor_restore -tAc 'SELECT count(*) FROM e2e."Order"')
           echo "Restore drill OK: users=$USERS orders=$ORDERS elapsed=$((SECONDS - START))s"
           test "$USERS" -gt 0
           test "$ORDERS" -gt 0
-          psql -h localhost -U tailor -d postgres -v ON_ERROR_STOP=1 -c 'DROP DATABASE tailor_restore'
+          pg psql -h localhost -U tailor -d postgres -v ON_ERROR_STOP=1 -c 'DROP DATABASE tailor_restore'
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v4

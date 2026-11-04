@@ -1,3 +1,4 @@
+import { uuidSchema } from '@tailor/shared';
 import { Prisma } from '@prisma/client';
 import express from 'express';
 import { z } from 'zod';
@@ -16,7 +17,7 @@ import {
 
 const router = express.Router();
 const historyQuerySchema = z.object({
-  cursor: z.string().uuid().optional(),
+  cursor: uuidSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 const keySchema = z.string().trim().regex(/^[a-z][a-z0-9_-]{0,79}$/);
@@ -47,7 +48,9 @@ const configurationSchema = z.object({
   enabledModules: z.array(keySchema).max(40).optional(),
   itemTypes: itemTypesSchema.optional(),
   paymentMethods: z.array(paymentMethodSchema).min(1).max(30).optional(),
-  notificationTemplates: z.record(z.enum([
+  // Zod 4 treats a record with enum keys as exhaustive; templates are sent a
+  // subset at a time, so keep the partial behaviour the API has always had.
+  notificationTemplates: z.partialRecord(z.enum([
     'ORDER_CREATED',
     'PAYMENT_RECEIVED',
     'ORDER_READY',

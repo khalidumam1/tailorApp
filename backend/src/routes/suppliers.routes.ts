@@ -1,3 +1,4 @@
+import { uuidSchema } from '@tailor/shared';
 import { Prisma } from '@prisma/client';
 import express from 'express';
 import { z } from 'zod';
@@ -7,7 +8,6 @@ import { asyncHandler } from '../middleware/async-handler.js';
 import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 
 const router = express.Router();
-const uuidSchema = z.string().uuid();
 const supplierInputSchema = z.object({
   name: z.string().trim().min(1).max(160),
   contactName: z.string().trim().max(160).nullable().optional(),

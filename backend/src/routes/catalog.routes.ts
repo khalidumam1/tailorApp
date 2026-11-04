@@ -1,3 +1,4 @@
+import { uuidSchema } from '@tailor/shared';
 import { Prisma, type CustomFieldDefinition } from '@prisma/client';
 import express from 'express';
 import { z } from 'zod';
@@ -10,7 +11,7 @@ import { resolveBusinessModuleAccess } from '../business-modules.js';
 import { customFieldValueData, validateCustomFieldValues } from '../domain/custom-fields.js';
 
 const router = express.Router();
-const itemIdSchema = z.string().uuid();
+const itemIdSchema = uuidSchema;
 const keySchema = z.string().trim().regex(/^[a-z][a-z0-9_-]{0,79}$/);
 const priceSchema = z.string().regex(/^\d{1,10}(?:\.\d{1,2})?$/);
 const itemInputSchema = z.object({

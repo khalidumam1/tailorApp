@@ -1,3 +1,4 @@
+import { uuidSchema } from '@tailor/shared';
 import { Prisma } from '@prisma/client';
 import express from 'express';
 import { z } from 'zod';
@@ -8,7 +9,7 @@ import { invalidateAllPolicy } from '../policy-cache.js';
 import { authenticate, requirePlatformPermission } from '../middleware/auth.js';
 
 const router = express.Router();
-const idSchema = z.string().uuid();
+const idSchema = uuidSchema;
 const keySchema = z.string().trim().regex(/^[a-z][a-z0-9_-]{0,79}$/);
 const stageKeySchema = z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,79}$/);
 const actionKeySchema = z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{0,79}$/);

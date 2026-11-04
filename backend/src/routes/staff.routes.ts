@@ -1,3 +1,4 @@
+import { uuidSchema } from '@tailor/shared';
 import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import express from 'express';
@@ -12,7 +13,7 @@ import { businessPermissions } from '../permissions.js';
 import { applyAdminPasswordReset } from '../password-reset.js';
 
 const router = express.Router();
-const idSchema = z.string().uuid();
+const idSchema = uuidSchema;
 const permissionSchema = z.array(z.string()).max(businessPermissions.length);
 const roleInputSchema = z.object({
   name: z.string().trim().min(2).max(80),

@@ -2,6 +2,18 @@ import { z } from 'zod';
 import { toE164Phone } from './phone.js';
 export { normalizePakistanPhone, toE164Phone } from './phone.js';
 
+/**
+ * Postgres ids in this project are not always RFC 4122 UUIDs. The business
+ * template, workflow and custom-field migrations derive deterministic ids with
+ * `md5(...)::uuid`, so their version and variant nibbles are arbitrary. zod 4's
+ * `z.string().uuid()` requires version 1-8 and variant 89ab and rejects those
+ * rows, which made the web app refuse its own `/business/configuration`
+ * response. Ids are therefore validated on shape alone - exactly what the
+ * zod 3 `z.string().uuid()` this replaces did.
+ */
+export const UUID_SHAPE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+export const uuidSchema = z.string().regex(UUID_SHAPE);
+
 export const orderStatuses = [
   'NEW',
   'MEASUREMENT_CONFIRMED',
@@ -37,12 +49,12 @@ export const updateCustomerSchema = createCustomerSchema.partial().extend({
 export const customerQuerySchema = z.object({
   q: z.string().trim().min(1).max(120).optional(),
   archived: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
-  cursor: z.string().uuid().optional(),
+  cursor: uuidSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
 export const createMeasurementRevisionSchema = z.object({
-  garmentTemplateId: z.string().uuid(),
+  garmentTemplateId: uuidSchema,
   values: z.record(z.string(), z.union([z.string().trim().max(120), z.number().finite()])),
   notes: z.string().trim().max(2000).optional(),
   measuredAt: z.string().datetime({ offset: true }),
@@ -61,7 +73,7 @@ export const createGarmentTemplateSchema = z.object({
 });
 
 export const createOrderSchema = z.object({
-  customerId: z.string().uuid(),
+  customerId: uuidSchema,
   promisedAt: z.string().datetime({ offset: true }),
   notes: z.string().trim().max(4000).optional(),
   customFields: z.record(z.string(), z.unknown()).optional(),
@@ -71,7 +83,7 @@ export const createOrderSchema = z.object({
     garmentName: z.string().trim().min(1).max(120).optional(),
     quantity: z.number().int().min(1).max(100),
     unitPrice: z.string().regex(/^\d{1,8}(\.\d{1,2})?$/).refine((amount) => Number(amount) > 0),
-    measurementProfileId: z.string().uuid().optional(),
+    measurementProfileId: uuidSchema.optional(),
     customFields: z.record(z.string(), z.unknown()).optional(),
   }).refine((item) => Boolean(item.itemName || item.garmentName), {
     message: 'An item name is required',
@@ -81,7 +93,7 @@ export const createOrderSchema = z.object({
 export const createPaymentSchema = z.object({
   amount: z.string().regex(/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/).refine((amount) => Number(amount) > 0),
   method: z.enum(['CASH', 'BANK', 'DIGITAL']),
-  financialAccountId: z.string().uuid().optional(),
+  financialAccountId: uuidSchema.optional(),
 });
 
 export const orderQuerySchema = z.object({
@@ -90,7 +102,7 @@ export const orderQuerySchema = z.object({
   status: z.enum(orderStatuses).optional(),
   dueBefore: z.string().datetime({ offset: true }).optional(),
   dueAfter: z.string().datetime({ offset: true }).optional(),
-  cursor: z.string().uuid().optional(),
+  cursor: uuidSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
@@ -125,7 +137,7 @@ export const reversePaymentSchema = z.object({
 export const paymentQuerySchema = z.object({
   from: z.string().datetime({ offset: true }).optional(),
   to: z.string().datetime({ offset: true }).optional(),
-  cursor: z.string().uuid().optional(),
+  cursor: uuidSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 

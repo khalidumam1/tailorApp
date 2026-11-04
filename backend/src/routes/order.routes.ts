@@ -3,11 +3,12 @@ import { createHash, randomUUID } from 'node:crypto';
 import express from 'express';
 import {
   createAlterationSchema,
-  updateAlterationSchema,
   createOrderSchema,
   orderQuerySchema,
   transitionOrderSchema,
   transitionWorkflowSchema,
+  updateAlterationSchema,
+  uuidSchema,
 } from '@tailor/shared';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -34,12 +35,12 @@ import { assertPlanLimit } from '../plan-limits.js';
 import { queueOrderCreated, queueOrderReady, queueOrderStatusChanged } from '../whatsapp.js';
 
 const router = express.Router();
-const idSchema = z.string().uuid();
+const idSchema = uuidSchema;
 const itemTypesSchema = z.array(z.object({
   key: z.string(),
   label: z.string(),
 }).strict());
-const idempotencyKeySchema = z.string().uuid();
+const idempotencyKeySchema = uuidSchema;
 const orderCreateInclude = {
   customer: { select: { id: true, name: true, phone: true } },
   items: true,

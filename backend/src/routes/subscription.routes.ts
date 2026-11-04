@@ -1,3 +1,4 @@
+import { uuidSchema } from '@tailor/shared';
 import { Prisma } from '@prisma/client';
 import express from 'express';
 import { z } from 'zod';
@@ -10,7 +11,7 @@ import { generateSubscriptionReceiptPdf, queueSubscriptionPaymentNotification } 
 
 const router = express.Router();
 const paymentSchema = z.object({
-  planId: z.string().uuid(),
+  planId: uuidSchema,
   cycle: z.enum(['MONTHLY', 'YEARLY']),
   transactionReference: z.string().trim().min(3).max(120).regex(/^[A-Za-z0-9._/-]+$/),
   senderName: z.string().trim().min(2).max(160),
@@ -70,7 +71,7 @@ router.get('/', requireBusinessPermission('subscriptions:read'), asyncHandler(as
 
 router.get('/payments/:paymentId/receipt.pdf', requireBusinessPermission('subscriptions:read'), asyncHandler(async (req, res) => {
   const id = businessId(req);
-  const paymentId = z.string().uuid().parse(req.params.paymentId);
+  const paymentId = uuidSchema.parse(req.params.paymentId);
   const payment = await prisma.subscriptionPayment.findFirst({
     where: { id: paymentId, businessId: id, status: 'APPROVED', invoiceNumber: { not: null } },
     include: {

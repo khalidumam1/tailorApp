@@ -1,3 +1,4 @@
+import { uuidSchema } from '@tailor/shared';
 import { randomBytes, createHash } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import type { Request, Response } from 'express';
@@ -17,7 +18,7 @@ const loginSchema = z.object({
   email: z.string().email().max(254).transform((value) => value.trim().toLowerCase()),
   password: z.string().min(1).max(128).refine((value) => Buffer.byteLength(value, 'utf8') <= 72, "Password must not exceed bcrypt's 72-byte limit"),
   scope: z.enum(['business', 'platform']).optional(),
-  businessId: z.string().uuid().optional(),
+  businessId: uuidSchema.optional(),
 });
 const refreshSchema = z.object({ refreshToken: z.string().min(32).max(200) });
 const passwordChangeSchema = z.object({

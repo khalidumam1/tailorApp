@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-import { applicationBrandingSchema } from '@tailor/shared';
+import {
+  applicationBrandingSchema,
+  uuidSchema,
+} from '@tailor/shared';
 import express from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -60,10 +63,10 @@ const memberRemovalSchema = z.object({
 const listSchema = z.object({
   q: z.string().trim().min(1).max(120).optional(),
   status: z.enum(['ACTIVE', 'SUSPENDED', 'PENDING', 'ARCHIVED']).optional(),
-  cursor: z.string().uuid().optional(),
+  cursor: uuidSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
-const idSchema = z.string().uuid();
+const idSchema = uuidSchema;
 
 function getActorId(req: express.Request): string {
   if (req.auth?.scope !== 'platform') {

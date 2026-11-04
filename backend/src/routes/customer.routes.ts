@@ -1,6 +1,13 @@
 import { Prisma, type CustomFieldDefinition } from '@prisma/client';
 import express from 'express';
-import { createCustomerSchema, customerQuerySchema, normalizePakistanPhone, toE164Phone, updateCustomerSchema } from '@tailor/shared';
+import {
+  createCustomerSchema,
+  customerQuerySchema,
+  normalizePakistanPhone,
+  toE164Phone,
+  updateCustomerSchema,
+  uuidSchema,
+} from '@tailor/shared';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../errors.js';
@@ -12,7 +19,7 @@ import { isRetryableOrderTransactionError } from '../domain/orders.js';
 import { queueCustomerNotification } from '../whatsapp.js';
 
 const router = express.Router();
-const customerIdSchema = z.string().uuid();
+const customerIdSchema = uuidSchema;
 const duplicateQuerySchema = z.object({ phone: createCustomerSchema.shape.phone });
 const deleteSchema = z.object({ version: z.number().int().positive() });
 const whatsappConsentSchema = z.object({
