@@ -1,3 +1,4 @@
+import { uuidSchema } from '@tailor/shared';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import express from 'express';
@@ -9,7 +10,6 @@ import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { ensureDefaultAccounts, postJournal, requireBusinessAccount } from '../domain/accounting.js';
 
 const router = express.Router();
-const uuidSchema = z.string().uuid();
 const moneySchema = z.string().regex(/^(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/);
 const signedMoneySchema = z.string().regex(/^-?(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/);
 const transactionSchema = z.object({

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  UUID_SHAPE,
   applicationBrandingSchema,
   createCustomerSchema,
   createMeasurementRevisionSchema,
@@ -11,10 +12,10 @@ import {
 // Postgres ids here are not always RFC 4122 UUIDs (the template/workflow/
 // custom-field migrations derive them with md5(...)::uuid), so validate on
 // shape only - zod 4's z.string().uuid() rejects those rows.
-const z.string().uuid() = z.string().regex(UUID_SHAPE);
+const uuidSchema = z.string().regex(UUID_SHAPE);
 
 const customerSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   name: z.string(),
   phone: z.string(),
   whatsappConsent: z.boolean(),
@@ -27,8 +28,8 @@ const customerSchema = z.object({
 });
 
 const alterationSchema = z.object({
-  id: z.string().uuid(),
-  orderId: z.string().uuid(),
+  id: uuidSchema,
+  orderId: uuidSchema,
   description: z.string(),
   status: z.enum(['OPEN', 'DONE']),
   dueAt: z.string().nullable(),
@@ -38,15 +39,15 @@ export type Alteration = z.infer<typeof alterationSchema>;
 
 const customerSummarySchema = customerSchema.pick({ id: true, name: true, phone: true });
 const catalogItemSchema = z.object({
-  id: z.string().uuid(),
-  businessId: z.string().uuid(),
+  id: uuidSchema,
+  businessId: uuidSchema,
   typeKey: z.string(),
   name: z.string(),
   description: z.string().nullable(),
   sku: z.string().nullable(),
   unit: z.string(),
   unitPrice: z.string().nullable(),
-  stockVariantId: z.string().uuid().nullable(),
+  stockVariantId: uuidSchema.nullable(),
   sortOrder: z.number().int(),
   version: z.number().int(),
   active: z.boolean(),
@@ -55,13 +56,13 @@ const catalogItemSchema = z.object({
   customFields: z.record(z.string(), z.unknown()),
 });
 const orderSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   orderNumber: z.string(),
   status: z.string(),
-  workflowStageId: z.string().uuid().nullable().optional(),
+  workflowStageId: uuidSchema.nullable().optional(),
   workflowStageKey: z.string().nullable().optional(),
   currentWorkflowStage: z.object({
-    id: z.string().uuid(),
+    id: uuidSchema,
     key: z.string(),
     label: z.string(),
     sortOrder: z.number().int(),
@@ -77,7 +78,7 @@ const orderSchema = z.object({
   customer: customerSummarySchema,
   customFields: z.record(z.string(), z.unknown()).optional(),
   items: z.array(z.object({
-    id: z.string().uuid(),
+    id: uuidSchema,
     garmentName: z.string().optional(),
     itemName: z.string().nullable().optional(),
     itemTypeKey: z.string().optional(),
@@ -90,8 +91,8 @@ const orderSchema = z.object({
 
 const loginResponseSchema = z.union([
   z.object({
-    user: z.object({ id: z.string().uuid(), name: z.string(), email: z.string(), platformRole: z.string().nullable().optional() }),
-    business: z.object({ id: z.string().uuid(), name: z.string() }).optional(),
+    user: z.object({ id: uuidSchema, name: z.string(), email: z.string(), platformRole: z.string().nullable().optional() }),
+    business: z.object({ id: uuidSchema, name: z.string() }).optional(),
     mustChangePassword: z.boolean().optional(),
     accessToken: z.string(),
     refreshToken: z.string(),
@@ -99,19 +100,19 @@ const loginResponseSchema = z.union([
   z.object({
     requiresScopeSelection: z.literal(true),
     canAccessPlatform: z.boolean(),
-    businesses: z.array(z.object({ id: z.string().uuid(), name: z.string() })),
+    businesses: z.array(z.object({ id: uuidSchema, name: z.string() })),
   }),
   z.object({
     requiresBusinessSelection: z.literal(true),
-    businesses: z.array(z.object({ id: z.string().uuid(), name: z.string() })),
+    businesses: z.array(z.object({ id: uuidSchema, name: z.string() })),
   }),
 ]);
 
 const meSchema = z.object({
-  user: z.object({ id: z.string().uuid(), name: z.string(), email: z.string(), platformRole: z.string().nullable() }),
+  user: z.object({ id: uuidSchema, name: z.string(), email: z.string(), platformRole: z.string().nullable() }),
   context: z.object({
     scope: z.enum(['business', 'platform']),
-    business: z.object({ id: z.string().uuid(), name: z.string(), slug: z.string(), timezone: z.string() }).optional(),
+    business: z.object({ id: uuidSchema, name: z.string(), slug: z.string(), timezone: z.string() }).optional(),
     permissions: z.array(z.string()),
     platformPermissions: z.array(z.string()),
   }),
@@ -131,7 +132,7 @@ const dashboardSchema = z.object({
 const refreshedSessionSchema = z.object({ accessToken: z.string(), refreshToken: z.string() });
 
 const templateSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   name: z.string(),
   fields: z.array(z.object({
     key: z.string(),
@@ -142,10 +143,10 @@ const templateSchema = z.object({
 });
 
 const profileSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   garmentTemplate: templateSchema.pick({ id: true, name: true, fields: true }),
   revisions: z.array(z.object({
-    id: z.string().uuid(),
+    id: uuidSchema,
     version: z.number().int(),
     values: z.record(z.string(), z.unknown()),
     notes: z.string().nullable(),
@@ -154,22 +155,22 @@ const profileSchema = z.object({
 });
 
 const paymentSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   receiptNumber: z.string(),
   amount: z.string(),
   method: z.enum(['CASH', 'BANK', 'DIGITAL']),
   kind: z.enum(['PAYMENT', 'REVERSAL']),
   createdAt: z.string(),
   order: z.object({
-    id: z.string().uuid(),
+    id: uuidSchema,
     orderNumber: z.string(),
     customer: customerSummarySchema,
   }),
 });
 
 const erpAccountSchema = z.object({
-  id: z.string().uuid(),
-  businessId: z.string().uuid(),
+  id: uuidSchema,
+  businessId: uuidSchema,
   code: z.string(),
   name: z.string(),
   description: z.string().nullable().optional(),
@@ -185,42 +186,42 @@ const erpAccountSchema = z.object({
 // full account endpoints return `erpAccountSchema`.
 const accountSetupResultSchema = z.object({
   accounts: z.array(z.object({
-    id: z.string().uuid(),
+    id: uuidSchema,
     type: erpAccountSchema.shape.type,
     active: z.boolean(),
     systemKey: z.string().nullable(),
   })),
 });
 const accountingJournalSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   entryNumber: z.string(),
   entryDate: z.string(),
   memo: z.string(),
   sourceType: z.string(),
   status: z.string(),
-  reversalOfId: z.string().uuid().nullable(),
+  reversalOfId: uuidSchema.nullable(),
   lines: z.array(z.object({
-    id: z.string().uuid(),
-    accountId: z.string().uuid(),
+    id: uuidSchema,
+    accountId: uuidSchema,
     debit: z.string(),
     credit: z.string(),
     memo: z.string().nullable(),
-    account: z.object({ id: z.string().uuid(), code: z.string(), name: z.string(), type: z.string() }),
+    account: z.object({ id: uuidSchema, code: z.string(), name: z.string(), type: z.string() }),
   })),
 });
 const inventoryVariantSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   name: z.string(),
   sku: z.string().nullable(),
   active: z.boolean(),
   balances: z.array(z.object({
     quantity: z.string(),
     averageUnitCost: z.string(),
-    location: z.object({ id: z.string().uuid(), code: z.string(), name: z.string() }),
+    location: z.object({ id: uuidSchema, code: z.string(), name: z.string() }),
   })),
 });
 const inventoryItemSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   kind: z.enum(['MATERIAL', 'PRODUCT', 'SUPPLY']),
   name: z.string(),
   description: z.string().nullable(),
@@ -231,14 +232,14 @@ const inventoryItemSchema = z.object({
   variants: z.array(inventoryVariantSchema),
 });
 const inventoryValuationItemSchema = z.object({
-  variant: z.object({ id: z.string().uuid(), name: z.string(), sku: z.string().nullable(), stockItem: z.object({
-    id: z.string().uuid(), name: z.string(), kind: z.string(), baseUnit: z.string(), reorderPoint: z.string().nullable(),
+  variant: z.object({ id: uuidSchema, name: z.string(), sku: z.string().nullable(), stockItem: z.object({
+    id: uuidSchema, name: z.string(), kind: z.string(), baseUnit: z.string(), reorderPoint: z.string().nullable(),
   }) }),
-  location: z.object({ id: z.string().uuid(), code: z.string(), name: z.string() }),
+  location: z.object({ id: uuidSchema, code: z.string(), name: z.string() }),
   quantity: z.string(), averageUnitCost: z.string(), value: z.string(), reorderPoint: z.string().nullable(), lowStock: z.boolean(),
 });
 const inventoryMovementSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   kind: z.string(),
   quantity: z.string(),
   unitCost: z.string(),
@@ -246,11 +247,11 @@ const inventoryMovementSchema = z.object({
   sourceType: z.string(),
   sourceId: z.string(),
   note: z.string().nullable(),
-  variant: z.object({ id: z.string().uuid(), name: z.string(), stockItem: z.object({ id: z.string().uuid(), name: z.string(), baseUnit: z.string() }) }).optional(),
-  location: z.object({ id: z.string().uuid(), code: z.string(), name: z.string() }).optional(),
+  variant: z.object({ id: uuidSchema, name: z.string(), stockItem: z.object({ id: uuidSchema, name: z.string(), baseUnit: z.string() }) }).optional(),
+  location: z.object({ id: uuidSchema, code: z.string(), name: z.string() }).optional(),
 });
 const supplierSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   code: z.string(),
   name: z.string(),
   contactName: z.string().nullable().optional(),
@@ -263,15 +264,15 @@ const supplierSchema = z.object({
   _count: z.object({ purchaseOrders: z.number().int(), settlements: z.number().int() }).optional(),
 });
 const supplierLedgerSchema = z.object({
-  supplier: z.object({ id: z.string().uuid(), code: z.string(), name: z.string(), phone: z.string().nullable(), email: z.string().nullable() }),
+  supplier: z.object({ id: uuidSchema, code: z.string(), name: z.string(), phone: z.string().nullable(), email: z.string().nullable() }),
   entries: z.array(z.object({
-    id: z.string().uuid(), kind: z.string(), occurredAt: z.string(), amount: z.string(), reference: z.string().nullable(),
+    id: uuidSchema, kind: z.string(), occurredAt: z.string(), amount: z.string(), reference: z.string().nullable(),
     purchaseOrderNumber: z.string().nullable(), note: z.string().nullable(), runningBalance: z.string(),
   })),
   balance: z.string(),
 });
 const purchaseOrderSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   orderNumber: z.string(),
   status: z.enum(['DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED']),
   orderedAt: z.string(),
@@ -285,10 +286,10 @@ const purchaseOrderSchema = z.object({
   hasOutstanding: z.boolean().optional(),
   refundCapacity: z.string().optional(),
   hasRefundCapacity: z.boolean().optional(),
-  supplier: z.object({ id: z.string().uuid(), code: z.string(), name: z.string() }),
+  supplier: z.object({ id: uuidSchema, code: z.string(), name: z.string() }),
   lines: z.array(z.object({
-    id: z.string().uuid(),
-    variantId: z.string().uuid(),
+    id: uuidSchema,
+    variantId: uuidSchema,
     description: z.string(),
     orderedQuantity: z.string(),
     receivedQuantity: z.string(),
@@ -296,45 +297,45 @@ const purchaseOrderSchema = z.object({
     hasRemainingQuantity: z.boolean().optional(),
     unitCost: z.string(),
     lineTotal: z.string(),
-    variant: z.object({ id: z.string().uuid(), name: z.string(), stockItem: z.object({ name: z.string(), baseUnit: z.string() }) }),
+    variant: z.object({ id: uuidSchema, name: z.string(), stockItem: z.object({ name: z.string(), baseUnit: z.string() }) }),
   })),
-  receipts: z.array(z.object({ id: z.string().uuid(), receiptNumber: z.string(), receivedAt: z.string(), total: z.string() })).optional(),
-  settlements: z.array(z.object({ id: z.string().uuid(), kind: z.enum(['PAYMENT', 'REFUND']), amount: z.string(), occurredAt: z.string() })).optional(),
+  receipts: z.array(z.object({ id: uuidSchema, receiptNumber: z.string(), receivedAt: z.string(), total: z.string() })).optional(),
+  settlements: z.array(z.object({ id: uuidSchema, kind: z.enum(['PAYMENT', 'REFUND']), amount: z.string(), occurredAt: z.string() })).optional(),
 });
 const cashTransactionSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   kind: z.enum(['RECEIPT', 'EXPENSE', 'TRANSFER']),
   amount: z.string(),
   occurredAt: z.string(),
   reference: z.string().nullable(),
   memo: z.string(),
-  financialAccount: z.object({ id: z.string().uuid(), code: z.string(), name: z.string() }).optional(),
-  contraAccount: z.object({ id: z.string().uuid(), code: z.string(), name: z.string() }).optional(),
-  journalEntry: z.object({ id: z.string().uuid(), entryNumber: z.string() }).nullable().optional(),
+  financialAccount: z.object({ id: uuidSchema, code: z.string(), name: z.string() }).optional(),
+  contraAccount: z.object({ id: uuidSchema, code: z.string(), name: z.string() }).optional(),
+  journalEntry: z.object({ id: uuidSchema, entryNumber: z.string() }).nullable().optional(),
 });
 const trialBalanceRowSchema = z.object({
-  accountId: z.string().uuid(), code: z.string(), name: z.string(), type: z.string(),
+  accountId: uuidSchema, code: z.string(), name: z.string(), type: z.string(),
   debitBalance: z.string(), creditBalance: z.string(),
 });
 const profitLossSchema = z.object({
   from: z.string().nullable(), to: z.string().nullable(),
-  income: z.array(z.object({ accountId: z.string().uuid(), code: z.string(), name: z.string(), amount: z.string() })),
-  expenses: z.array(z.object({ accountId: z.string().uuid(), code: z.string(), name: z.string(), amount: z.string() })),
+  income: z.array(z.object({ accountId: uuidSchema, code: z.string(), name: z.string(), amount: z.string() })),
+  expenses: z.array(z.object({ accountId: uuidSchema, code: z.string(), name: z.string(), amount: z.string() })),
   totalIncome: z.string(), totalExpenses: z.string(), netProfit: z.string(), currency: z.string(),
 });
 const balanceSheetSchema = z.object({
   asOf: z.string().nullable(),
-  assets: z.array(z.object({ accountId: z.string().uuid(), code: z.string(), name: z.string(), balance: z.string() })),
-  liabilities: z.array(z.object({ accountId: z.string().uuid(), code: z.string(), name: z.string(), balance: z.string() })),
-  equity: z.array(z.object({ accountId: z.string().uuid(), code: z.string(), name: z.string(), balance: z.string() })),
+  assets: z.array(z.object({ accountId: uuidSchema, code: z.string(), name: z.string(), balance: z.string() })),
+  liabilities: z.array(z.object({ accountId: uuidSchema, code: z.string(), name: z.string(), balance: z.string() })),
+  equity: z.array(z.object({ accountId: uuidSchema, code: z.string(), name: z.string(), balance: z.string() })),
   currentEarnings: z.string(), totalAssets: z.string(), totalLiabilities: z.string(), totalEquity: z.string(), liabilitiesAndEquity: z.string(), currency: z.string(),
 });
 
 const notificationSchema = z.object({
-  id: z.string().uuid(),
-  customerId: z.string().uuid().nullable(),
-  orderId: z.string().uuid().nullable(),
-  paymentId: z.string().uuid().nullable(),
+  id: uuidSchema,
+  customerId: uuidSchema.nullable(),
+  orderId: uuidSchema.nullable(),
+  paymentId: uuidSchema.nullable(),
   recipientName: z.string().nullable(),
   kind: z.enum([
     'ORDER_CREATED',
@@ -366,7 +367,7 @@ const notificationSchema = z.object({
 });
 
 const receiptSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   receiptNumber: z.string(),
   amount: z.string(),
   method: z.enum(['CASH', 'BANK', 'DIGITAL']),
@@ -382,22 +383,22 @@ const receiptSchema = z.object({
 });
 
 const platformBusinessSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   name: z.string(),
   slug: z.string(),
   status: z.enum(['ACTIVE', 'SUSPENDED', 'PENDING', 'ARCHIVED']),
   createdAt: z.string(),
-  template: z.object({ id: z.string().uuid(), key: z.string(), name: z.string() }).optional(),
+  template: z.object({ id: uuidSchema, key: z.string(), name: z.string() }).optional(),
   _count: z.object({ memberships: z.number().int() }).optional(),
   /** Currently active owner, or null when nobody owns the workspace. */
-  owner: z.object({ id: z.string().uuid(), name: z.string(), email: z.string() }).nullable().optional(),
+  owner: z.object({ id: uuidSchema, name: z.string(), email: z.string() }).nullable().optional(),
   /** Memberships with access today (removed members are excluded). */
   activeMemberships: z.number().int().optional(),
 });
 
 const platformBusinessModulesSchema = z.object({
   business: z.object({
-    id: z.string().uuid(),
+    id: uuidSchema,
     name: z.string(),
     slug: z.string(),
     template: z.object({ key: z.string(), name: z.string() }).nullable(),
@@ -407,19 +408,19 @@ const platformBusinessModulesSchema = z.object({
 });
 
 const platformBusinessMemberSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   active: z.boolean(),
   createdAt: z.string(),
-  user: z.object({ id: z.string().uuid(), name: z.string(), email: z.string(), active: z.boolean() }),
-  role: z.object({ id: z.string().uuid(), name: z.string() }),
+  user: z.object({ id: uuidSchema, name: z.string(), email: z.string(), active: z.boolean() }),
+  role: z.object({ id: uuidSchema, name: z.string() }),
   /** How many other businesses this user can still sign in to. */
   otherActiveBusinesses: z.number().int(),
 });
 
 const customFieldSchema = z.object({
-  id: z.string().uuid(),
-  templateId: z.string().uuid().nullable(),
-  businessId: z.string().uuid().nullable(),
+  id: uuidSchema,
+  templateId: uuidSchema.nullable(),
+  businessId: uuidSchema.nullable(),
   module: z.string(),
   screen: z.string(),
   key: z.string(),
@@ -434,9 +435,9 @@ const customFieldSchema = z.object({
   active: z.boolean(),
 });
 const workflowStageSchema = z.object({
-  id: z.string().uuid(),
-  templateId: z.string().uuid().nullable(),
-  businessId: z.string().uuid().nullable(),
+  id: uuidSchema,
+  templateId: uuidSchema.nullable(),
+  businessId: uuidSchema.nullable(),
   key: z.string(),
   label: z.string(),
   sortOrder: z.number().int(),
@@ -445,11 +446,11 @@ const workflowStageSchema = z.object({
   actions: z.array(z.string()),
 });
 const workflowTransitionSchema = z.object({
-  id: z.string().uuid(),
-  templateId: z.string().uuid().nullable(),
-  businessId: z.string().uuid().nullable(),
-  fromStageId: z.string().uuid(),
-  toStageId: z.string().uuid(),
+  id: uuidSchema,
+  templateId: uuidSchema.nullable(),
+  businessId: uuidSchema.nullable(),
+  fromStageId: uuidSchema,
+  toStageId: uuidSchema,
   allowedRoleKeys: z.array(z.string()),
   actions: z.array(z.string()),
 });
@@ -486,7 +487,7 @@ export function parseNotificationTemplates(value: unknown) {
   return notificationTemplatesSchema.parse(value);
 }
 const businessTemplateSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   key: z.string(),
   name: z.string(),
   category: z.string(),
@@ -503,18 +504,18 @@ const businessTemplateSchema = z.object({
   workflowTransitions: z.array(workflowTransitionSchema),
 });
 const businessTemplateRevisionSchema = z.object({
-  id: z.string().uuid(),
-  templateId: z.string().uuid(),
+  id: uuidSchema,
+  templateId: uuidSchema,
   version: z.number().int(),
   snapshot: z.record(z.string(), z.unknown()),
-  actorId: z.string().uuid().nullable(),
+  actorId: uuidSchema.nullable(),
   requestId: z.string(),
   createdAt: z.string(),
-  actor: z.object({ id: z.string().uuid(), name: z.string(), email: z.string() }).nullable(),
+  actor: z.object({ id: uuidSchema, name: z.string(), email: z.string() }).nullable(),
 });
 const businessConfigurationSchema = z.object({
   business: z.object({
-    id: z.string().uuid(),
+    id: uuidSchema,
     name: z.string(),
     logoUrl: z.string().nullable(),
     type: z.string(),
@@ -522,7 +523,7 @@ const businessConfigurationSchema = z.object({
     timezone: z.string(),
   }),
   template: z.object({
-    id: z.string().uuid(),
+    id: uuidSchema,
     key: z.string(),
     name: z.string(),
     category: z.string(),
@@ -586,29 +587,29 @@ const businessStructureResultSchema = z.object({
 });
 const businessConfigurationHistorySchema = z.object({
   items: z.array(z.object({
-    id: z.string().uuid(),
+    id: uuidSchema,
     actorName: z.string(),
     version: z.number().int().nullable(),
     templateVersion: z.number().int().nullable(),
     snapshot: z.unknown().nullable(),
     createdAt: z.string(),
   })),
-  nextCursor: z.string().uuid().nullable(),
+  nextCursor: uuidSchema.nullable(),
 });
 const businessPermissionSchema = z.object({ key: z.string(), description: z.string() });
 const businessRoleSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   name: z.string(),
   isSystem: z.boolean(),
   permissions: z.array(z.string()),
   memberCount: z.number().int().optional(),
 });
 const businessMemberSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   active: z.boolean(),
   createdAt: z.string(),
-  user: z.object({ id: z.string().uuid(), name: z.string(), email: z.string(), active: z.boolean() }),
-  role: z.object({ id: z.string().uuid(), name: z.string() }),
+  user: z.object({ id: uuidSchema, name: z.string(), email: z.string(), active: z.boolean() }),
+  role: z.object({ id: uuidSchema, name: z.string() }),
 });
 const templateFieldInputSchema = z.object({
   module: z.string(),
@@ -668,7 +669,7 @@ export function parseBusinessTemplateInput(value: unknown): BusinessTemplateInpu
 }
 
 const platformStaffSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   name: z.string(),
   email: z.string(),
   active: z.boolean(),
@@ -677,20 +678,20 @@ const platformStaffSchema = z.object({
 
 const platformPermissionSchema = z.object({ key: z.string(), description: z.string() });
 const auditEventSchema = z.object({
-  id: z.string().uuid(),
-  businessId: z.string().uuid().nullable(),
-  actorId: z.string().uuid().nullable(),
+  id: uuidSchema,
+  businessId: uuidSchema.nullable(),
+  actorId: uuidSchema.nullable(),
   action: z.string(),
   entityType: z.string(),
-  entityId: z.string().uuid().nullable(),
+  entityId: uuidSchema.nullable(),
   metadata: z.record(z.string(), z.unknown()),
   requestId: z.string(),
   createdAt: z.string(),
-  actor: z.object({ id: z.string().uuid(), name: z.string(), email: z.string() }).nullable(),
+  actor: z.object({ id: uuidSchema, name: z.string(), email: z.string() }).nullable(),
 });
 
 const subscriptionPlanSchema = z.object({
-  id: z.string().uuid(),
+  id: uuidSchema,
   name: z.string(),
   description: z.string().nullable(),
   monthlyPrice: z.string(),
@@ -705,9 +706,9 @@ const subscriptionPlanSchema = z.object({
 });
 const subscriptionStatusSchema = z.enum(['TRIAL', 'ACTIVE', 'EXPIRED', 'SUSPENDED', 'CANCELLED']);
 const subscriptionSchema = z.object({
-  id: z.string().uuid(),
-  businessId: z.string().uuid(),
-  planId: z.string().uuid(),
+  id: uuidSchema,
+  businessId: uuidSchema,
+  planId: uuidSchema,
   status: subscriptionStatusSchema,
   cycle: z.enum(['MONTHLY', 'YEARLY', 'CUSTOM']),
   startsAt: z.string(),
@@ -721,10 +722,10 @@ const subscriptionSchema = z.object({
   plan: subscriptionPlanSchema,
 });
 const subscriptionPaymentSchema = z.object({
-  id: z.string().uuid(),
-  businessId: z.string().uuid(),
-  planId: z.string().uuid(),
-  subscriptionId: z.string().uuid().nullable(),
+  id: uuidSchema,
+  businessId: uuidSchema,
+  planId: uuidSchema,
+  subscriptionId: uuidSchema.nullable(),
   status: z.enum(['PENDING', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'ADJUSTED']),
   cycle: z.enum(['MONTHLY', 'YEARLY', 'CUSTOM']),
   transactionReference: z.string(),
@@ -737,7 +738,7 @@ const subscriptionPaymentSchema = z.object({
   reviewedAt: z.string().nullable(),
   createdAt: z.string(),
   plan: z.object({ name: z.string() }).or(subscriptionPlanSchema),
-  business: z.object({ id: z.string().uuid(), name: z.string(), slug: z.string() }).optional(),
+  business: z.object({ id: uuidSchema, name: z.string(), slug: z.string() }).optional(),
   submittedBy: z.object({ name: z.string(), email: z.string() }).optional(),
   reviewedBy: z.object({ name: z.string(), email: z.string() }).nullable().optional(),
   subscription: z.object({ startsAt: z.string(), endsAt: z.string() }).nullable().optional(),
@@ -760,9 +761,9 @@ const platformBillingDashboardSchema = z.object({
   recordedRevenue: z.string(),
   approvedPaymentCount: z.number().int(),
   expiring: z.array(z.object({
-    id: z.string().uuid(),
+    id: uuidSchema,
     endsAt: z.string(),
-    business: z.object({ id: z.string().uuid(), name: z.string() }),
+    business: z.object({ id: uuidSchema, name: z.string() }),
     plan: z.object({ name: z.string() }),
   })),
 });
@@ -1061,7 +1062,7 @@ export const api = {
   },
   inventoryReorderAlerts(token: string) {
     return request('/inventory/reorder-alerts', z.object({
-      items: z.array(z.object({ variantId: z.string().uuid(), itemId: z.string().uuid(), itemName: z.string(), variantName: z.string(), kind: z.string(), quantity: z.string(), reorderPoint: z.string(), unit: z.string() })),
+      items: z.array(z.object({ variantId: uuidSchema, itemId: uuidSchema, itemName: z.string(), variantName: z.string(), kind: z.string(), quantity: z.string(), reorderPoint: z.string(), unit: z.string() })),
       count: z.number().int(),
     }), { token });
   },
@@ -1071,10 +1072,10 @@ export const api = {
     return request(`/inventory/movements?${params}`, z.object({ items: z.array(inventoryMovementSchema), nextCursor: z.string().nullable() }), { token });
   },
   inventoryLocations(token: string) {
-    return request('/inventory/locations', z.object({ items: z.array(z.object({ id: z.string().uuid(), code: z.string(), name: z.string(), isDefault: z.boolean(), active: z.boolean() })) }), { token });
+    return request('/inventory/locations', z.object({ items: z.array(z.object({ id: uuidSchema, code: z.string(), name: z.string(), isDefault: z.boolean(), active: z.boolean() })) }), { token });
   },
   createInventoryLocation(token: string, input: { code: string; name: string }) {
-    return request('/inventory/locations', z.object({ id: z.string().uuid(), code: z.string(), name: z.string(), isDefault: z.boolean(), active: z.boolean() }), { token, method: 'POST', body: input });
+    return request('/inventory/locations', z.object({ id: uuidSchema, code: z.string(), name: z.string(), isDefault: z.boolean(), active: z.boolean() }), { token, method: 'POST', body: input });
   },
   createInventoryItem(token: string, input: {
     kind: 'MATERIAL' | 'PRODUCT' | 'SUPPLY'; name: string; description?: string | null; baseUnit: string;
@@ -1163,9 +1164,9 @@ export const api = {
   },
   cashbookReconciliations(token: string) {
     return request('/cashbook/reconciliations', z.object({ items: z.array(z.object({
-      id: z.string().uuid(), accountId: z.string().uuid(), statementStart: z.string(), statementEnd: z.string(),
+      id: uuidSchema, accountId: uuidSchema, statementStart: z.string(), statementEnd: z.string(),
       openingBalance: z.string(), closingBalance: z.string(), status: z.enum(['OPEN', 'CLOSED']), closedAt: z.string().nullable(),
-      account: z.object({ id: z.string().uuid(), code: z.string(), name: z.string() }),
+      account: z.object({ id: uuidSchema, code: z.string(), name: z.string() }),
       _count: z.object({ matches: z.number().int() }),
     })) }), { token });
   },
@@ -1174,8 +1175,8 @@ export const api = {
   },
   bankReconciliationLines(token: string, reconciliationId: string) {
     return request(`/cashbook/reconciliations/${reconciliationId}/lines`, z.object({
-      reconciliation: z.object({ id: z.string().uuid(), status: z.enum(['OPEN', 'CLOSED']), accountId: z.string().uuid(), openingBalance: z.string(), closingBalance: z.string() }),
-      items: z.array(z.object({ id: z.string().uuid(), debit: z.string(), credit: z.string(), matched: z.boolean(), signedAmount: z.string(), journalEntry: z.object({ id: z.string().uuid(), entryNumber: z.string(), entryDate: z.string(), memo: z.string(), sourceType: z.string() }) })),
+      reconciliation: z.object({ id: uuidSchema, status: z.enum(['OPEN', 'CLOSED']), accountId: uuidSchema, openingBalance: z.string(), closingBalance: z.string() }),
+      items: z.array(z.object({ id: uuidSchema, debit: z.string(), credit: z.string(), matched: z.boolean(), signedAmount: z.string(), journalEntry: z.object({ id: uuidSchema, entryNumber: z.string(), entryDate: z.string(), memo: z.string(), sourceType: z.string() }) })),
     }), { token });
   },
   matchBankReconciliationLines(token: string, reconciliationId: string, journalLineIds: string[]) {
@@ -1450,7 +1451,7 @@ export const api = {
   },
   createMeasurement(token: string, customerId: string, input: z.infer<typeof createMeasurementRevisionSchema>) {
     return request(`/measurements/customers/${customerId}/revisions`, z.object({
-      profile: z.object({ id: z.string().uuid() }),
+      profile: z.object({ id: uuidSchema }),
       revision: profileSchema.shape.revisions.element,
     }), { token, method: 'POST', body: input });
   },
@@ -1485,7 +1486,7 @@ export const api = {
   },
   setPlatformUserActive(token: string, userId: string, active: boolean) {
     return request(`/platform/users/${userId}/active`, z.object({
-      id: z.string().uuid(),
+      id: uuidSchema,
       name: z.string(),
       email: z.string(),
       active: z.boolean(),
@@ -1521,16 +1522,16 @@ export const api = {
   },
   assignBusinessOwner(token: string, businessId: string, input: { name: string; email: string; initialPassword: string }) {
     return request(`/platform/businesses/${businessId}/owners`, z.object({
-      business: z.object({ id: z.string().uuid(), name: z.string() }),
-      owner: z.object({ id: z.string().uuid(), name: z.string(), email: z.string() }),
-      membershipId: z.string().uuid(),
+      business: z.object({ id: uuidSchema, name: z.string() }),
+      owner: z.object({ id: uuidSchema, name: z.string(), email: z.string() }),
+      membershipId: uuidSchema,
       accountCreated: z.boolean(),
     }), { token, method: 'POST', body: input });
   },
   platformBusinessMembers(token: string, businessId: string) {
     return request(`/platform/businesses/${businessId}/members`, z.object({
       business: z.object({
-        id: z.string().uuid(),
+        id: uuidSchema,
         name: z.string(),
         slug: z.string(),
         status: z.enum(['ACTIVE', 'SUSPENDED', 'PENDING', 'ARCHIVED']),
@@ -1602,7 +1603,7 @@ export const api = {
       subscription: subscriptionSchema.nullable(),
       plans: z.array(subscriptionPlanSchema),
       payments: z.array(subscriptionPaymentSchema),
-      events: z.array(z.object({ id: z.string().uuid(), action: z.string(), metadata: z.record(z.string(), z.unknown()), createdAt: z.string() })),
+      events: z.array(z.object({ id: uuidSchema, action: z.string(), metadata: z.record(z.string(), z.unknown()), createdAt: z.string() })),
       paymentInstructions: z.string(),
       paymentMethods: z.array(z.string()),
       supportContact: z.string(),
@@ -1662,10 +1663,10 @@ export const api = {
   },
   platformBillingBusiness(token: string, businessId: string) {
     return request(`/platform/billing/businesses/${businessId}`, z.object({
-      business: z.object({ id: z.string().uuid(), name: z.string(), slug: z.string(), status: z.string() }),
+      business: z.object({ id: uuidSchema, name: z.string(), slug: z.string(), status: z.string() }),
       subscriptions: z.array(subscriptionSchema),
       payments: z.array(subscriptionPaymentSchema),
-      events: z.array(z.object({ id: z.string().uuid(), action: z.string(), metadata: z.record(z.string(), z.unknown()), createdAt: z.string() })),
+      events: z.array(z.object({ id: uuidSchema, action: z.string(), metadata: z.record(z.string(), z.unknown()), createdAt: z.string() })),
     }), { token });
   },
   assignBusinessSubscription(token: string, businessId: string, input: {
@@ -1687,7 +1688,7 @@ export const api = {
     kind: 'REFUND_RECORDED' | 'ADJUSTMENT_RECORDED'; amount: string; reason: string;
   }) {
     return request(`/platform/billing/payments/${paymentId}/adjustments`, z.object({
-      id: z.string().uuid(),
+      id: uuidSchema,
       action: z.string(),
       metadata: z.record(z.string(), z.unknown()),
       createdAt: z.string(),

@@ -1,3 +1,4 @@
+import { uuidSchema } from '@tailor/shared';
 import express from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -7,12 +8,12 @@ import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
 const querySchema = z.object({
-  businessId: z.string().uuid().optional(),
+  businessId: uuidSchema.optional(),
   action: z.string().trim().min(1).max(100).optional(),
   q: z.string().trim().min(1).max(200).optional(),
   from: z.string().datetime({ offset: true }).optional(),
   to: z.string().datetime({ offset: true }).optional(),
-  cursor: z.string().uuid().optional(),
+  cursor: uuidSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 

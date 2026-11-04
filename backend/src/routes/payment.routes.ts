@@ -4,6 +4,7 @@ import {
   createPaymentSchema,
   paymentQuerySchema,
   reversePaymentSchema,
+  uuidSchema,
 } from '@tailor/shared';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -15,8 +16,8 @@ import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { generateReceiptPdf, queuePaymentReceived } from '../whatsapp.js';
 
 const router = express.Router();
-const idSchema = z.string().uuid();
-const idempotencySchema = z.string().uuid();
+const idSchema = uuidSchema;
+const idempotencySchema = uuidSchema;
 
 function getContext(req: express.Request): { businessId: string; actorId: string } {
   if (req.auth?.scope !== 'business' || !req.auth.business) {

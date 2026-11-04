@@ -4,6 +4,7 @@ import {
   createGarmentTemplateSchema,
   createMeasurementRevisionSchema,
   garmentTemplateFieldSchema,
+  uuidSchema,
 } from '@tailor/shared';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -14,7 +15,7 @@ import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 import { queueMeasurementAppended } from '../whatsapp.js';
 
 const router = express.Router();
-const idSchema = z.string().uuid();
+const idSchema = uuidSchema;
 const MEASUREMENT_TRANSACTION_OPTIONS = {
   isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
   maxWait: 20_000,

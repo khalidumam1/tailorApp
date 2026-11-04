@@ -207,3 +207,91 @@ describe('parseNotificationTemplates', () => {
     })).toThrow();
   });
 });
+
+/**
+ * The business template, workflow and custom-field migrations derive their ids
+ * with `md5(...)::uuid`, so the version and variant nibbles are whatever the
+ * hash produced - these are the real ids the tailor template ships with. zod 4
+ * tightened `z.string().uuid()` into a real RFC 4122 check and rejected them,
+ * which made the app refuse its own configuration response.
+ */
+describe('api.businessConfiguration ids', () => {
+  const TEMPLATE_ID = '4edea838-875c-f16e-7b8e-1e2b10b952a9';
+  const FIELD_ID = 'f693bb8c-a465-4c99-4a58-033ece9bca1b';
+  const STAGE_ID = 'e0ec6d1e-6dd9-194e-0a02-2185b1926cd6';
+
+  function configuration() {
+    return {
+      business: {
+        id: BUSINESS_ID,
+        name: 'Rizwan Tailors',
+        logoUrl: null,
+        type: 'SERVICE',
+        currency: 'PKR',
+        timezone: 'Asia/Karachi',
+      },
+      template: { id: TEMPLATE_ID, key: 'tailor', name: 'Tailor', category: 'SERVICE' },
+      itemTypes: [{ key: 'shirt', label: 'Shirt' }],
+      availableModules: ['orders'],
+      availablePaymentMethods: ['cash'],
+      availableDashboardWidgets: ['stats'],
+      terminology: { item: 'Garment' },
+      enabledModules: ['orders'],
+      paymentMethods: ['cash'],
+      dashboardWidgets: ['stats'],
+      notificationTemplates: {},
+      contactPhone: null,
+      fields: [{
+        id: FIELD_ID,
+        templateId: TEMPLATE_ID,
+        businessId: null,
+        module: 'orders',
+        screen: 'create',
+        key: 'collar',
+        label: 'Collar',
+        type: 'TEXT',
+        required: false,
+        defaultValue: null,
+        validation: null,
+        options: null,
+        visibility: null,
+        sortOrder: 1,
+        active: true,
+      }],
+      tenantFields: [],
+      workflow: {
+        stages: [{
+          id: STAGE_ID,
+          templateId: TEMPLATE_ID,
+          businessId: null,
+          key: 'new',
+          label: 'New',
+          sortOrder: 1,
+          isInitial: true,
+          isTerminal: false,
+          actions: [],
+        }],
+        transitions: [],
+      },
+      workflowIsTenantScoped: false,
+      version: 1,
+      cacheVersion: 1_000_001,
+      configurationVersion: 1,
+      templateVersion: 1,
+      publishedAt: null,
+    };
+  }
+
+  it('accepts the md5-derived ids the migrations insert', async () => {
+    stubFetch(() => okData(configuration()));
+    const result = await api.businessConfiguration('token');
+    expect(result.template.id).toBe(TEMPLATE_ID);
+    expect(result.fields[0].id).toBe(FIELD_ID);
+    expect(result.workflow.stages[0].id).toBe(STAGE_ID);
+  });
+
+  it('still rejects a value that is not id shaped', async () => {
+    stubFetch(() => okData({ ...configuration(), template: { id: 'tailor', key: 'tailor', name: 'Tailor', category: 'SERVICE' } }));
+    await expect(api.businessConfiguration('token')).rejects.toThrow(ApiError);
+  });
+});

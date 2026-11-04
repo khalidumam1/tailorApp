@@ -1,3 +1,4 @@
+import { uuidSchema } from '@tailor/shared';
 import { Prisma } from '@prisma/client';
 import express from 'express';
 import { z } from 'zod';
@@ -9,7 +10,6 @@ import { ensureDefaultAccounts, postJournal } from '../domain/accounting.js';
 import { businessDateBounds } from '../domain/business-time.js';
 
 const router = express.Router();
-const uuidSchema = z.string().uuid();
 const moneySchema = z.string().regex(/^(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/);
 const dateOnlySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const accountCreateSchema = z.object({

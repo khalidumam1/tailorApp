@@ -1,3 +1,4 @@
+import { uuidSchema } from '@tailor/shared';
 import { Prisma } from '@prisma/client';
 import express from 'express';
 import { z } from 'zod';
@@ -9,11 +10,11 @@ import { authenticate, requirePlatformPermission, requireSuperAdminPermission } 
 import { generateSubscriptionReceiptPdf, queueSubscriptionPaymentNotification } from '../whatsapp.js';
 
 const router = express.Router();
-const idSchema = z.string().uuid();
+const idSchema = uuidSchema;
 const paginationSchema = z.object({
   q: z.string().trim().max(120).optional(),
   status: z.enum(['PENDING', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'ADJUSTED', 'ALL']).optional(),
-  cursor: z.string().uuid().optional(),
+  cursor: uuidSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 const planSchema = z.object({

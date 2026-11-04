@@ -1,3 +1,4 @@
+import { uuidSchema } from '@tailor/shared';
 import type { RequestHandler } from 'express';
 import type { Prisma } from '@prisma/client';
 import jwt from 'jsonwebtoken';
@@ -10,8 +11,8 @@ import { assertBusinessModuleEnabled, moduleForBusinessPermission } from '../bus
 import { asyncHandler } from './async-handler.js';
 
 const accessClaimsSchema = z.discriminatedUnion('scope', [
-  z.object({ sub: z.string().uuid(), scope: z.literal('business'), membershipId: z.string().uuid() }),
-  z.object({ sub: z.string().uuid(), scope: z.literal('platform'), membershipId: z.never().optional() }),
+  z.object({ sub: uuidSchema, scope: z.literal('business'), membershipId: uuidSchema }),
+  z.object({ sub: uuidSchema, scope: z.literal('platform'), membershipId: z.never().optional() }),
 ]);
 
 export interface AuthContext {

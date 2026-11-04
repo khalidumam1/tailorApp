@@ -1,3 +1,4 @@
+import { uuidSchema } from '@tailor/shared';
 import express from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -7,11 +8,11 @@ import { authenticate, requireBusinessPermission } from '../middleware/auth.js';
 
 const router = express.Router();
 const querySchema = z.object({
-  customerId: z.string().uuid().optional(),
-  orderId: z.string().uuid().optional(),
-  paymentId: z.string().uuid().optional(),
+  customerId: uuidSchema.optional(),
+  orderId: uuidSchema.optional(),
+  paymentId: uuidSchema.optional(),
   status: z.enum(['QUEUED', 'SENT', 'DELIVERED', 'READ', 'FAILED', 'NOT_SENT']).optional(),
-  cursor: z.string().uuid().optional(),
+  cursor: uuidSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 

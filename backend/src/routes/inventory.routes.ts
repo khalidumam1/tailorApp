@@ -1,3 +1,4 @@
+import { uuidSchema } from '@tailor/shared';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import express from 'express';
@@ -11,7 +12,6 @@ import { getOrCreateDefaultLocation, inventoryValuation, postInventoryMovement }
 import { postJournal } from '../domain/accounting.js';
 
 const router = express.Router();
-const uuidSchema = z.string().uuid();
 const decimalSchema = (places: number) => z.string().regex(new RegExp(`^(?:0|[1-9]\\d*)(?:\\.\\d{1,${places}})?$`));
 const positiveQuantitySchema = decimalSchema(6).refine((value) => new Prisma.Decimal(value).greaterThan(0));
 const positiveCostSchema = decimalSchema(4);

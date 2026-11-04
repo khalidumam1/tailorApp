@@ -1,3 +1,4 @@
+import { uuidSchema } from '@tailor/shared';
 import { Prisma } from '@prisma/client';
 import express from 'express';
 import { z } from 'zod';
@@ -16,7 +17,7 @@ import {
 
 const router = express.Router();
 const historyQuerySchema = z.object({
-  cursor: z.string().uuid().optional(),
+  cursor: uuidSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 const keySchema = z.string().trim().regex(/^[a-z][a-z0-9_-]{0,79}$/);
