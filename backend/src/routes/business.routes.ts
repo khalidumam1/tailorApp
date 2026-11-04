@@ -47,7 +47,9 @@ const configurationSchema = z.object({
   enabledModules: z.array(keySchema).max(40).optional(),
   itemTypes: itemTypesSchema.optional(),
   paymentMethods: z.array(paymentMethodSchema).min(1).max(30).optional(),
-  notificationTemplates: z.record(z.enum([
+  // Zod 4 treats a record with enum keys as exhaustive; templates are sent a
+  // subset at a time, so keep the partial behaviour the API has always had.
+  notificationTemplates: z.partialRecord(z.enum([
     'ORDER_CREATED',
     'PAYMENT_RECEIVED',
     'ORDER_READY',

@@ -32,7 +32,11 @@ const itemInputSchema = z.object({
   description: z.string().trim().max(1000).nullable().optional(),
   baseUnit: z.string().trim().min(1).max(40),
   reorderPoint: decimalSchema(6).nullable().optional(),
-  variant: variantInputSchema.default({}),
+  // Zod 4 no longer parses a default through the schema it belongs to, so an
+  // empty object here would skip the variant's own `name` / `attributes`
+  // defaults. Spell the complete default out (as a factory, so no request can
+  // ever share the nested `attributes` object).
+  variant: variantInputSchema.default(() => ({ name: 'Standard', attributes: {} })),
 }).strict();
 const itemUpdateSchema = z.object({
   version: z.number().int().positive(),

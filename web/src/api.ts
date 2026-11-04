@@ -8,6 +8,11 @@ import {
   type ApplicationBranding,
 } from '@tailor/shared';
 
+// Postgres ids here are not always RFC 4122 UUIDs (the template/workflow/
+// custom-field migrations derive them with md5(...)::uuid), so validate on
+// shape only - zod 4's z.string().uuid() rejects those rows.
+const z.string().uuid() = z.string().regex(UUID_SHAPE);
+
 const customerSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
@@ -456,7 +461,10 @@ const notificationTemplateSchema = z.object({
   language: z.string().optional(),
   recipientPolicy: z.enum(['CUSTOMER', 'BUSINESS_CONTACT']).optional(),
 });
-const notificationTemplatesSchema = z.record(
+// `z.partialRecord`, not `z.record`: zod 4 made enum-keyed records exhaustive,
+// so a plain `z.record` would reject a business that has only configured a
+// subset of the templates. Partial records still reject unknown keys.
+const notificationTemplatesSchema = z.partialRecord(
   z.enum([
     'ORDER_CREATED',
     'PAYMENT_RECEIVED',

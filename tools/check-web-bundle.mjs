@@ -10,13 +10,23 @@
  * Target: < 300,000 bytes, which requires extracting the platform console
  * out of main.tsx (decision D-8 follow-up). Lower ENTRY_BUDGET_BYTES as
  * that work lands; never raise it without recording why in the phase report.
+ *
+ * RAISED 510,000 -> 545,000 (2026-11-04), reason recorded here as required:
+ * zod had to move from 3.24.2 to 4.6.7 for GHSA-mrhx-c7xc-m3w5 (high), and
+ * zod 4 costs ~23 kB more in the entry chunk because `z` is a namespace
+ * object that no bundler can tree-shake (measured: a one-schema bundle is
+ * 103 kB with zod 4 vs 75 kB with zod 3; `zod/v4/mini` would be 27 kB but
+ * its functional API is not source-compatible with these schemas, and
+ * `treeshake: 'smallest'` recovers only ~0.1 kB). Entry went 509,013 ->
+ * 531,925 bytes. The < 300,000 target and the D-8 extraction stand; lower
+ * this number again when that work lands.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
-const ENTRY_BUDGET_BYTES = 510_000;
+const ENTRY_BUDGET_BYTES = 545_000;
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const assetsDir = path.join(repoRoot, 'web', 'dist', 'assets');
