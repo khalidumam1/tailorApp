@@ -113,6 +113,29 @@ export type AlterationTask = {
   createdAt: string;
 };
 
+/** The customer-facing tracking link for one order. */
+export type OrderTrackingLink = {
+  id: string;
+  token: string;
+  path: string;
+  url: string | null;
+  createdAt: string;
+  revokedAt: string | null;
+  lastViewedAt: string | null;
+  viewCount: number;
+};
+
+/** A message a customer left through the tracking link. */
+export type CustomerMessage = {
+  id: string;
+  orderId: string;
+  kind: 'FITTING_CONFIRMED' | 'QUESTION' | 'CHANGE_REQUESTED';
+  body: string | null;
+  status: 'OPEN' | 'RESOLVED';
+  createdAt: string;
+  resolvedAt: string | null;
+};
+
 export type BusinessMember = {
   id: string;
   active: boolean;
@@ -321,6 +344,11 @@ export type WorkspaceContextValue = {
   fetchAlterations: (orderId: string) => Promise<AlterationTask[]>;
   createAlteration: (orderId: string, description: string) => Promise<AlterationTask>;
   setAlterationStatus: (orderId: string, alterationId: string, status: 'OPEN' | 'DONE') => Promise<AlterationTask>;
+  fetchOrderTrackingLink: (orderId: string) => Promise<OrderTrackingLink | null>;
+  createOrderTrackingLink: (orderId: string, regenerate?: boolean) => Promise<OrderTrackingLink>;
+  revokeOrderTrackingLink: (orderId: string) => Promise<void>;
+  fetchCustomerMessages: (orderId: string) => Promise<CustomerMessage[]>;
+  setCustomerMessageStatus: (orderId: string, messageId: string, status: 'OPEN' | 'RESOLVED') => Promise<void>;
   downloadServerExport: (kind: 'customers' | 'orders' | 'payments' | 'ledger', options?: { archived?: boolean }) => Promise<{ bytes: Uint8Array; filename: string; mimeType: string }>;
   downloadOrderInvoice: (order: LocalOrder) => Promise<{ bytes: Uint8Array; filename: string; mimeType: string }>;
   fetchRoles: () => Promise<BusinessRole[]>;
@@ -1418,6 +1446,39 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     });
   }, [erpRequest]);
 
+  const fetchOrderTrackingLink = useCallback(async (orderId: string): Promise<OrderTrackingLink | null> => {
+    const result = await erpRequest<{ link: OrderTrackingLink | null }>(`/orders/${orderId}/tracking-link`);
+    return result.link;
+  }, [erpRequest]);
+
+  const createOrderTrackingLink = useCallback(async (orderId: string, regenerate = false): Promise<OrderTrackingLink> => {
+    const result = await erpRequest<{ link: OrderTrackingLink }>(`/orders/${orderId}/tracking-link`, {
+      method: 'POST',
+      body: { regenerate },
+    });
+    return result.link;
+  }, [erpRequest]);
+
+  const revokeOrderTrackingLink = useCallback(async (orderId: string): Promise<void> => {
+    await erpRequest<{ revoked: boolean }>(`/orders/${orderId}/tracking-link`, { method: 'DELETE' });
+  }, [erpRequest]);
+
+  const fetchCustomerMessages = useCallback(async (orderId: string): Promise<CustomerMessage[]> => {
+    const result = await erpRequest<{ messages: CustomerMessage[] }>(`/orders/${orderId}/customer-messages`);
+    return result.messages;
+  }, [erpRequest]);
+
+  const setCustomerMessageStatus = useCallback(async (
+    orderId: string,
+    messageId: string,
+    status: 'OPEN' | 'RESOLVED',
+  ): Promise<void> => {
+    await erpRequest<{ updated: boolean }>(`/orders/${orderId}/customer-messages/${messageId}`, {
+      method: 'PATCH',
+      body: { status },
+    });
+  }, [erpRequest]);
+
   const downloadServerExport = useCallback(async (
     kind: 'customers' | 'orders' | 'payments' | 'ledger',
     options?: { archived?: boolean },
@@ -1672,6 +1733,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     fetchAlterations,
     createAlteration,
     setAlterationStatus,
+    fetchOrderTrackingLink,
+    createOrderTrackingLink,
+    revokeOrderTrackingLink,
+    fetchCustomerMessages,
+    setCustomerMessageStatus,
     downloadServerExport,
     downloadOrderInvoice,
     fetchRoles,
@@ -1708,6 +1774,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     authBusy, shopChoices, cancelOrderPayment, saveBusinessConfiguration,
     completePasswordChange, resetStaffPassword, archiveCustomer, restoreCustomer,
     fetchArchivedCustomers, archiveOrder, restoreOrder, fetchArchivedOrders, fetchAlterations, createAlteration, setAlterationStatus, downloadServerExport, downloadOrderInvoice, fetchRoles,
+    fetchOrderTrackingLink, createOrderTrackingLink, revokeOrderTrackingLink, fetchCustomerMessages, setCustomerMessageStatus,
     fetchBusinessPermissions, fetchBusinessStaff, createBusinessRole, inviteStaffMember,
   ]);
 

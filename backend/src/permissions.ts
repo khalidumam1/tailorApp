@@ -6,6 +6,7 @@ export const businessPermissions = [
   ['orders:read', 'View orders'],
   ['orders:write', 'Create orders'],
   ['orders:transition', 'Advance order workflow'],
+  ['orders:share', 'Share customer order-tracking links and answer customer messages'],
   ['payments:read', 'View payments'],
   ['payments:write', 'Record payments'],
   ['notifications:read', 'View customer notification delivery history'],

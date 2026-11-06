@@ -36,6 +36,18 @@ enum PaymentMethod {
   DIGITAL
 }
 
+/// What a customer can send back through a public order-tracking link.
+enum OrderCustomerMessageKind {
+  FITTING_CONFIRMED
+  QUESTION
+  CHANGE_REQUESTED
+}
+
+enum OrderCustomerMessageStatus {
+  OPEN
+  RESOLVED
+}
+
 enum PaymentKind {
   PAYMENT
   REVERSAL
@@ -218,6 +230,8 @@ model Business {
   cashTransactions      CashTransaction[]
   financialOpenings     FinancialOpeningBalance[]
   bankReconciliations   BankReconciliation[]
+  orderTrackingLinks    OrderTrackingLink[]
+  orderCustomerMessages OrderCustomerMessage[]
 
   @@index([templateId])
 }
@@ -335,6 +349,7 @@ model User {
   submittedSubscriptionPayments SubscriptionPayment[]     @relation("SubscriptionPaymentSubmitter")
   subscriptionEvents            SubscriptionEvent[]
   businessTemplateRevisions     BusinessTemplateRevision[] @relation("BusinessTemplateRevisionActor")
+  trackingLinksCreated          OrderTrackingLink[]      @relation("OrderTrackingLinkCreator")
 }
 
 model BusinessTemplateRevision {
@@ -588,6 +603,8 @@ model Order {
   alterations           AlterationTask[]
   payments              Payment[]
   whatsappNotifications WhatsAppNotification[]
+  trackingLink          OrderTrackingLink?
+  customerMessages      OrderCustomerMessage[]
 
   @@unique([businessId, orderNumber])
   @@unique([businessId, idempotencyKey])
@@ -661,6 +678,50 @@ model AlterationTask {
   dueAt       DateTime? @db.Timestamptz(3)
   createdAt   DateTime  @default(now()) @db.Timestamptz(3)
   order       Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+}
+
+/// A public, token-based link that lets one customer follow one order
+/// without an account. The token is random and carries no data, so a leaked
+/// link cannot be enumerated and the customer never sees another customer's
+/// work.
+model OrderTrackingLink {
+  id           String    @id @default(uuid()) @db.Uuid
+  businessId   String    @db.Uuid
+  orderId      String    @db.Uuid
+  token        String    @unique @db.VarChar(64)
+  createdById  String    @db.Uuid
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+  revokedAt    DateTime? @db.Timestamptz(3)
+  lastViewedAt DateTime? @db.Timestamptz(3)
+  viewCount    Int       @default(0)
+  business     Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order        Order     @relation(fields: [orderId, businessId], references: [id, businessId], onDelete: Cascade)
+  createdBy    User      @relation("OrderTrackingLinkCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  messages     OrderCustomerMessage[]
+
+  // The order side is a one-to-one relation, so the unique index has to use
+  // the same field order as the relation fields (`orderId`, `businessId`).
+  @@unique([orderId, businessId])
+  @@index([businessId, createdAt])
+}
+
+/// A message a customer left through a tracking link (fitting confirmation,
+/// a question or a change request). The shop sees it on the order.
+model OrderCustomerMessage {
+  id         String                    @id @default(uuid()) @db.Uuid
+  businessId String                    @db.Uuid
+  orderId    String                    @db.Uuid
+  linkId     String?                   @db.Uuid
+  kind       OrderCustomerMessageKind
+  body       String?                   @db.VarChar(1000)
+  status     OrderCustomerMessageStatus @default(OPEN)
+  createdAt  DateTime                  @default(now()) @db.Timestamptz(3)
+  resolvedAt DateTime?                 @db.Timestamptz(3)
+  business   Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order      Order                     @relation(fields: [orderId, businessId], references: [id, businessId], onDelete: Cascade)
+  link       OrderTrackingLink?        @relation(fields: [linkId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, orderId, createdAt])
 }
 
 model Payment {

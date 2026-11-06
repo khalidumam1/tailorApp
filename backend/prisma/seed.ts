@@ -186,6 +186,7 @@ async function seed() {
       'orders:read',
       'orders:write',
       'orders:transition',
+      'orders:share',
     ]);
     for (const [key] of businessPermissions.filter(([permissionKey]) => staffPermissionKeys.has(permissionKey))) {
       const permission = await tx.permission.findUniqueOrThrow({ where: { key } });
