@@ -46,6 +46,12 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      # D-16: the app folders (backend/, web/, mobile/) carry their own
+      # package-lock.json because a PaaS builder installs those folders
+      # directly. A lockfile that drifted from its package.json breaks that
+      # deploy only - CI's root `npm ci` never sees it - so it is checked here.
+      - name: Check standalone lockfiles are in sync
+        run: node tools/check-lockfiles.mjs
       - run: npm ci
       - run: npm run db:generate
       - run: npm run db:migrate
