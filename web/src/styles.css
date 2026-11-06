@@ -2364,6 +2364,60 @@ tbody td strong { color: var(--ink-900); }
 .alteration-form { display: flex; gap: 8px; }
 .alteration-form input { flex: 1; }
 
+/* Customer order-tracking links (business workspace side) */
+.tracking-block { margin-top: 10px; }
+.tracking-panel { margin-top: 8px; display: flex; flex-direction: column; gap: 10px; }
+.tracking-url {
+  display: block; padding: 8px 10px; border: 1px solid var(--border, #e2e8f0); border-radius: 8px;
+  background: var(--surface-sunken, #f8fafc); font-size: .75rem; word-break: break-all;
+}
+.customer-messages { display: flex; flex-direction: column; gap: 8px; }
+.customer-messages h4 { margin: 0; font-size: .8125rem; }
+.customer-message {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 8px 10px; border: 1px solid var(--border, #e2e8f0); border-radius: 8px;
+}
+
+/* Public customer tracking page (/track/<token>) */
+.tracking-page {
+  display: flex; flex-direction: column; gap: 14px;
+  width: min(100%, 720px); margin: 0 auto; padding: 24px 16px 48px;
+}
+.tracking-header { display: flex; align-items: center; gap: 14px; }
+.tracking-header h1 { margin: 0; font-size: 1.35rem; letter-spacing: -.02em; }
+.tracking-logo { width: 52px; height: 52px; border-radius: 12px; object-fit: contain; background: var(--surface-sunken, #f8fafc); }
+.tracking-card {
+  display: flex; flex-direction: column; gap: 12px; padding: 16px;
+  border: 1px solid var(--border, #e2e8f0); border-radius: 14px; background: var(--surface, #fff);
+}
+.tracking-card h2 { margin: 0; font-size: 1.05rem; }
+.tracking-status { display: flex; flex-direction: column; gap: 2px; }
+.tracking-status-label { color: var(--ink-500); font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; }
+.tracking-status-value { font-size: 1.2rem; letter-spacing: -.02em; }
+.tracking-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 0; }
+.tracking-facts dt { color: var(--ink-500); font-size: .75rem; }
+.tracking-facts dd { margin: 2px 0 0; font-weight: 600; }
+.tracking-due dd { color: var(--bad-fg, #b42318); }
+.tracking-ready {
+  margin: 0; padding: 10px 12px; border-radius: 10px;
+  background: var(--brand-50, #eef6f2); color: var(--brand-700, #14532d); font-weight: 600;
+}
+.tracking-items { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.tracking-items li { padding-bottom: 8px; border-bottom: 1px solid var(--border, #e2e8f0); }
+.tracking-items li:last-child { border-bottom: none; padding-bottom: 0; }
+.tracking-item-head { display: flex; justify-content: space-between; gap: 12px; }
+.tracking-timeline { display: flex; flex-direction: column; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.tracking-timeline li { display: flex; gap: 10px; align-items: flex-start; }
+.tracking-timeline-dot {
+  width: 10px; height: 10px; margin-top: 5px; border-radius: 50%;
+  background: var(--brand-600, #0f766e); flex: 0 0 auto;
+}
+.tracking-messages { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.tracking-messages li { padding: 10px 12px; border-radius: 10px; background: var(--surface-sunken, #f8fafc); }
+.tracking-form { display: flex; flex-direction: column; gap: 6px; }
+.tracking-form label { color: var(--ink-600, #475569); font-size: .8125rem; }
+.tracking-footer { text-align: center; }
+
 /* User Guide (Phase 3) */
 /* ---- User guide ---------------------------------------------------- */
 .guide-layout { display: grid; grid-template-columns: 252px 1fr; gap: 20px; align-items: start; }

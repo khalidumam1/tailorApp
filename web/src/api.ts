@@ -917,7 +917,12 @@ async function fetchApi(input: RequestInfo | URL, init: RequestInit): Promise<Re
   }
 }
 
-async function request<T>(
+/**
+ * The shared request helper. It is exported so feature modules (for example
+ * the customer tracking API) can use the same envelope handling and error
+ * mapping without the workspace entry chunk carrying their schemas.
+ */
+export async function request<T>(
   route: string,
   schema: z.ZodType<T>,
   options: { token?: string; method?: string; body?: unknown; idempotencyKey?: string } = {},

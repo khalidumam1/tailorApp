@@ -1,12 +1,13 @@
 # Tailor Management System
 
-TypeScript project for tailoring businesses in Karachi. PostgreSQL is authoritative; the business admin is React/Vite, the mobile application uses Expo, and shared Zod contracts are copied into the standalone backend and web projects. The MVP has no customer portal and no delivery/rider features.
+TypeScript project for tailoring businesses in Karachi. PostgreSQL is authoritative; the business admin is React/Vite, the mobile application uses Expo, and shared Zod contracts are copied into the standalone backend and web projects. The MVP has no customer account portal (customers follow a single order through a
+token link, not a login) and no delivery/rider features.
 
 ## Implementation status
 
 The product (Bizora) includes a versioned Express API with authentication, membership-derived tenant authorization, customer/measurement/order/payment/report routes, append-only audit records, business billing screens and APIs, and a permissioned platform console for business onboarding, staff, subscriptions, manual-payment review, plans, billing settings, reports, audit and health. Subscription periods, payment review, receipts, settings and history are represented in Prisma and the committed migrations.
 
-Shipped since the original prototype status was written: business staff/role administration, admin-initiated password reset with forced first change (web + mobile), customer/order/business archive-and-restore, alterations workflow (API + web + mobile UI), CSV exports and order invoice PDFs, per-account login throttling, tenant-timezone reporting, mobile sign-in with the full tailor workflow, ESLint + automated web/mobile/backend test suites, and a CI pipeline (isolated Postgres) that applies all migrations and runs every suite on each pull request.
+Shipped since the original prototype status was written: business staff/role administration, admin-initiated password reset with forced first change (web + mobile), customer/order/business archive-and-restore, alterations workflow (API + web + mobile UI), CSV exports and order invoice PDFs, per-account login throttling, tenant-timezone reporting, mobile sign-in with the full tailor workflow, customer order-tracking links (a public, revocable page where one customer follows one order and can reply to the shop), ESLint + automated web/mobile/backend test suites, and a CI pipeline (isolated Postgres) that applies all migrations and runs every suite on each pull request.
 
 Retired: the offline-sync API (`/api/v1/sync`) was removed by owner decision — no shipped client ever used it. Still not production-verified: live WhatsApp delivery (needs a Meta test number), large-scale performance, and any deployment rehearsal. Operational monitoring/recovery automation remains future work. Current authority for status is the phase reports: [Phase 1](docs/implementation/phase-1-completion-report.md) and [Phase 2](docs/implementation/phase-2-completion-report.md), with strategy in [docs/implementation/three-phase-plan.md](docs/implementation/three-phase-plan.md).
 
@@ -177,6 +178,24 @@ The API uses `/api/v1`, Zod request parsing, cursor pagination and responses of
 the form `{ "data": ... }`; failures return `{ "error": { "code", "message" },
 "requestId" }`. Logs omit request bodies, query strings, authorization headers
 and cookies.
+
+## Customer order-tracking links
+
+Staff can create one revocable link per order and share it with the customer on
+WhatsApp. The link opens a public page (`/track/<token>` on the web app) that
+shows that one order's stage, items, measurements, total, paid amount, balance
+due and promised date — without an account. The customer can confirm their
+details, ask a question or request a change; those messages arrive on the order
+card in the workspace, where staff can mark them answered.
+
+The token is 24 random bytes, carries no data and can be revoked at any time;
+the public payload contains no internal notes, no staff names, no costs and no
+other order. Business endpoints are `POST`, `GET` and `DELETE`
+`/api/v1/orders/:orderId/tracking-link` plus `GET`
+`/api/v1/orders/:orderId/customer-messages`; the public endpoints are `GET`
+`/api/v1/public/tracking/:token` and `POST`
+`/api/v1/public/tracking/:token/messages`. Sharing needs `orders:share`.
+Set `PUBLIC_WEB_BASE_URL` on the API so the shared link is absolute.
 
 ## Roles and permissions
 

@@ -52,6 +52,12 @@ import {
 // initial bundle. The platform console lives in this file and stays in the
 // entry chunk; splitting it out is the incremental refactor noted in D-8.
 const ErpWorkspace = lazy(() => import('./ErpWorkspace').then((module) => ({ default: module.ErpWorkspace })));
+// The customer tracking page is only opened by customers following a link, so
+// it must not weigh on the workspace bundle.
+const TrackingPage = lazy(() => import('./OrderTrackingPage').then((module) => ({ default: module.OrderTrackingPage })));
+// The order-card customer link section ships as its own lazy chunk so the
+// entry bundle keeps shrinking (F-009 budget).
+const TrackingSection = lazy(() => import('./OrderTrackingSection').then((module) => ({ default: module.OrderTrackingSection })));
 const HelpGuide = lazy(() => import('./HelpGuide').then((module) => ({ default: module.HelpGuide })));
 const ChatAssistant = lazy(() => import('./ChatAssistant'));
 const BusinessStructureEditors = lazy(() => import('./BusinessStructureEditors').then((module) => ({ default: module.BusinessStructureEditors })));
@@ -4191,6 +4197,18 @@ function App() {
             )}
           </div>
         )}
+        {!showArchivedOrders && permissions.has('orders:read') ? (
+          <Suspense fallback={<div className="tracking-block" />}>
+            <TrackingSection
+              order={order}
+              permissions={permissions}
+              disabled={working || !online}
+              withSession={withSession}
+              onNotice={setNotice}
+              onError={setError}
+            />
+          </Suspense>
+        ) : null}
       </div>
     </article>
   );
@@ -5476,6 +5494,27 @@ function EmptyState({ title, detail, action, onAction }: { title: string; detail
   return <div className="empty-state"><span className="empty-icon" aria-hidden="true"><Icon name="inbox" /></span><h3>{title}</h3>{detail && <p className="muted">{detail}</p>}{action && onAction && <button className="button button-secondary" onClick={onAction}>{action}</button>}</div>;
 }
 
+/**
+ * The customer tracking page lives on its own path (`/track/<token>`) so a
+ * customer who was sent the link never has to sign in. Everything else keeps
+ * the normal workspace.
+ */
+const trackingPath = typeof window === 'undefined' ? '' : window.location.pathname;
+const isTrackingRoute = trackingPath === '/track' || trackingPath.startsWith('/track/');
+let trackingToken: string | null = null;
+if (isTrackingRoute) {
+  try {
+    trackingToken = decodeURIComponent(trackingPath.slice('/track/'.length));
+  } catch {
+    // A malformed escape in the address bar must not blank the whole app.
+    trackingToken = null;
+  }
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <StrictMode><Suspense fallback={<LoadingState />}><App /></Suspense></StrictMode>,
+  <StrictMode>
+    <Suspense fallback={<LoadingState />}>
+      {isTrackingRoute ? <TrackingPage token={trackingToken} /> : <App />}
+    </Suspense>
+  </StrictMode>,
 );

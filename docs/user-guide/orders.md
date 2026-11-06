@@ -30,6 +30,9 @@ Fitting fix after delivery? Open **Alterations** on the order card, describe the
 ## Archive and restore
 Delivered long ago or created by mistake: **Archive** hides the order but keeps payments and history. **Show archived** → **Restore** brings it back. Archiving asks for confirmation; financial records are never deleted, only corrected.
 
+## Customer tracking link
+**Customer link** on the order card creates a private link for this order and lets the customer follow it without an account — status, items, total, balance and due date. They can also confirm their details or ask a question, and it arrives under **Customer messages** on the same card. See *Customer tracking link*.
+
 ## Invoice
 **Invoice PDF** on the order card downloads a printable invoice: items, total, payments and balance due. Staff without payment permission get an items-and-total copy with a note instead of payment details.
 
@@ -38,7 +41,7 @@ Delivered long ago or created by mistake: **Archive** hides the order but keeps 
 - Cancelling instead of archiving. Cancel is for work that will never happen; archive is for finished history. Cancellation asks for confirmation and cannot be undone.
 
 ## Permission warnings
-Creating/editing needs **orders:write**, moving stages needs **orders:transition**, viewing needs **orders:read**.
+Creating/editing needs **orders:write**, moving stages needs **orders:transition**, viewing needs **orders:read**, sharing a customer tracking link needs **orders:share**.
 
 ## Roman Urdu mein
-Order banayein, stage se stage move karein, payment aaye to record karein. Delivery ke baad fitting ka masla ho to **Alterations** mein likh kar add karein aur kaam ho jane par **Mark done** dabayein. Purane orders ko delete nahi, **Archive** karein.
+Order banayein, stage se stage move karein, payment aaye to record karein, aur customer ko order ka status batane ke liye **Customer link** bana kar bhej dein. Delivery ke baad fitting ka masla ho to **Alterations** mein likh kar add karein aur kaam ho jane par **Mark done** dabayein. Purane orders ko delete nahi, **Archive** karein.

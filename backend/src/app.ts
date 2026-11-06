@@ -17,6 +17,8 @@ import authRoutes from './routes/auth.routes.js';
 import customerRoutes from './routes/customer.routes.js';
 import measurementRoutes from './routes/measurement.routes.js';
 import orderRoutes from './routes/order.routes.js';
+import orderTrackingRoutes from './routes/order-tracking.routes.js';
+import publicTrackingRoutes from './routes/public-tracking.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
 import reportRoutes from './routes/report.routes.js';
 import exportRoutes from './routes/export.routes.js';
@@ -160,7 +162,12 @@ app.get('/api/v1/ready', async (req, res, next) => {
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/customers', customerRoutes);
 app.use('/api/v1/measurements', measurementRoutes);
+// The tracking routes are mounted before the order routes so that
+// `/:orderId/tracking-link` and `/:orderId/customer-messages` are matched by
+// their own router; every other order path falls through to orderRoutes.
+app.use('/api/v1/orders', orderTrackingRoutes);
 app.use('/api/v1/orders', orderRoutes);
+app.use('/api/v1/public/tracking', publicTrackingRoutes);
 app.use('/api/v1/payments', paymentRoutes);
 app.use('/api/v1/reports', reportRoutes);
 app.use('/api/v1/exports', exportRoutes);

@@ -11,7 +11,7 @@ if they are stale).
 | Navigation item | Guide page |
 | --- | --- |
 | Dashboard | `quick-start.md`, `faq.md` |
-| Orders | `orders.md` |
+| Orders | `orders.md`, `customer-tracking.md` |
 | Catalog | `catalog.md` |
 | Customers | `customers.md` |
 | Measurements | `measurements.md` |
@@ -39,7 +39,7 @@ if they are stale).
 
 | Tab / More item | Guide page |
 | --- | --- |
-| Home, Orders, Payments, Activity | `quick-start.md`, `orders.md`, `payments.md` |
+| Home, Orders, Payments, Activity | `quick-start.md`, `orders.md`, `customer-tracking.md`, `payments.md` |
 | More → Analytics | `accounting.md` (reports overview) |
 | More → Customers / Measurements / Catalog | `customers.md`, `measurements.md`, `catalog.md` |
 | More → Notifications | `whatsapp.md` |
@@ -51,11 +51,15 @@ if they are stale).
 
 ## Button-name verification (task 3.2 exit)
 
-Method: extracted every **bold** action name from the 18 guide pages and searched
-the shipped web/mobile sources for the exact label (2026-10-19, Phase 3 build).
+Method: extracted every **bold** action name from the guide pages and searched
+the shipped web/mobile sources for the exact label (2026-10-19, Phase 3 build;
+re-checked 2026-11-04 with the customer tracking page).
 
 - 114 bold names matched UI labels verbatim (e.g. **Save revision**, **Create
   order**, **Export CSV**, **Show archived**, **Reset password**, **New order**).
+- The customer tracking page adds **Customer link**, **Create tracking link**,
+  **Copy link**, **Send on WhatsApp**, **Revoke link**, **Mark answered** and
+  **Reopen**, all of which exist verbatim in the web and mobile order cards.
 - Remaining hits were navigation paths (reworded from `More → X` arrows to plain
   text so they are not mistaken for button names) or glossary terms, which are
   definitions, not buttons.

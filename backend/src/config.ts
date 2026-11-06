@@ -34,6 +34,20 @@ const environmentSchema = z.object({
     .refine((origins) => !origins.includes('*') || origins.length === 1,
       'CORS_ORIGINS cannot mix the wildcard * with specific origins'),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
+  // The public origin of the web app. Customer tracking links are only
+  // absolute when the deployment knows where the web app lives; without it
+  // the API returns the path and the client builds the URL from the origin
+  // the staff member is already using.
+  PUBLIC_WEB_BASE_URL: optionalSecret.refine((value) => {
+    if (!value) return true;
+    try {
+      const parsed = new URL(value);
+      return (parsed.protocol === 'http:' || parsed.protocol === 'https:')
+        && !parsed.username && !parsed.password && !parsed.search && !parsed.hash;
+    } catch {
+      return false;
+    }
+  }, 'PUBLIC_WEB_BASE_URL must be an HTTP(S) origin without a path, query or credentials'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   WHATSAPP_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   WHATSAPP_ACCESS_TOKEN: optionalSecret,

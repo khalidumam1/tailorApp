@@ -51,3 +51,30 @@ three-phase plan; individual decisions gate the tasks noted. `OPEN` = awaiting o
   before production rollout, together with the device/emulator smoke test.
 - New findings from E2E: F-018 (seed order-counter bug) fixed in Phase 3; the
   business-help audience mix-up was fixed the same day (see findings register).
+
+## Growth feature 1 — Customer order-tracking links (2026-11-04)
+
+- Owner chose "Customer Order-Tracking Link (public portal)" from the
+  recommended feature list (2026-11-04) as the first growth feature.
+- **D-11: the customer surface is a token link, not an account.** The MVP
+  promise of "no customer portal" is kept: a customer follows exactly one
+  order through an unguessable, revocable token and never signs in. A full
+  customer account system stays out of scope until the business model changes.
+- **D-12: the public payload is deliberately narrow.** It carries the shop
+  name, the customer's first name, the order's stage, items, the customer's own
+  measurements, total/paid/outstanding, the promised date, the progress
+  timeline and the customer's own messages. No internal notes, no staff names,
+  no cost or margin data, no customer phone number, no other order.
+- **D-13: sharing is a permission of its own (`orders:share`).** Creating or
+  revoking a link needs it; reading needs `orders:read`; answering a customer
+  message needs `orders:write`. Existing business owner roles receive the
+  grant through the migration backfill; new businesses get it from the
+  platform's owner provisioning, which grants every business permission.
+- **D-14: a link is a customer-service surface, not a paid feature.** It is
+  therefore not treated as a paid mutation: an expired subscription must not
+  cut a customer off from an order that is already in progress. The `orders`
+  module still has to be enabled for the business.
+- **D-15: `PUBLIC_WEB_BASE_URL` on the API makes the shared link absolute.**
+  Without it the API returns the `/track/<token>` path and the apps build the
+  URL from the origin they already run on, so a development deployment works
+  without extra configuration.

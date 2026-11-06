@@ -105,6 +105,20 @@ How to describe them in copy:
 - Platform-side: manual payment review against the real bank receipt before a
   subscription period is extended
 
+### Customer order-tracking link (2026-11-04)
+
+| Claim | Where it comes from |
+| --- | --- |
+| A revocable, shareable link per order that lets a customer follow that order without an account | `backend/src/routes/order-tracking.routes.ts`, `backend/src/routes/public-tracking.routes.ts` |
+| The customer sees the stage, items, their own measurements, total, paid, balance due and the promised date | `GET /api/v1/public/tracking/:token`, `backend/src/domain/order-tracking.ts` |
+| The customer can confirm their details, ask a question or request a change, and the shop sees it on the order | `OrderCustomerMessage`, `GET /api/v1/orders/:orderId/customer-messages` |
+| The shop can revoke a link at any time; a revoked link stops working immediately | `DELETE /api/v1/orders/:orderId/tracking-link` |
+
+Say: *"Your customer can check the order themselves — status, total and what is
+still due — without calling the shop."* Do **not** say "customer portal",
+"customer app" or "customer login": there is no customer account, only a
+token link to a single order.
+
 ---
 
 ## Not verified — do **not** advertise
@@ -113,7 +127,8 @@ How to describe them in copy:
 | --- | --- |
 | Live WhatsApp delivery to customers | Templates exist; live delivery needs a Meta test number and is not production-verified |
 | Any third-party integration (payment gateways, accounting packages, e-commerce, banks, ERPs) | None exist in the codebase |
-| A customer portal or customer self-service tracking | Explicitly out of the MVP scope |
+| A customer portal, customer accounts, customer login or a customer app | The tracking link covers one order for one customer; there is no customer identity or account system |
+| A customer-facing catalogue, ordering or payment page | Not built — customers can follow and reply, not order or pay online |
 | Delivery, rider, fleet or field-service features | Not built |
 | Any AI capability | The in-app chat assistant routes you to screens; it is not AI |
 | Uptime, speed, scale or performance figures | Never measured in production |
@@ -138,6 +153,7 @@ How to describe them in copy:
 
 - "The #1 platform for…" / "Trusted by thousands of businesses"
 - "Integrates with…" (nothing to integrate with yet)
+- "A customer portal" or "your customers log in" (there is a tracking link, not an account)
 - "Automated WhatsApp updates to your customers" (not production-verified)
 - "Built for tailors" (Bizora is built for *businesses*; tailoring is one
   template)

@@ -144,6 +144,27 @@ workspaces show Queued, Sent, Delivered, Read, Failed, and Not Sent distinctly.
 The authorized PDF endpoint is
 `GET /api/v1/payments/:paymentId/receipt.pdf`.
 
+## Customer order-tracking links
+
+`POST /api/v1/orders/:orderId/tracking-link` creates (or reuses) the tracking
+link for an order and returns the token, the `/track/<token>` path and the
+absolute URL when `PUBLIC_WEB_BASE_URL` is configured. `GET` returns the
+current link, `DELETE` revokes it — a revoked link stops working immediately,
+and creating a link again issues a new token. Creating and revoking need
+`orders:share`; reading needs `orders:read`.
+
+`GET /api/v1/orders/:orderId/customer-messages` lists what customers sent
+through the link, and `PATCH /api/v1/orders/:orderId/customer-messages/:id`
+marks a message answered or reopens it.
+
+The public side needs no account: `GET /api/v1/public/tracking/:token` returns
+that order's stage, items, measurements, totals and progress timeline, and
+`POST /api/v1/public/tracking/:token/messages` records a fitting confirmation,
+a question or a change request. The token is 24 random bytes and carries no
+data, so a leaked link cannot be enumerated; the payload never contains
+internal notes, staff names, costs, the customer's phone number or any other
+order. Both public routes are rate limited per IP.
+
 ## Subscriptions and manual payments
 
 Apply `20261002120000_subscription_management` through the existing migration

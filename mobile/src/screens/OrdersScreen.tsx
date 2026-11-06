@@ -3,7 +3,7 @@
  * order form, stage-transition buttons, and WhatsApp order status updates.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Share, Text, View } from 'react-native';
 import { formatCurrency } from '../local';
 import { useAppStyles } from '../theme/useAppStyles';
 import { useAppTheme } from '../theme/palette';
@@ -12,8 +12,9 @@ import { ActionButton, EmptyState, Field } from '../theme/primitives';
 import { useWorkspace, resolveMobileWorkflowStage } from '../hooks/useWorkspace';
 import { computeDashboardSummary } from '../data/analytics';
 import type { LocalOrder } from '../local';
-import type { AlterationTask } from '../hooks/useWorkspace';
+import type { AlterationTask, CustomerMessage, OrderTrackingLink } from '../hooks/useWorkspace';
 import { shareDownloadedFile } from '../data/downloads';
+import { WEB_BASE_URL } from '../api';
 import { normalizePhone } from '../data/messaging';
 
 import { AreaChart } from '../components/Charts';
@@ -43,6 +44,9 @@ export function OrdersScreen({
   const [alterationsByOrder, setAlterationsByOrder] = useState<Record<string, AlterationTask[]>>({});
   const [alterationsOpenFor, setAlterationsOpenFor] = useState<string | null>(null);
   const [alterationDraft, setAlterationDraft] = useState('');
+  const [trackingLinks, setTrackingLinks] = useState<Record<string, OrderTrackingLink | null>>({});
+  const [customerMessages, setCustomerMessages] = useState<Record<string, CustomerMessage[]>>({});
+  const [trackingOpenFor, setTrackingOpenFor] = useState<string | null>(null);
   const toggleAlterations = async (order: LocalOrder) => {
     if (alterationsOpenFor === order.id) { setAlterationsOpenFor(null); return; }
     setAlterationsOpenFor(order.id);
@@ -52,6 +56,62 @@ export function OrdersScreen({
       setAlterationsByOrder((current) => ({ ...current, [order.id]: items }));
     } catch { /* workspace banner shows the error */ }
   };
+  /** The absolute customer link: the API knows the deployment origin, and the
+   *  app's web origin is the fallback when it does not. */
+  const trackingLinkUrl = (link: OrderTrackingLink): string =>
+    link.url ?? `${WEB_BASE_URL}${link.path}`;
+
+  const toggleTracking = async (order: LocalOrder) => {
+    if (trackingOpenFor === order.id) { setTrackingOpenFor(null); return; }
+    setTrackingOpenFor(order.id);
+    try {
+      const [link, messages] = await Promise.all([
+        ws.fetchOrderTrackingLink(order.id),
+        ws.fetchCustomerMessages(order.id),
+      ]);
+      setTrackingLinks((current) => ({ ...current, [order.id]: link }));
+      setCustomerMessages((current) => ({ ...current, [order.id]: messages }));
+    } catch { /* workspace banner shows the error */ }
+  };
+
+  const createTrackingLink = async (order: LocalOrder): Promise<OrderTrackingLink | null> => {
+    try {
+      const existing = trackingLinks[order.id] ?? await ws.fetchOrderTrackingLink(order.id);
+      const link = existing && !existing.revokedAt
+        ? existing
+        : await ws.createOrderTrackingLink(order.id);
+      setTrackingLinks((current) => ({ ...current, [order.id]: link }));
+      return link;
+    } catch {
+      return null;
+    }
+  };
+
+  const shareTrackingLink = async (order: LocalOrder) => {
+    try {
+      const link = await createTrackingLink(order);
+      if (!link) return;
+      const url = trackingLinkUrl(link);
+      const message = `Assalam-o-Alaikum ${order.customer_name}, you can follow your order ${order.order_number ?? order.id} here: ${url}`;
+      await Share.share({ message });
+    } catch { /* workspace banner shows the error */ }
+  };
+
+  const sendTrackingLinkOnWhatsApp = async (order: LocalOrder) => {
+    try {
+      const link = await createTrackingLink(order);
+      if (!link) return;
+      const url = trackingLinkUrl(link);
+      const message = `Assalam-o-Alaikum ${order.customer_name}, you can follow your order ${order.order_number ?? order.id} here: ${url}`;
+      const phone = ws.customers.find((customer) => customer.id === order.customer_id)?.phone ?? '';
+      if (!phone) {
+        await Share.share({ message });
+        return;
+      }
+      await ws.sendWhatsAppMessage(phone, message);
+    } catch { /* workspace banner shows the error */ }
+  };
+
   const [showArchived, setShowArchived] = useState(false);
   const [archivedOrders, setArchivedOrders] = useState<LocalOrder[]>([]);
   useEffect(() => {
@@ -277,6 +337,115 @@ export function OrdersScreen({
                         >
                           <Text style={styles.nextStageText}>Invoice PDF</Text>
                         </Pressable>
+                      ) : null}
+
+                      {ws.can('orders:share') && !showArchived ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          android_ripple={{ color: palette.primarySoft }}
+                          onPress={() => void toggleTracking(order)}
+                          style={({ pressed }) => [styles.nextStageBtn, pressed && styles.pressed]}
+                        >
+                          <Text style={styles.nextStageText}>
+                            {trackingOpenFor === order.id ? 'Hide customer link' : 'Customer link'}
+                          </Text>
+                        </Pressable>
+                      ) : null}
+
+                      {trackingOpenFor === order.id ? (
+                        <View style={{ marginTop: 8 }}>
+                          {trackingLinks[order.id] && !trackingLinks[order.id]?.revokedAt ? (
+                            <>
+                              <Text style={styles.listMeta}>{trackingLinkUrl(trackingLinks[order.id]!)}</Text>
+                              <Pressable
+                                accessibilityRole="button"
+                                android_ripple={{ color: palette.primarySoft }}
+                                onPress={() => void shareTrackingLink(order)}
+                                style={({ pressed }) => [styles.nextStageBtn, pressed && styles.pressed]}
+                              >
+                                <Text style={styles.nextStageText}>Share link</Text>
+                              </Pressable>
+                              <Pressable
+                                accessibilityRole="button"
+                                android_ripple={{ color: palette.primarySoft }}
+                                onPress={() => void sendTrackingLinkOnWhatsApp(order)}
+                                style={({ pressed }) => [styles.nextStageBtn, pressed && styles.pressed]}
+                              >
+                                <Text style={styles.nextStageText}>Send on WhatsApp</Text>
+                              </Pressable>
+                              <Pressable
+                                accessibilityRole="button"
+                                android_ripple={{ color: palette.primarySoft }}
+                                onPress={() => Alert.alert(
+                                  'Revoke tracking link',
+                                  'The customer will not be able to open this order any more. You can create a new link at any time.',
+                                  [
+                                    { text: copy.cancel, style: 'cancel' },
+                                    {
+                                      text: 'Revoke link',
+                                      style: 'destructive',
+                                      onPress: () => void ws.revokeOrderTrackingLink(order.id)
+                                        .then(() => setTrackingLinks((current) => ({ ...current, [order.id]: null })))
+                                        .catch(() => { /* workspace banner shows the error */ }),
+                                    },
+                                  ],
+                                )}
+                                style={({ pressed }) => [styles.nextStageBtn, pressed && styles.pressed]}
+                              >
+                                <Text style={styles.nextStageText}>Revoke link</Text>
+                              </Pressable>
+                            </>
+                          ) : (
+                            <>
+                              <Text style={styles.listMeta}>
+                                No tracking link yet. Create one so the customer can follow the order without calling.
+                              </Text>
+                              <Pressable
+                                accessibilityRole="button"
+                                android_ripple={{ color: palette.primarySoft }}
+                                onPress={() => void createTrackingLink(order)}
+                                style={({ pressed }) => [styles.nextStageBtn, pressed && styles.pressed]}
+                              >
+                                <Text style={styles.nextStageText}>Create tracking link</Text>
+                              </Pressable>
+                            </>
+                          )}
+                          <Text style={[styles.listTitle, { marginTop: 10 }]}>Customer messages</Text>
+                          {(customerMessages[order.id] ?? []).length === 0 ? (
+                            <Text style={styles.listMeta}>No messages from the customer yet.</Text>
+                          ) : (customerMessages[order.id] ?? []).map((message) => (
+                            <View key={message.id} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 }}>
+                              <View style={{ flex: 1, paddingRight: 8 }}>
+                                <Text style={styles.listTitle}>
+                                  {message.kind === 'FITTING_CONFIRMED'
+                                    ? 'Customer confirmed the details'
+                                    : message.kind === 'QUESTION'
+                                      ? 'Customer asked a question'
+                                      : 'Customer requested a change'}
+                                </Text>
+                                {message.body ? <Text style={styles.listMeta}>{message.body}</Text> : null}
+                                <Text style={styles.listMeta}>
+                                  {message.createdAt.slice(0, 10)} · {message.status === 'RESOLVED' ? 'Answered' : 'Waiting for a reply'}
+                                </Text>
+                              </View>
+                              {ws.can('orders:write') ? (
+                                <Pressable
+                                  accessibilityRole="button"
+                                  android_ripple={{ color: palette.primarySoft }}
+                                  onPress={() => void ws.setCustomerMessageStatus(order.id, message.id, message.status === 'OPEN' ? 'RESOLVED' : 'OPEN')
+                                    .then(() => ws.fetchCustomerMessages(order.id))
+                                    .then((items) => setCustomerMessages((current) => ({ ...current, [order.id]: items })))
+                                    .catch(() => { /* workspace banner shows the error */ })}
+                                  style={({ pressed }) => [styles.nextStageBtn, pressed && styles.pressed]}
+                                >
+                                  <Text style={styles.nextStageText}>
+                                    {message.status === 'OPEN' ? 'Mark answered' : 'Reopen'}
+                                  </Text>
+                                </Pressable>
+                              ) : null}
+                            </View>
+                          ))}
+                        </View>
                       ) : null}
 
                       {ws.can('orders:write') ? (

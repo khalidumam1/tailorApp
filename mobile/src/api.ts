@@ -23,6 +23,26 @@ function resolveApiBaseUrl(): string {
 }
 
 export const API_BASE_URL = resolveApiBaseUrl();
+
+// The public web app origin. Customer tracking links live on the web app, so
+// the phone needs to know where that is to build a shareable link. It is
+// separate from the API origin: the API may live under /backend.
+const DEFAULT_WEB_BASE_URL = 'https://tailorapp.on.shiper.app';
+
+function resolveWebBaseUrl(): string {
+  const configured = process.env.EXPO_PUBLIC_WEB_BASE_URL?.trim();
+  if (!configured) return DEFAULT_WEB_BASE_URL;
+  try {
+    const parsed = new URL(configured);
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password
+      || parsed.search || parsed.hash) return DEFAULT_WEB_BASE_URL;
+  } catch {
+    return DEFAULT_WEB_BASE_URL;
+  }
+  return configured.replace(/\/+$/, '');
+}
+
+export const WEB_BASE_URL = resolveWebBaseUrl();
 const SESSION_KEY = 'tailorapp.session.v1';
 const ACCESS_TOKEN_LIFETIME_MS = 15 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 30_000;
