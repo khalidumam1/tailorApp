@@ -6,6 +6,7 @@ Date: 2026-10-15 · Branch: `arena/4bdc6491-tailorapp`
 
 ## 1. The reported bug: "refreshing redirects me to the login screen"
 
+
 **Root cause (web app).** The sign-in session lived only in React memory:
 `useState<Session | null>(null)` in `web/src/main.tsx`, never written to any
 storage. Every page reload, tab restore, or browser restart discarded it, so
