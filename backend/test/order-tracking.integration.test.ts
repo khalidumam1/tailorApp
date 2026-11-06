@@ -161,8 +161,11 @@ before(async () => {
       data: {
         businessId: businessA.id,
         name: 'Ali Raza Khan',
-        phone: '+923001234567',
-        phoneNormalized: '923001234567',
+        // A different number than the shop's contact phone: the customer page
+        // shows the shop's number on purpose, so the customer's own number
+        // must be the one that never appears.
+        phone: '+923005555555',
+        phoneNormalized: '923005555555',
       },
     }),
     prisma.customer.create({
@@ -217,11 +220,12 @@ before(async () => {
 
   const secret = process.env.ACCESS_TOKEN_SECRET;
   if (!secret) throw new Error('ACCESS_TOKEN_SECRET is required for the order tracking test');
-  const sign = (userId: string, membershipId: string) => `Bearer ${jwt.sign(
+  // The raw token: the `api` helper adds the `Bearer ` prefix itself.
+  const sign = (userId: string, membershipId: string) => jwt.sign(
     { scope: 'business', membershipId },
     secret,
     { subject: userId, issuer: 'tailor-api', audience: 'tailor-clients', expiresIn: '10m', algorithm: 'HS256' },
-  )}`;
+  );
   authHeaderA = sign(userA.id, membershipA.id);
   authHeaderAReadOnly = sign(userAReadOnly.id, membershipAReadOnly.id);
   authHeaderB = sign(userB.id, membershipB.id);
@@ -309,7 +313,7 @@ test('the customer can follow the order without an account', async () => {
   assert.equal(tracking.customerName, 'Ali');
   const serialized = JSON.stringify(tracking);
   assert.ok(!serialized.includes('fabric cost'), 'internal notes must not reach the customer page');
-  assert.ok(!serialized.includes('923001234567'), 'the customer phone must not be exposed');
+  assert.ok(!serialized.includes('923005555555'), 'the customer phone must not be exposed');
   assert.ok(!serialized.includes(orderBId), 'no other order may be reachable');
 });
 
