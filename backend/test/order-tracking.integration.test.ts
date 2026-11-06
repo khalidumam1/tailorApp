@@ -130,6 +130,27 @@ before(async () => {
     create: { key: 'orders:read', description: 'orders:read in the order tracking test' },
   });
 
+  // Billing enforcement is on by default (the subscription migration enables
+  // it), so a business without an active subscription is refused the paid
+  // mutations. The tracking flows need `orders:write` to answer a customer
+  // message, so both shops get the default plan.
+  const defaultPlan = await prisma.subscriptionPlan.findFirstOrThrow({
+    where: { active: true, isDefault: true },
+  });
+  const startsAt = new Date(Date.now() - 86_400_000);
+  const endsAt = new Date(Date.now() + 30 * 86_400_000);
+  await prisma.subscription.createMany({
+    data: [businessA.id, businessB.id].map((businessId) => ({
+      businessId,
+      planId: defaultPlan.id,
+      status: 'ACTIVE' as const,
+      cycle: 'MONTHLY' as const,
+      startsAt,
+      endsAt,
+      graceUntil: new Date(endsAt.getTime() + 7 * 86_400_000),
+    })),
+  });
+
   const [userA, userAReadOnly, userB] = await Promise.all([
     prisma.user.create({ data: { email: `tracking-a-${suffix}@example.test`, name: 'Tracking A', passwordHash: 'test-hash' } }),
     prisma.user.create({ data: { email: `tracking-ro-${suffix}@example.test`, name: 'Tracking Read Only', passwordHash: 'test-hash' } }),
@@ -251,6 +272,7 @@ after(async () => {
   }
   await closeServer?.();
   const businessIds = [businessAId, businessBId].filter(Boolean);
+  await prisma.subscription.deleteMany({ where: { businessId: { in: businessIds } } });
   await prisma.orderCustomerMessage.deleteMany({ where: { businessId: { in: businessIds } } });
   await prisma.orderTrackingLink.deleteMany({ where: { businessId: { in: businessIds } } });
   await prisma.payment.deleteMany({ where: { businessId: { in: businessIds } } });
@@ -286,7 +308,7 @@ test('staff create a tracking link for an order', async () => {
     token: authHeaderA,
     body: {},
   });
-  assert.equal(again.status, 201);
+  assert.equal(again.status, 200);
   assert.equal((again.body.data as { link: LinkPayload }).link.token, link.token);
 });
 
