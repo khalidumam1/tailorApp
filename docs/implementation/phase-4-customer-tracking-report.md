@@ -204,11 +204,31 @@ Docs: `docs/user-guide/{customer-tracking,orders,coverage-checklist}.md`,
 
 ## 8. CI
 
-- **Run:** _(filled in from the GitHub Actions run of this branch — see the PR)_
-- Gates: shared-drift, guide-freshness, `npm ci`, typecheck ×4, web lint,
-  backend DB suite (migrations + the new tracking suite), web Vitest, mobile
-  suite, production builds, bundle budget, `npm audit`, Playwright E2E, restore
-  drill.
+- **Run 179** (`42190128389`, commit `7cd2336`, pull-request event) —
+  **green**: every gate passed — shared-drift, guide-freshness, `npm ci`,
+  `prisma generate`, `prisma migrate deploy`, typecheck ×4 (shared, api, web,
+  mobile), web lint, the backend database suite (migrations + the new tracking
+  suite), web Vitest, the mobile suite, the production build, the bundle
+  budget, `npm audit`, the Playwright E2E journeys and the timed
+  backup/restore drill.
+- Three real defects were found by CI (and are fixed in this branch):
+  1. **The one-to-one relation was invalid.** `Order.trackingLink` is a 1:1
+     relation, and Prisma requires the unique index on the defining side to
+     use the *same field order* as the relation fields. `@@unique([businessId,
+     orderId])` next to `fields: [orderId, businessId]` was rejected
+     (P1012) and the schema engine aborted the whole `prisma generate` step
+     without a usable message. The index is now `@@unique([orderId,
+     businessId])` and the migration creates the matching index.
+  2. **The new test double-prefixed the bearer token** (`Bearer Bearer …`),
+     so every staff call answered 401.
+  3. **The test shops had no subscription.** Billing enforcement ships
+     enabled, so answering a customer message (`orders:write`, a paid
+     mutation) was refused with 402 until the fixtures used the default plan.
+
+  Lesson recorded: a Prisma schema problem shows up as a *silent* CI failure
+  in `prisma generate`, and the fastest way to see the real error is
+  `prisma validate` on the schema (the CLI prints the P1012 message) — the
+  validate step is worth running locally before pushing.
 
 ## 9. Remaining risks and known limitations
 
