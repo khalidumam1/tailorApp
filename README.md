@@ -322,7 +322,21 @@ For a separate Shiper backend service, use `backend/` as the build context and
 `backend/Dockerfile` as the Dockerfile path. The `backend/` directory is
 self-contained: it carries its own lockfile and a local copy of the shared
 contracts (`backend/shared`), so the image builds without the rest of the
-monorepo. Configure Shiper to run the default `runtime` target
+monorepo.
+
+Because that folder installs on its own, its `package-lock.json` has to stay in
+sync with `backend/package.json`. A lockfile that drifted fails the image build
+with `Invalid: lock file's <package>@<old> does not satisfy <package>@<new>`
+before a single line of application code is compiled, and the repository-root
+install that CI runs cannot see it. `tools/check-lockfiles.mjs` checks every
+standalone folder (`backend/`, `web/`, `mobile/`, `mobile/shared/`) and runs in
+CI. After changing a dependency, regenerate the folder's lockfile from outside
+the repository - inside it npm walks up to the workspace root and rewrites the
+root lockfile instead, leaving the standalone one stale:
+
+```sh
+cd backend && npm install --package-lock-only
+``` Configure Shiper to run the default `runtime` target
 and provide `DATABASE_URL`,
 `ACCESS_TOKEN_SECRET`, and `CORS_ORIGINS` through its secret/environment
 settings. Set `NODE_ENV=production` and set `PORT` to the port assigned by the

@@ -78,3 +78,28 @@ three-phase plan; individual decisions gate the tasks noted. `OPEN` = awaiting o
   Without it the API returns the `/track/<token>` path and the apps build the
   URL from the origin they already run on, so a development deployment works
   without extra configuration.
+
+## Deploy fix — standalone lockfiles (2026-11-06)
+
+- **D-16: the app folders are installed on their own, so they need their own
+  lockfile - and CI has to police them.** The container build that failed on
+  2026-11-06 ran `npm ci && npm run db:generate && npm run build:shared &&
+  npm run build` inside `backend/` (all three scripts exist in
+  `backend/package.json`), not at the repository root. That install reads
+  `backend/package-lock.json`, which PR #37 left behind: it still pinned
+  `zod@3.24.2` while `backend/package.json` and `backend/shared/package.json`
+  had moved to `4.6.7`. The build therefore died with
+  `Invalid: lock file's zod@3.24.2 does not satisfy zod@4.6.7` before a
+  single line of application code was compiled.
+- The fix regenerates all four standalone lockfiles (`backend/`, `web/`,
+  `mobile/`, `mobile/shared/`) with the same npm the deploy image uses
+  (npm 10.9.9 on `node:22-bookworm-slim`), so `npm ci` succeeds in every one
+  of those folders. `web/` was worse than stale: it was missing `eslint`,
+  `vitest`, `playwright` and `@playwright/test` entirely and still pinned
+  `vite@8.3.1` against the required `8.3.5`.
+- **Regenerating a standalone lockfile has to happen outside this repository.**
+  Inside it, `npm` walks up to the workspace root and rewrites the *root*
+  lockfile instead, leaving the standalone one untouched - which is how the
+  drift survived in the first place. `tools/check-lockfiles.mjs` copies each
+  folder into a throw-away directory, checks it there and fails CI when a
+  lockfile and its package.json disagree.
