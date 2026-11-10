@@ -103,3 +103,26 @@ three-phase plan; individual decisions gate the tasks noted. `OPEN` = awaiting o
   drift survived in the first place. `tools/check-lockfiles.mjs` copies each
   folder into a throw-away directory, checks it there and fails CI when a
   lockfile and its package.json disagree.
+
+## Deploy fix — the customer link was a 404 (2026-11-06)
+
+- **D-17: a customer link is a deep link, so the web host has to serve the app
+  shell for it.** The tracking link is `https://<web-host>/track/<token>`. The
+  web app is a Vite single-page app, so the host must answer that path with
+  `index.html` and let the client render the customer page. The Vercel project
+  answered it with `404 NOT_FOUND` instead: the repository shipped no
+  `vercel.json`, so Vercel served static files only and every deep link was
+  dead. The customer who received the link saw "This page doesn't exist".
+- The rewrite now ships as `vercel.json` in the repository root **and** in
+  `web/`, because the Vercel project can be rooted at either one and Vercel
+  only reads the file that sits in the project root. `/api/` and `/backend/`
+  stay out of the rewrite so a same-origin API keeps working.
+- `tools/check-spa-routing.mjs` fails CI when no usable rewrite is in place,
+  and the route parsing moved out of the render entry into
+  `web/src/tracking-route.ts` with its own test, so the decision "is this the
+  customer page?" is covered by a unit test instead of living inside
+  `main.tsx`.
+- Operational note: the Vercel *production* deployment that served the link
+  was still an older build (its page title and marketing copy no longer exist
+  in the repository). A deploy of `main` is required for the tracking page to
+  be in the bundle at all - the rewrite alone is not enough.

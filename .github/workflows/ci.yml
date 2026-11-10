@@ -52,6 +52,11 @@ jobs:
       # deploy only - CI's root `npm ci` never sees it - so it is checked here.
       - name: Check standalone lockfiles are in sync
         run: node tools/check-lockfiles.mjs
+      # D-17: the customer tracking link is a deep link (/track/<token>). The
+      # web host has to serve the app shell for it, otherwise every shared
+      # link is a 404.
+      - name: Check the web host serves deep links
+        run: node tools/check-spa-routing.mjs
       - run: npm ci
       - run: npm run db:generate
       - run: npm run db:migrate
