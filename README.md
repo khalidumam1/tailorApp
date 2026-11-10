@@ -118,6 +118,9 @@ Android SDK is not required.
 | `npm run typecheck` | Type-check shared, API/seed, web and mobile |
 | `npm test` | Run API, schema, authorization-middleware and financial unit tests |
 | `npm run build` | Build shared package, API and web |
+| `npm run check:shared-drift` | Fail when the four `@tailor/shared` copies differ |
+| `npm run check:lockfiles` | Fail when a standalone app lockfile drifted from its package.json |
+| `npm run check:spa-routing` | Fail when the web host would 404 on deep links such as `/track/<token>` |
 | `npm audit` | Audit the locked workspace dependency tree |
 
 The tenant integration tests are skipped unless a disposable, migrated
@@ -369,6 +372,26 @@ CLI and runs `prisma migrate deploy`:
 docker build -f backend/Dockerfile --target migrate -t tailor-api-migrate backend/
 docker run --rm -e DATABASE_URL="$DATABASE_URL" tailor-api-migrate
 ```
+
+### Frontend deployment (Vercel)
+
+The web app is a single-page app, so the host that serves it has to answer
+deep links with the app shell. The customer tracking link is such a deep link
+(`/track/<token>`): without the fallback the host answers `404 NOT_FOUND` and
+the customer sees a dead link. `vercel.json` (in the repository root and in
+`web/`, because the Vercel project can be rooted at either one) rewrites every
+path that is not a file to `/index.html`, leaving `/api/` and `/backend/`
+alone so a same-origin API keeps working:
+
+```json
+{ "rewrites": [{ "source": "/((?!api/|backend/).*)", "destination": "/index.html" }] }
+```
+
+`tools/check-spa-routing.mjs` fails CI when that rewrite is missing. When the
+tracking link is shared, `PUBLIC_WEB_BASE_URL` on the API must point at the
+web host that serves this app, and that host must run a build of `main` - a
+stale deployment answers the link with an older bundle that has no tracking
+page at all.
 
 If a running deployment logs `Invalid prisma.<query> invocation: The column
 User.<name> does not exist in the current database` (P2022), the database

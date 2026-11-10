@@ -69,6 +69,7 @@ const ColumnChart = lazy(() => import('./Charts').then((module) => ({ default: m
 const DonutChart = lazy(() => import('./Charts').then((module) => ({ default: module.DonutChart })));
 const Sparkline = lazy(() => import('./Charts').then((module) => ({ default: module.Sparkline })));
 import { paletteColor } from './chartPalette';
+import { parseTrackingRoute } from './tracking-route';
 import { DataTable } from './LazyDataTable';
 import { Icon, type IconName } from './Icons';
 import {
@@ -5499,17 +5500,9 @@ function EmptyState({ title, detail, action, onAction }: { title: string; detail
  * customer who was sent the link never has to sign in. Everything else keeps
  * the normal workspace.
  */
-const trackingPath = typeof window === 'undefined' ? '' : window.location.pathname;
-const isTrackingRoute = trackingPath === '/track' || trackingPath.startsWith('/track/');
-let trackingToken: string | null = null;
-if (isTrackingRoute) {
-  try {
-    trackingToken = decodeURIComponent(trackingPath.slice('/track/'.length));
-  } catch {
-    // A malformed escape in the address bar must not blank the whole app.
-    trackingToken = null;
-  }
-}
+const { isTracking: isTrackingRoute, token: trackingToken } = parseTrackingRoute(
+  typeof window === 'undefined' ? '' : window.location.pathname,
+);
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <StrictMode>
