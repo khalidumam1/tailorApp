@@ -126,3 +126,22 @@ three-phase plan; individual decisions gate the tasks noted. `OPEN` = awaiting o
   was still an older build (its page title and marketing copy no longer exist
   in the repository). A deploy of `main` is required for the tracking page to
   be in the bundle at all - the rewrite alone is not enough.
+
+## Workspace fix — the "Manage" order window (2026-11-10)
+
+- **D-18: the order card belongs in a real dialog, not in a side panel.** The
+  **Manage** action of the orders table used to be a `<details>` element whose
+  content was a fixed panel pinned to the right edge of the screen
+  (`workspace-theme.css`). The panel was 660 px wide and the order card inside
+  it is a two-column flex card, so the card did not fit: it spilled out of the
+  panel, was cut in half on the left and the workspace behind painted over the
+  clipped part. The customer link, the alterations panel and the action
+  buttons were unreachable - a customer-facing feature was effectively lost
+  behind a broken overlay.
+- The action opens a real dialog now: a dimmed backdrop, a centred sheet that
+  never grows wider than the screen, a header that stays in sight, a body that
+  scrolls on its own, a close button, `Esc` to close and a click outside to
+  close. Inside the dialog the order card drops the kanban chrome and lays
+  itself out in one column, so nothing overflows on a phone either.
+- The dead popover styles are gone, and `web/e2e/orders.spec.ts` keeps the
+  window inside the viewport - the regression that was reported is now a test.

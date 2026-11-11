@@ -671,26 +671,6 @@ tbody td strong { font-size: .75rem; }
 .orders-table-wrap { border: 0; border-radius: var(--r-lg); }
 .orders-table-wrap table { min-width: 930px; }
 .order-table-items { display: block; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.order-row-menu { position: relative; }
-.order-row-menu > summary { min-height: 32px; padding: 0 9px; font-size: .66rem; cursor: pointer; list-style: none; }
-.order-row-menu > summary::-webkit-details-marker { display: none; }
-.order-row-menu > summary svg { width: 13px; height: 13px; transform: rotate(90deg); }
-.order-row-menu[open] > summary svg { transform: rotate(-90deg); }
-.order-row-popover {
-  position: fixed;
-  z-index: 85;
-  top: 82px;
-  right: 22px;
-  bottom: 22px;
-  width: min(660px, calc(100vw - 32px));
-  padding: 10px;
-  overflow-y: auto;
-  border: 1px solid var(--line);
-  border-radius: var(--r-xl);
-  background: var(--canvas);
-  box-shadow: var(--shadow-xl);
-}
-.order-row-popover .order-card { min-height: 100%; }
 
 /* --------------------------------------------------------------------------
    Theme studio
@@ -822,7 +802,6 @@ tbody td strong { font-size: .75rem; }
   .workspace-page-context { width: 100%; }
   .orders-toolbar { width: 100%; }
   .orders-toolbar .search-form { flex: 1 1 220px; width: auto; }
-  .order-row-popover { inset: 12px; width: auto; }
 }
 
 @media (max-width: 600px) {
@@ -863,8 +842,6 @@ tbody td strong { font-size: .75rem; }
   .kanban-column .order-card .row-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .kanban-column .order-card .row-actions .button { width: 100%; min-height: 40px; }
   .orders-table-wrap table { min-width: 0; }
-  .order-row-popover .order-card { flex-direction: column; }
-  .order-row-popover .order-card-main, .order-row-popover .order-card-side { width: 100%; }
   .theme-studio-header { padding: 19px 17px 15px; }
   .theme-studio-body { padding-inline: 17px; }
   .theme-studio-footer { align-items: stretch; flex-direction: column; padding: 14px 17px; }

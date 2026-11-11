@@ -731,6 +731,17 @@ function App() {
   const [paymentOrderId, setPaymentOrderId] = useState('');
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'BANK' | 'DIGITAL'>('CASH');
+  // The order that is open in the "Manage order" dialog of the orders table.
+  const [manageOrderId, setManageOrderId] = useState('');
+  // Escape closes the dialog, the way every other overlay in the app does.
+  useEffect(() => {
+    if (!manageOrderId) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setManageOrderId('');
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [manageOrderId]);
   const paymentAttemptRef = useRef<{ orderId: string; amount: string; method: string; idempotencyKey: string } | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [platformView, setPlatformView] = useState<PlatformView>(() => initialStoredSession?.platformView ?? 'overview');
@@ -4114,6 +4125,9 @@ function App() {
       orders: orders.filter((order) => (order.workflowStageKey ?? order.status) === key),
     }));
 
+  // The order that is open in the "Manage order" dialog of the orders table.
+  const manageOrder = orders.find((order) => order.id === manageOrderId) ?? null;
+
   const renderOrderCard = (order: Order) => (
     <article className="order-card" key={order.id}>
       <div className="order-card-main">
@@ -4826,10 +4840,11 @@ function App() {
                       { key: 'total', label: 'Total', align: 'right', render: (order) => <strong>{money(order.total, businessConfiguration?.business.currency)}</strong> },
                       { key: 'outstanding', label: 'Outstanding', align: 'right', render: (order) => money(order.outstanding, businessConfiguration?.business.currency) },
                       { key: 'actions', label: 'Actions', render: (order) => (
-                        <details className="order-row-menu">
-                          <summary className="button button-secondary">Manage <Icon name="chevronRight" /></summary>
-                          <div className="order-row-popover">{renderOrderCard(order)}</div>
-                        </details>
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          onClick={() => setManageOrderId(order.id)}
+                        >Manage</button>
                       ) },
                     ]}
                   />
@@ -5267,6 +5282,23 @@ function App() {
 
         {loading && <span className="sync-note" role="status">Refreshing records…</span>}
       </main>
+
+      {manageOrder && (
+        <div
+          className="dialog-backdrop"
+          role="presentation"
+          onMouseDown={(event) => { if (event.target === event.currentTarget) setManageOrderId(''); }}
+        >
+          <section className="dialog-card order-dialog" role="dialog" aria-modal="true" aria-labelledby="manage-order-title">
+            <button type="button" className="dialog-close" aria-label="Close" onClick={() => setManageOrderId('')}>×</button>
+            <header className="order-dialog-header">
+              <p className="eyebrow">Order details</p>
+              <h2 id="manage-order-title">Manage {manageOrder.orderNumber}</h2>
+            </header>
+            <div className="order-dialog-body">{renderOrderCard(manageOrder)}</div>
+          </section>
+        </div>
+      )}
 
       {paymentOrderId && (
         <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPaymentOrderId(''); }}>
