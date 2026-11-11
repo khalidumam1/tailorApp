@@ -22,7 +22,9 @@ test('manage order opens a dialog that fits the screen', async ({ page }) => {
 
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('heading')).toContainText('Manage ');
+  // The order card carries its own heading (the customer name), so the
+  // dialog title is picked by its name.
+  await expect(dialog.getByRole('heading', { name: /^Manage / })).toBeVisible();
 
   // The dialog must sit inside the viewport: the old popover overflowed to
   // the right and was clipped on the left.
