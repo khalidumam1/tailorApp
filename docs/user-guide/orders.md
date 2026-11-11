@@ -18,6 +18,9 @@ Web and mobile: **Orders**. Orders are grouped by workflow stage.
 3. Set the promised date. Attach measurements if you saved them.
 4. Save. If your connection drops mid-save, saving again with the same details will not duplicate the order.
 
+## The order table and the Manage window
+Switch the orders list to **Table** and every row gets a **Manage** button. It opens that one order in a centred window with everything on it: the items and their measurements, the total, the balance due, and every action for that order — move stage, invoice, payment, alterations and the customer link. The window keeps its title in sight, scrolls on its own and closes with **Esc**, the **×** button or a click outside, so the board behind stays readable while you work.
+
 ## Move work forward
 Use **Move to …** on the order card. Each move is recorded with who did it and when; some stages (for example Ready) queue a WhatsApp message to the customer automatically.
 
@@ -44,4 +47,4 @@ Delivered long ago or created by mistake: **Archive** hides the order but keeps 
 Creating/editing needs **orders:write**, moving stages needs **orders:transition**, viewing needs **orders:read**, sharing a customer tracking link needs **orders:share**.
 
 ## Roman Urdu mein
-Order banayein, stage se stage move karein, payment aaye to record karein, aur customer ko order ka status batane ke liye **Customer link** bana kar bhej dein. Delivery ke baad fitting ka masla ho to **Alterations** mein likh kar add karein aur kaam ho jane par **Mark done** dabayein. Purane orders ko delete nahi, **Archive** karein.
+Order banayein, stage se stage move karein, payment aaye to record karein, aur customer ko order ka status batane ke liye **Customer link** bana kar bhej dein. Table view mein **Manage** dabayein to poora order ek window mein khul jata hai — sab kuch usi jagah milega, aur band karne ke liye **Esc** dabayein. Delivery ke baad fitting ka masla ho to **Alterations** mein likh kar add karein aur kaam ho jane par **Mark done** dabayein. Purane orders ko delete nahi, **Archive** karein.

@@ -1365,6 +1365,80 @@ tbody td strong { display: block; color: var(--ink-900); font-size: .8125rem; fo
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .dialog-card-wide { width: min(100%, 640px); }
 
+/* --------------------------------------------------------------------------
+   13a. Manage-order dialog
+   --------------------------------------------------------------------------
+   The "Manage" action of the orders table opens the whole order card. It used
+   to be a <details> popover that had no stylesheet at all, so the card spilled
+   out of the table cell, was clipped by the page and covered the workspace.
+   It is a real dialog now: a centred sheet that scrolls on its own, keeps its
+   header in sight and never grows wider than the screen. */
+.order-dialog {
+  position: relative;
+  width: min(100%, 880px);
+  max-height: min(90vh, 900px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.order-dialog-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 20px 22px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.order-dialog-header h2 { max-width: none; margin: 0; font-size: 1.125rem; }
+.order-dialog-header .eyebrow { margin: 0; }
+.order-dialog-header .dialog-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+.order-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 22px 22px;
+}
+
+/* The card is the dialog body here, so it drops the kanban chrome and lays
+   its parts out in one readable column. */
+.order-dialog .order-card {
+  display: grid;
+  gap: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.order-dialog .order-card::before { display: none; }
+.order-dialog .order-card:hover { border-color: transparent; box-shadow: none; }
+.order-dialog .order-card-main { display: grid; gap: 6px; }
+.order-dialog .order-card h3 { font-size: 1.0625rem; }
+.order-dialog .order-card .muted { font-size: .8125rem; }
+.order-dialog .order-card-side {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.order-dialog .money-total { font-size: 1.375rem; }
+.order-dialog .order-card-side > .muted { font-size: .8125rem; }
+.order-dialog .row-actions { justify-content: flex-start; gap: 8px; }
+.order-dialog .row-actions .button { min-height: 44px; }
+.order-dialog .garment-list { margin-top: 4px; }
+.order-dialog .alterations-panel,
+.order-dialog .tracking-panel {
+  width: 100%;
+  max-width: none;
+}
+
 .member-summary {
   display: flex;
   flex-wrap: wrap;
@@ -2952,6 +3026,19 @@ tbody td strong { color: var(--ink-900); }
   }
   .dialog-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dialog-actions .button { width: 100%; height: auto; white-space: normal; }
+
+  /* The manage-order sheet keeps its own padding: header and body scroll on
+     their own, so the sheet fills the screen without trapping the content. */
+  .order-dialog {
+    padding: 0;
+    max-height: calc(100dvh - 24px - env(safe-area-inset-bottom));
+    overflow: hidden;
+  }
+  .order-dialog-header { padding: 16px 16px 12px; }
+  .order-dialog-header .dialog-close { top: 8px; right: 8px; }
+  .order-dialog-body { padding: 14px 16px 18px; }
+  .order-dialog .row-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .order-dialog .row-actions .button { width: 100%; height: auto; white-space: normal; }
 
   /* The assistant never covers the bottom navigation when closed. */
   .assistant-launcher { right: 12px; width: 52px; height: 52px; }
