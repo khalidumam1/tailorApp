@@ -70,6 +70,7 @@ const DonutChart = lazy(() => import('./Charts').then((module) => ({ default: mo
 const Sparkline = lazy(() => import('./Charts').then((module) => ({ default: module.Sparkline })));
 import { paletteColor } from './chartPalette';
 import { parseTrackingRoute } from './tracking-route';
+import { shouldLoadMeasurementProfiles } from './module-access';
 import { DataTable } from './LazyDataTable';
 import { Icon, type IconName } from './Icons';
 import {
@@ -1041,7 +1042,12 @@ function App() {
       } else if (view === 'orders') {
         const [orderResult, customerResult, catalogResult] = await Promise.all([
           withSession((token) => api.orders(token, search, showArchivedOrders)),
-          withSession((token) => api.customers(token)),
+          // The customer list belongs to the customers module. When a business
+          // has that module switched off the API refuses the call, and the
+          // refusal must not take the whole order list down with it.
+          businessConfiguration?.enabledModules.includes('customers')
+            ? withSession((token) => api.customers(token))
+            : Promise.resolve({ items: [] as Customer[], nextCursor: null }),
           businessConfiguration?.enabledModules.includes('catalog')
             ? withSession((token) => api.catalog(token))
             : Promise.resolve({ items: [], nextCursor: null }),
@@ -1063,7 +1069,9 @@ function App() {
       } else if (view === 'measurements') {
         const [templateResult, customerResult] = await Promise.all([
           withSession(api.templates),
-          withSession((token) => api.customers(token)),
+          businessConfiguration?.enabledModules.includes('customers')
+            ? withSession((token) => api.customers(token))
+            : Promise.resolve({ items: [] as Customer[], nextCursor: null }),
         ]);
         setTemplates(templateResult.items);
         setCustomers(customerResult.items);
@@ -1339,13 +1347,27 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    if (view === 'measurements' && measurementCustomerId && currentUser?.context.permissions.includes('measurements:read')) {
+    // The measurement book can be switched off for this business. Asking the
+    // API for it anyway answers "the measurements module is disabled", which
+    // used to land on the screen as an error the shop owner could do nothing
+    // about.
+    const loadProfiles = shouldLoadMeasurementProfiles({
+      view,
+      customerId: measurementCustomerId,
+      enabledModules: businessConfiguration?.enabledModules,
+      hasPermission: currentUser?.context.permissions.includes('measurements:read') ?? false,
+    });
+    if (loadProfiles) {
       withSession((token) => api.measurements(token, measurementCustomerId))
         .then((result) => { if (active) setProfiles(result.items); })
-        .catch((cause: unknown) => { if (active) setError(messageFor(cause)); });
+        .catch((cause: unknown) => {
+          if (!active) return;
+          if (cause instanceof ApiError && cause.code === 'BUSINESS_MODULE_DISABLED') { setProfiles([]); return; }
+          setError(messageFor(cause));
+        });
     }
     return () => { active = false; };
-  }, [currentUser?.context.permissions, measurementCustomerId, view, withSession]);
+  }, [businessConfiguration?.enabledModules, currentUser?.context.permissions, measurementCustomerId, view, withSession]);
 
   useEffect(() => {
     if (session && currentUser?.context.scope === 'business') void reloadCurrent();
@@ -1560,15 +1582,30 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    if (view === 'orders' && orderCustomerId && currentUser?.context.permissions.includes('measurements:read')) {
+    // The order form offers the customer's measurement profiles, but only
+    // when this business actually has the measurement book switched on. With
+    // the module off the API answers 403 ("the measurements module is
+    // disabled"), which used to show up as an error banner every single time
+    // the orders screen was opened.
+    const loadProfiles = shouldLoadMeasurementProfiles({
+      view,
+      customerId: orderCustomerId,
+      enabledModules: businessConfiguration?.enabledModules,
+      hasPermission: currentUser?.context.permissions.includes('measurements:read') ?? false,
+    });
+    if (loadProfiles) {
       withSession((token) => api.measurements(token, orderCustomerId))
         .then((result) => { if (active) setProfiles(result.items); })
-        .catch((cause: unknown) => { if (active) setError(messageFor(cause)); });
+        .catch((cause: unknown) => {
+          if (!active) return;
+          if (cause instanceof ApiError && cause.code === 'BUSINESS_MODULE_DISABLED') { setProfiles([]); return; }
+          setError(messageFor(cause));
+        });
     } else {
       setProfiles([]);
     }
     return () => { active = false; };
-  }, [currentUser?.context.permissions, orderCustomerId, session, view, withSession]);
+  }, [businessConfiguration?.enabledModules, currentUser?.context.permissions, orderCustomerId, session, view, withSession]);
 
   const selectedTemplate = useMemo(
     () => templates.find((template) => template.id === measurementTemplateId),
