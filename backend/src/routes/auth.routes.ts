@@ -42,7 +42,7 @@ function createRefreshToken(): string {
   return randomBytes(48).toString('base64url');
 }
 
-async function createSession(
+export async function createSession(
   userId: string,
   scope: 'business' | 'platform',
   membershipId?: string,

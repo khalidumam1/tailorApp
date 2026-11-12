@@ -109,8 +109,8 @@ quote. If you want higher, raise the seats and order limits, not the story.
 | --- | --- | --- | --- |
 | 1 | Landing page explaining the product | **To build** — the web app is only the ERP workspace (`web/src/ErpWorkspace.tsx`); there is no public site | A marketing site. Build it in the repo or as a separate static site |
 | 2 | Pricing page | **To build** — nothing exists | The tables above, plus a comparison row per limit |
-| 3 | Public plan list | **To build** — `GET /api/v1/platform/billing/plans` requires platform permissions (`backend/src/routes/platform-billing.routes.ts`) | A public, unauthenticated `GET /api/v1/public/plans` returning name, price, currency, trial days, features, limits |
-| 4 | Self-signup | **To build** — businesses are created only by `POST /platform/businesses`, which requires `platform:businesses:manage` | `POST /api/v1/public/signup`: owner name, email, password, business name, slug, template, timezone, currency → creates Business (PENDING), owner user, membership, default plan subscription in `TRIAL` |
+| 3 | Public plan list | **Verified** — `GET /api/v1/public/plans` (unauthenticated, active plans only, no internal fields) | Nothing. `site/signup.html` already loads it |
+| 4 | Self-signup | **Verified** — `POST /api/v1/public/signup` creates the business ACTIVE, its owner, an Owner role with every business permission, and the default plan's trial. Off until the `signup` platform setting is switched on (`backend/scripts/self-signup-switch.sql`). `site/signup.html` is the form | Nothing for the API. A signup screen inside the app itself would let the returned session be stored without a redirect |
 | 5 | Provisioning | **Verified** — templates, workflow stages and item types are seeded | Signup calls the same configuration path the platform console uses today; no new domain logic |
 | 6 | Trial expiry | **Verified** — server-side authorisation blocks business writes after the grace period; expiry alerts exist but "no external email/SMS reminder provider is configured" | An email provider so the expiry alerts actually reach people |
 | 7 | Payment | **To build** — billing is manual: businesses submit a transaction reference, a Super Admin reviews and approves (`POST /payments/:paymentId/review`) | A gateway plus a webhook that creates the `SubscriptionPayment` and approves it without a human |
@@ -120,8 +120,19 @@ quote. If you want higher, raise the seats and order limits, not the story.
 | 11 | Cancellation | **To build** for self-serve | A "cancel" button in the business billing screen that sets `CANCELLED` at period end |
 | 12 | Reporting | **Verified** — platform billing dashboard and `GET /platform/billing/report.csv` | Nothing, until you want MRR charts |
 
-**Read that table as the scope of the project.** Stages 1–4 and 7–8 are the
-build; 5, 6, 10 and 12 are already done. Stages 9 and 11 are small.
+**Read that table as the scope of the project.** Stages 1–2 and 7–8 are the
+build; 3–6, 10 and 12 are done. Stages 9 and 11 are small.
+
+Two details in stage 4 worth knowing, because both were decided deliberately:
+
+- The new business is created **ACTIVE**, not PENDING like the platform
+  console creates it. Sign-in only offers memberships in ACTIVE businesses, so
+  a PENDING business would leave a brand-new owner staring at an empty
+  workspace picker. Trial expiry is what gates writes, not the business status.
+- The endpoint is **off until you switch it on**. It is public by definition,
+  and merging to main deploys the backend, so it fails closed: a missing
+  `signup` platform setting means 403. `backend/scripts/self-signup-switch.sql`
+  turns it on and off.
 
 ---
 
@@ -355,11 +366,9 @@ acquisition channel that is not you sending messages.
 
 Say which and I will do it, in this order of usefulness:
 
-1. **The landing and pricing page** — one static site in this repo, Bizora
-   branding, three tiers, buy buttons pointing at your payment links.
-2. **Public plans endpoint** (`GET /api/v1/public/plans`) and **public
-   self-signup** (`POST /api/v1/public/signup`) with template choice and trial
-   subscription.
+1. ~~**The landing and pricing page**~~ — done, in `site/`.
+2. ~~**Public plans endpoint** and **self-signup**~~ — done, together with a
+   signup form at `site/signup.html`.
 3. **Transactional email** — provider wiring, the three trial emails, the
    welcome email, and the payment receipts.
 4. **Gateway webhooks** — Paddle for USD and Safepay for PKR, each

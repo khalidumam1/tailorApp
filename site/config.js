@@ -5,10 +5,17 @@
    `example` is a reserved domain that can never belong to anyone. */
 
 window.BIZORA = {
-  // Where the product itself lives. Every "Start free trial" and "Sign in"
-  // button points here until a checkout link is set below.
+  // Where the product itself lives. Every "Sign in" button points here.
   appUrl: 'https://app.bizora.example',
-  signupUrl: 'https://app.bizora.example/signup',
+
+  // Where the API is served. signup.html loads its templates and plans from
+  // here and posts the new business to it. The API has to allow this site's
+  // origin in CORS_ORIGINS, or the browser will block every request.
+  apiBaseUrl: 'https://api.bizora.example',
+
+  // The signup form in this folder. Point it at the app's own screen instead
+  // if you build one there.
+  signupUrl: 'signup.html',
 
   // Written support. Publish an inbox, never a phone number.
   supportEmail: 'hello@bizora.example',
