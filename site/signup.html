@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Start your Bizora trial</title>
+<meta name="description" content="Create your Bizora workspace: pick your trade, name your business, and start a 14-day free trial. No card required." />
+<meta name="robots" content="noindex" />
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="signup.css" />
+</head>
+<body class="signup-page">
+
+<div class="wrap signup-shell">
+  <a class="signup-back" href="index.html">
+    <img src="assets/logo.svg" alt="" width="28" height="28" />
+    <span>Bizora</span>
+  </a>
+
+  <div class="signup-card">
+    <div class="signup-intro">
+      <p class="kicker">Free for 14 days</p>
+      <h1>Start your workspace</h1>
+      <p class="lede-sm">No card, no call, no salesperson. Pick your trade and the workspace arrives set up in your words.</p>
+    </div>
+
+    <form id="signupForm" class="signup-form" novalidate>
+      <div class="field">
+        <label for="businessName">Business name</label>
+        <input id="businessName" name="businessName" type="text" required maxlength="160"
+               autocomplete="organization" placeholder="Al-Noor Furniture" />
+        <p class="hint">This is how the workspace is labelled.</p>
+      </div>
+
+      <div class="field">
+        <label for="templateKey">What kind of business?</label>
+        <select id="templateKey" name="templateKey" required>
+          <option value="">Loading templates…</option>
+        </select>
+        <p class="hint">Sets the words, stages and fields. You can change it later.</p>
+      </div>
+
+      <div class="field">
+        <label for="planId">Plan</label>
+        <select id="planId" name="planId" required>
+          <option value="">Loading plans…</option>
+        </select>
+        <p class="hint">You are not charged until the trial ends.</p>
+      </div>
+
+      <div class="field">
+        <label for="ownerName">Your name</label>
+        <input id="ownerName" name="ownerName" type="text" required maxlength="160" autocomplete="name" />
+      </div>
+
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required maxlength="254" autocomplete="email" />
+      </div>
+
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required minlength="12" maxlength="72"
+               autocomplete="new-password" aria-describedby="passwordHint" />
+        <p class="hint" id="passwordHint">At least 12 characters. You will use this to sign in.</p>
+      </div>
+
+      <p class="form-error" id="formError" role="alert" hidden></p>
+
+      <button class="btn btn-primary btn-lg btn-block" type="submit" id="submitButton">
+        Create my workspace
+      </button>
+      <p class="micro center">
+        By starting a trial you agree to the terms published on this site.
+      </p>
+    </form>
+
+    <div class="signup-done" id="signupDone" hidden>
+      <div class="tick" aria-hidden="true"></div>
+      <h2>Your workspace is ready</h2>
+      <p class="lede-sm" id="doneSummary"></p>
+      <a class="btn btn-primary btn-lg btn-block" id="signInLink" href="#">Sign in to your workspace</a>
+      <p class="micro center" id="doneNote"></p>
+    </div>
+  </div>
+
+  <p class="signup-foot">
+    Already have an account? <a data-signin href="#">Sign in</a>.
+  </p>
+</div>
+
+<script src="config.js"></script>
+<script src="signup.js"></script>
+</body>
+</html>

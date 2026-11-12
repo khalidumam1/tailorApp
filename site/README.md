@@ -48,7 +48,8 @@ anyone — so a half-finished deploy cannot point at a stranger's site.
 | In `config.js` | Set it to |
 | --- | --- |
 | `appUrl` | Where the product is hosted, e.g. `https://app.yourdomain.com` |
-| `signupUrl` | The sign-up screen, e.g. `https://app.yourdomain.com/signup` |
+| `apiBaseUrl` | Where the API is served, e.g. `https://api.yourdomain.com`. `signup.html` reads its plans and templates from here and posts the new business to it |
+| `signupUrl` | The signup form — `signup.html` in this folder by default |
 | `supportEmail` | The inbox you will actually answer |
 | `city` | Your operating city |
 | `statementDescriptor` | What the customer sees on their card statement — `PADDLE` if you use Paddle, `SAFEPAY` for Safepay. Leave it empty and the sentence disappears |
@@ -58,6 +59,22 @@ anyone — so a half-finished deploy cannot point at a stranger's site.
 free trial instead, so the page is safe to publish before the checkout links
 exist. Add them one at a time and the button switches to taking payment with no
 other change.
+
+**One thing the API needs from you.** `signup.html` calls the API from the
+browser, so the API has to allow this site's origin. Add it to `CORS_ORIGINS`
+on the backend (Shiper: environment settings) or every request the form makes
+will be blocked by the browser:
+
+```sh
+CORS_ORIGINS=https://www.yourdomain.com,https://app.yourdomain.com
+```
+
+Then switch the endpoint on — it is off until you do, which is why it is safe
+to deploy the code first:
+
+```powershell
+psql "$DATABASE_URL" -f backend\scripts\self-signup-switch.sql
+```
 
 Two other things to replace:
 
@@ -139,6 +156,9 @@ assets say the same thing as the site.
 | File | What it is |
 | --- | --- |
 | `index.html` | The page. All copy and all prices live here |
+| `signup.html` | The signup form. Calls `GET /api/v1/public/templates`, `GET /api/v1/public/plans` and `POST /api/v1/public/signup` |
+| `signup.js` | Form logic: loads the options, posts the signup, maps API errors to plain English |
+| `signup.css` | Styling for the form, using the palette in `styles.css` |
 | `styles.css` | All styling, using the brand palette as CSS variables |
 | `config.js` | Your URLs, support inbox, statement descriptor, payment links |
 | `main.js` | Monthly/yearly switch, mobile menu, wiring the config into the page |
