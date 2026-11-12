@@ -1,18 +1,19 @@
-/* Bizora marketing site behaviour. No dependencies.
-   Everything here degrades gracefully: with JavaScript off, the page still
-   reads correctly and shows monthly prices. */
+/* Page behaviour: the two pricing toggles, the mobile menu, and wiring the
+   values from config.js into the markup. No dependencies.
+
+   Everything degrades: with JavaScript off the page shows monthly prices in
+   PKR, every trial button still points at the signup form, and the workspace
+   recreation stays on the tailor template. */
 
 (function () {
   'use strict';
 
   var config = window.BIZORA || {};
 
-  /* ---- header shadow on scroll ---- */
+  /* ---- header shadow ---- */
   var header = document.getElementById('header');
   if (header) {
-    var onScroll = function () {
-      header.classList.toggle('is-scrolled', window.scrollY > 8);
-    };
+    var onScroll = function () { header.classList.toggle('is-scrolled', window.scrollY > 8); };
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
   }
@@ -34,34 +35,57 @@
     });
   }
 
-  /* ---- monthly / yearly toggle ---- */
-  var cycleButtons = document.querySelectorAll('[data-cycle]');
-  var cycleValues = document.querySelectorAll('[data-monthly], [data-yearly]');
+  /* ---- pricing: period and currency ---- */
+  var state = { cycle: 'monthly', currency: 'PKR' };
 
-  function setCycle(cycle) {
-    cycleButtons.forEach(function (button) {
-      var active = button.getAttribute('data-cycle') === cycle;
+  function applyPricing() {
+    var want = 'data-' + state.currency.toLowerCase() + '-' + state.cycle.charAt(0);
+
+    document.querySelectorAll('.amount').forEach(function (amount) {
+      Array.prototype.forEach.call(amount.children, function (node) {
+        if (node.hasAttribute(want)) node.removeAttribute('hidden');
+        else node.setAttribute('hidden', '');
+      });
+    });
+
+    document.querySelectorAll('[data-cycle-label]').forEach(function (node) {
+      if (node.getAttribute('data-cycle-label') === state.cycle) node.removeAttribute('hidden');
+      else node.setAttribute('hidden', '');
+    });
+
+    document.querySelectorAll('[data-cur]').forEach(function (node) {
+      node.textContent = state.currency;
+    });
+
+    document.querySelectorAll('[data-cycle]').forEach(function (button) {
+      var active = button.getAttribute('data-cycle') === state.cycle;
       button.classList.toggle('is-active', active);
       button.setAttribute('aria-pressed', String(active));
     });
-    cycleValues.forEach(function (node) {
-      var isMatch = node.hasAttribute('data-' + cycle);
-      // Hidden nodes are skipped so the yearly figures stay out of the
-      // accessibility tree and out of a screen reader's reading order.
-      if (isMatch) node.removeAttribute('hidden');
-      else node.setAttribute('hidden', '');
+
+    document.querySelectorAll('[data-currency]').forEach(function (button) {
+      var active = button.getAttribute('data-currency') === state.currency;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
     });
   }
 
-  cycleButtons.forEach(function (button) {
+  document.querySelectorAll('[data-cycle]').forEach(function (button) {
     button.addEventListener('click', function () {
-      setCycle(button.getAttribute('data-cycle'));
+      state.cycle = button.getAttribute('data-cycle');
+      applyPricing();
+    });
+  });
+  document.querySelectorAll('[data-currency]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      state.currency = button.getAttribute('data-currency');
+      applyPricing();
     });
   });
 
   /* ---- links that depend on config ---- */
-  var signupUrl = config.signupUrl || config.appUrl || '#';
-  var appUrl = config.appUrl || signupUrl;
+  var signupUrl = config.signupUrl || 'signup.html';
+  var appUrl = config.appUrl || '#';
 
   document.querySelectorAll('[data-signup]').forEach(function (link) {
     link.setAttribute('href', signupUrl);
@@ -70,14 +94,13 @@
     link.setAttribute('href', appUrl);
   });
 
-  // Plan buttons: a real payment link when one is configured, a trial
-  // otherwise. Never a dead button.
+  // Plan buttons: a real payment link when one is configured, otherwise the
+  // signup form with that plan preselected. Never a dead button.
   var checkout = config.checkout || {};
   document.querySelectorAll('[data-checkout]').forEach(function (link) {
     var plan = link.getAttribute('data-checkout');
     var url = (checkout[plan] || '').trim();
-    link.setAttribute('href', url || signupUrl);
-    if (url) link.setAttribute('data-paid-link', 'true');
+    link.setAttribute('href', url || (signupUrl + '?plan=' + encodeURIComponent(plan)));
   });
 
   if (config.supportEmail) {
@@ -86,20 +109,17 @@
       node.textContent = config.supportEmail;
     });
   }
-
   if (config.city) {
-    document.querySelectorAll('[data-city]').forEach(function (node) {
-      node.textContent = config.city;
-    });
+    document.querySelectorAll('[data-city]').forEach(function (node) { node.textContent = config.city; });
   }
-
   if (config.statementDescriptor) {
     document.querySelectorAll('[data-descriptor]').forEach(function (node) {
       node.textContent = ' (' + config.statementDescriptor + ')';
     });
   }
-
   document.querySelectorAll('[data-year]').forEach(function (node) {
     node.textContent = String(new Date().getFullYear());
   });
+
+  applyPricing();
 })();

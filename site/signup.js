@@ -1,11 +1,12 @@
 /* The signup form.
    Calls the API's public endpoints and nothing else. No framework, no bundle.
 
-   The account is created and activated by the API, and this page then hands
-   the owner over to the app to sign in. It deliberately does not try to carry
-   the session across: the API issues bearer tokens, which belong in the app's
-   own origin, and putting one in a URL is how tokens end up in browser
-   history and referrer logs. One extra click is a fair price. */
+   After a successful signup the workspace already exists and is configured:
+   the API created the business, the owner, an Owner role and the trial. This
+   page then hands the owner to the app to sign in. It deliberately does not
+   carry the session across — the API issues bearer tokens, which belong in the
+   app's own origin, and a token in a URL ends up in browser history and
+   referrer logs. One extra click is the fair price. */
 
 (function () {
   'use strict';
@@ -14,13 +15,19 @@
   var apiBase = (config.apiBaseUrl || '').replace(/\/+$/, '');
 
   var form = document.getElementById('signupForm');
+  var formCard = document.getElementById('formCard');
   var templateSelect = document.getElementById('templateKey');
+  var templateHint = document.getElementById('templateHint');
   var planSelect = document.getElementById('planId');
   var errorBox = document.getElementById('formError');
   var submitButton = document.getElementById('submitButton');
   var donePanel = document.getElementById('signupDone');
   var doneSummary = document.getElementById('doneSummary');
   var doneNote = document.getElementById('doneNote');
+  var doneEmail = document.getElementById('doneEmail');
+  var doneTemplate = document.getElementById('doneTemplate');
+  var doneTrial = document.getElementById('doneTrial');
+  var doneOwner = document.getElementById('doneOwner');
   var signInLink = document.getElementById('signInLink');
 
   var templates = [];
@@ -44,6 +51,21 @@
     return (currency === 'PKR' ? 'Rs ' : currency ? currency + ' ' : '') + formatted;
   }
 
+  function describeTemplate(template) {
+    return template.description || 'A configured workspace for this trade.';
+  }
+
+  function updateTemplateHint() {
+    var chosen = templates.filter(function (item) { return item.key === templateSelect.value; })[0];
+    templateHint.textContent = chosen ? describeTemplate(chosen) : '';
+  }
+
+  /** The plan the visitor clicked on the pricing table, if any. */
+  function requestedPlan() {
+    var params = new URLSearchParams(window.location.search);
+    return (params.get('plan') || '').toLowerCase();
+  }
+
   async function loadOptions() {
     if (!apiBase) {
       templateSelect.innerHTML = '<option value="">Set apiBaseUrl in config.js</option>';
@@ -61,24 +83,29 @@
       throw new Error('Could not load templates and plans from the API');
     }
 
-    var templateBody = await templateResponse.json();
-    var planBody = await planResponse.json();
-    templates = templateBody.data.items;
-    plans = planBody.data.items;
+    templates = (await templateResponse.json()).data.items;
+    plans = (await planResponse.json()).data.items;
 
     templateSelect.innerHTML = templates.map(function (template) {
-      return '<option value="' + template.key + '">' + template.name
-        + (template.description ? ' — ' + template.description : '') + '</option>';
+      return '<option value="' + template.key + '">' + template.name + '</option>';
     }).join('');
 
     planSelect.innerHTML = plans.map(function (plan) {
       return '<option value="' + plan.id + '">' + plan.name + ' — '
         + money(plan.monthlyPrice, plan.currency) + ' / month'
-        + (plan.trialDays ? ' (' + plan.trialDays + '-day trial)' : '') + '</option>';
+        + (plan.trialDays ? ' · ' + plan.trialDays + '-day trial' : '') + '</option>';
     }).join('');
 
-    // Prefer the platform's default plan, which the API sorts first.
-    if (plans.length > 0) planSelect.value = plans[0].id;
+    // The plan clicked on the pricing table wins; otherwise the platform's
+    // default, which the API returns first.
+    var wanted = requestedPlan();
+    var match = wanted && plans.filter(function (plan) {
+      return plan.name.toLowerCase() === wanted;
+    })[0];
+    if (match) planSelect.value = match.id;
+    else if (plans.length > 0) planSelect.value = plans[0].id;
+
+    updateTemplateHint();
   }
 
   function describeFailure(status, body) {
@@ -92,6 +119,9 @@
     if (status === 409 && code === 'DUPLICATE_SIGNUP') {
       return 'That business name or email is already taken. Please try another.';
     }
+    if (status === 400 && code === 'PLAN_NOT_FOUND') {
+      return 'That plan is no longer available. Please choose another.';
+    }
     if (status === 429) {
       return 'Too many sign-ups from this network. Please wait a while and try again.';
     }
@@ -104,6 +134,25 @@
     return 'Something went wrong on our side. Please try again, or email us.';
   }
 
+  function showDone(data) {
+    var template = templates.filter(function (item) { return item.key === data.templateKey; })[0];
+    var plan = plans.filter(function (item) { return item.id === data.planId; })[0];
+
+    formCard.hidden = true;
+    donePanel.hidden = false;
+
+    doneSummary.textContent = data.business.name + ' is set up and waiting for you.';
+    doneTemplate.textContent = (template ? template.name : 'Your template') + ' applied — your words, stages and fields';
+    doneTrial.textContent = data.trial
+      ? data.trial.trialDays + '-day trial started, on the ' + data.trial.plan + ' plan'
+      : 'Subscription started on the ' + (plan ? plan.name : 'default plan');
+    doneOwner.textContent = 'Owner account created for ' + data.owner.email;
+    doneEmail.textContent = data.owner.email;
+    doneNote.textContent = 'Sign in with the password you just chose. Everything is already configured — there is nothing to set up.';
+    signInLink.setAttribute('href', config.appUrl || '#');
+    donePanel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
   form.addEventListener('submit', async function (event) {
     event.preventDefault();
     clearError();
@@ -111,6 +160,7 @@
     var payload = {
       businessName: document.getElementById('businessName').value.trim(),
       templateKey: templateSelect.value,
+      planId: planSelect.value,
       ownerName: document.getElementById('ownerName').value.trim(),
       email: document.getElementById('email').value.trim(),
       password: document.getElementById('password').value,
@@ -122,7 +172,7 @@
     }
 
     submitButton.disabled = true;
-    submitButton.textContent = 'Creating your workspace…';
+    submitButton.textContent = 'Building your workspace…';
 
     try {
       var response = await fetch(apiBase + '/api/v1/public/signup', {
@@ -139,15 +189,10 @@
         return;
       }
 
-      var data = body.data;
-      form.hidden = true;
-      donePanel.hidden = false;
-      doneSummary.textContent = data.business.name + ' is ready'
-        + (data.trial ? '. Your ' + data.trial.trialDays + '-day trial runs until '
-            + new Date(data.trial.endsAt).toLocaleDateString() + '.' : '.');
-      doneNote.textContent = 'Sign in with ' + data.owner.email + ' and the password you just chose.';
-      signInLink.setAttribute('href', config.appUrl || '#');
-      donePanel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      showDone(Object.assign({}, body.data, {
+        templateKey: payload.templateKey,
+        planId: payload.planId,
+      }));
     } catch (error) {
       submitButton.disabled = false;
       submitButton.textContent = 'Create my workspace';
@@ -155,8 +200,9 @@
     }
   });
 
-  var signinLinks = document.querySelectorAll('[data-signin]');
-  signinLinks.forEach(function (link) {
+  templateSelect.addEventListener('change', updateTemplateHint);
+
+  document.querySelectorAll('[data-signin]').forEach(function (link) {
     link.setAttribute('href', config.appUrl || '#');
   });
 

@@ -244,6 +244,60 @@ test('signup rejects a second business for the same email', async (t) => {
   assert.equal((second.body.error as { code: string }).code, 'DUPLICATE_USER');
 });
 
+test('signup starts the trial on the plan the buyer picked, not the default', async (t) => {
+  if (skipIfDisabled(t)) return;
+  await setSelfSignup(true);
+
+  const plansResponse = await api('/api/v1/public/plans');
+  const plans = (plansResponse.body.data as { items: Array<{ id: string; name: string }> }).items;
+  assert.ok(plans.length >= 2, 'this test needs at least two active plans');
+  // The API returns the default first, so take another one and check the
+  // subscription was created against it rather than quietly falling back.
+  const chosen = plans[plans.length - 1];
+
+  const created = await api('/api/v1/public/signup', {
+    method: 'POST',
+    body: {
+      businessName: 'Chosen Plan Traders',
+      templateKey: 'tailor',
+      planId: chosen.id,
+      ownerName: 'Test Owner',
+      email: `self-signup-plan-${randomUUID()}@example.test`,
+      password: 'correct-horse-battery',
+    },
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+
+  const data = created.body.data as { business: { id: string }; owner: { id: string }; trial: { plan: string } | null };
+  createdBusinessIds.push(data.business.id);
+  createdUserIds.push(data.owner.id);
+
+  const subscription = await prisma.subscription.findFirstOrThrow({
+    where: { businessId: data.business.id },
+  });
+  assert.equal(subscription.planId, chosen.id);
+  assert.equal(data.trial?.plan, chosen.name);
+});
+
+test('signup refuses a plan that is not offered', async (t) => {
+  if (skipIfDisabled(t)) return;
+  await setSelfSignup(true);
+
+  const response = await api('/api/v1/public/signup', {
+    method: 'POST',
+    body: {
+      businessName: 'Unknown Plan Traders',
+      templateKey: 'tailor',
+      planId: '3f1b7b9e-2f4a-4e0d-9c2a-1d5f0a7b3c11',
+      ownerName: 'Test Owner',
+      email: `self-signup-badplan-${randomUUID()}@example.test`,
+      password: 'correct-horse-battery',
+    },
+  });
+  assert.equal(response.status, 400);
+  assert.equal((response.body.error as { code: string }).code, 'PLAN_NOT_FOUND');
+});
+
 test('signup refuses an unknown template and a short password', async (t) => {
   if (skipIfDisabled(t)) return;
   await setSelfSignup(true);

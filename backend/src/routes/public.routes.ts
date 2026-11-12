@@ -12,6 +12,7 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { uuidSchema } from '@tailor/shared';
 import bcrypt from 'bcryptjs';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
@@ -50,6 +51,9 @@ const signupSchema = z.object({
   // stricter rule only produces abandoned trials.
   password: z.string().min(12).max(72)
     .refine((value) => Buffer.byteLength(value, 'utf8') <= 72, "Password must not exceed bcrypt's 72-byte limit"),
+  // The plan the buyer picked on the pricing table. Optional: without it they
+  // land on the platform's default plan.
+  planId: uuidSchema.optional(),
   timezone: z.string().trim().min(1).max(64).optional(),
   currency: z.string().trim().length(3).optional(),
 });
@@ -183,7 +187,14 @@ router.post('/signup', signupLimiter, asyncHandler(async (req, res) => {
       });
 
       let trial: { plan: string; trialDays: number; endsAt: Date } | null = null;
-      const defaultPlan = await tx.subscriptionPlan.findFirst({ where: { active: true, isDefault: true } });
+      const chosenPlan = input.planId
+        ? await tx.subscriptionPlan.findFirst({ where: { id: input.planId, active: true } })
+        : null;
+      if (input.planId && !chosenPlan) {
+        throw new HttpError(400, 'Choose an available plan', 'PLAN_NOT_FOUND');
+      }
+      const defaultPlan = chosenPlan
+        ?? await tx.subscriptionPlan.findFirst({ where: { active: true, isDefault: true } });
       if (defaultPlan) {
         const startsAt = new Date();
         const endsAt = new Date(startsAt);
