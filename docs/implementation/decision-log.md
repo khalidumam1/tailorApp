@@ -145,3 +145,22 @@ three-phase plan; individual decisions gate the tasks noted. `OPEN` = awaiting o
   itself out in one column, so nothing overflows on a phone either.
 - The dead popover styles are gone, and `web/e2e/orders.spec.ts` keeps the
   window inside the viewport - the regression that was reported is now a test.
+
+## Workspace fix — the orders screen no longer nags about a switched-off module (2026-11-11)
+
+- **D-19: the app must not call a module-gated API it knows will be refused.**
+  A business can switch modules off (the measurement book, the customer book),
+  and the API answers those endpoints with HTTP 403 "The <module> module is
+  disabled for this business". The orders screen nevertheless asked for the
+  customer's measurement profiles every time it was opened - the customer
+  selection is part of the order draft, so the call fired on every visit - and
+  the refusal was put on the screen as an error banner. A shop owner could not
+  do anything about it: the message was about a module they had deliberately
+  switched off (or that their template never had).
+- The measurement profiles are now loaded only when the module is on, the
+  permission is held and a customer is selected. The decision lives in
+  `web/src/module-access.ts` (`shouldLoadMeasurementProfiles`) with unit tests,
+  and a refused call is swallowed instead of becoming a banner.
+- The same hardening covers the customer list in the orders and measurement
+  screens: with the customers module off the list is simply empty, and the
+  order list still loads instead of the whole screen failing.
