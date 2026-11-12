@@ -78,6 +78,14 @@ for self-serve; a fourth only dilutes the choice.
 | Price / year | 120 | 290 | 790 |
 | Everything else | same as PKR table | | |
 
+**These tiers have to exist in the database before the page means anything.**
+A fresh database has one active plan — the migration's Starter, priced 0 with
+unlimited limits, which is a trial plan rather than a paid tier. The signup
+form loads its plan list from the API, so without the other tiers a buyer sees
+three prices and then finds one in the dropdown. `backend/scripts/seed-plans.sql`
+creates Growth and Scale and turns Starter into the paid entry tier. It is
+idempotent, so it is also how you edit the prices later.
+
 **Why these numbers.** They are anchored on what a Pakistani SME pays for a
 shopkeeper's time, not on what global SaaS charges: a part-time munshi or a
 spreadsheet-and-WhatsApp habit costs a business owner more than PKR 2,500 a

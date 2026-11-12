@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { after, before, test } from 'node:test';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { requireIsolatedTestDatabaseUrl } from '../src/testing/isolated-test-database.js';
 
 const enabled = process.env.RUN_DB_TESTS === 'true';
@@ -37,6 +37,7 @@ let closeServer: (() => Promise<void>) | undefined;
 let baseUrl = '';
 const createdBusinessIds: string[] = [];
 const createdUserIds: string[] = [];
+const createdPlanIds: string[] = [];
 
 interface ApiResult { status: number; body: Record<string, unknown>; }
 
@@ -107,6 +108,9 @@ after(async () => {
     await prisma.membership.deleteMany({ where: { businessId: { in: businessIds } } });
     await prisma.role.deleteMany({ where: { businessId: { in: businessIds } } });
     await prisma.business.deleteMany({ where: { id: { in: businessIds } } });
+  }
+  if (createdPlanIds.length > 0) {
+    await prisma.subscriptionPlan.deleteMany({ where: { id: { in: createdPlanIds } } });
   }
   if (createdUserIds.length > 0) {
     await prisma.auditEvent.deleteMany({ where: { actorId: { in: createdUserIds } } });
@@ -248,12 +252,23 @@ test('signup starts the trial on the plan the buyer picked, not the default', as
   if (skipIfDisabled(t)) return;
   await setSelfSignup(true);
 
-  const plansResponse = await api('/api/v1/public/plans');
-  const plans = (plansResponse.body.data as { items: Array<{ id: string; name: string }> }).items;
-  assert.ok(plans.length >= 2, 'this test needs at least two active plans');
-  // The API returns the default first, so take another one and check the
-  // subscription was created against it rather than quietly falling back.
-  const chosen = plans[plans.length - 1];
+  // The migration seeds a single active plan, so the test brings its own
+  // rather than depending on how many tiers happen to exist.
+  const chosen = await prisma.subscriptionPlan.create({
+    data: {
+      name: 'Signup Test Tier ' + randomUUID(),
+      monthlyPrice: new Prisma.Decimal('9999'),
+      yearlyPrice: new Prisma.Decimal('99999'),
+      currency: 'PKR',
+      trialDays: 14,
+      features: { customers: true, orders: true },
+      limits: { customers: 10, staff: 2, ordersPerMonth: 5 },
+      active: true,
+      isDefault: false,
+    },
+    select: { id: true, name: true },
+  });
+  createdPlanIds.push(chosen.id);
 
   const created = await api('/api/v1/public/signup', {
     method: 'POST',
