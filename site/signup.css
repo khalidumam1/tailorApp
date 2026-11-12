@@ -1,90 +1,129 @@
-/* Signup page. Uses the palette and type from styles.css. */
+/* Signup page: the form on the right, what is about to happen on the left. */
 
-.signup-page {
-  background: linear-gradient(180deg, var(--canvas) 0%, var(--surface) 46%);
-  min-height: 100vh;
-}
+.signup-page { background: var(--canvas); min-height: 100vh; }
 
 .signup-shell {
-  max-width: 560px;
-  padding: 32px 24px 64px;
+  display: grid;
+  grid-template-columns: .95fr 1.05fr;
+  min-height: 100vh;
+  max-width: 1240px;
+  margin: 0 auto;
 }
 
-.signup-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  font-weight: 800;
-  font-size: 18px;
-  letter-spacing: -.03em;
-  color: var(--ink);
-  margin-bottom: 28px;
+/* ---- left: the dark panel ---- */
+
+.signup-aside {
+  position: relative;
+  overflow: hidden;
+  background: var(--night);
+  color: #fff;
+  padding: 40px 44px;
+  display: flex;
+  flex-direction: column;
 }
-.signup-back:hover { text-decoration: none; color: var(--green-deep); }
+.signup-aside::after {
+  content: ""; position: absolute; inset: auto -30% -30% -20%; height: 460px; pointer-events: none;
+  background: radial-gradient(50% 50% at 40% 50%, rgba(26, 155, 114, .3), transparent 70%);
+}
+.signup-aside > * { position: relative; z-index: 1; }
+
+.signup-back { display: inline-flex; align-items: center; gap: 10px; color: #fff; font-weight: 800; font-size: 18px; letter-spacing: -.03em; }
+.signup-back:hover { text-decoration: none; }
+
+.signup-aside h1 { margin-top: 44px; font-size: clamp(1.7rem, 3vw, 2.2rem); max-width: 16ch; }
+.aside-lede { margin-top: 16px; color: #a9c4ba; font-size: 16.5px; }
+
+.aside-steps { list-style: none; margin: 40px 0 0; padding: 0; display: grid; gap: 24px; }
+.aside-steps li { display: grid; grid-template-columns: auto 1fr; gap: 14px; }
+.aside-no {
+  display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px;
+  font-size: 13px; font-weight: 800; color: var(--gold-text); background: var(--gold-soft);
+}
+.aside-steps strong { display: block; font-size: 15.5px; font-weight: 700; letter-spacing: -.015em; }
+.aside-steps span { display: block; margin-top: 4px; font-size: 14px; color: #a9c4ba; line-height: 1.5; }
+
+.aside-foot {
+  margin-top: auto; padding-top: 36px; font-size: 13.5px; color: #7f9c91; line-height: 1.6;
+  max-width: 42ch;
+}
+
+/* ---- right: the form ---- */
+
+.signup-main { padding: 40px 44px; display: flex; flex-direction: column; justify-content: center; }
 
 .signup-card {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 34px 32px;
+  padding: 32px;
+  max-width: 520px;
+  width: 100%;
 }
 
-.signup-intro h1 { font-size: clamp(1.7rem, 4vw, 2.1rem); margin-bottom: 12px; }
-.lede-sm { color: var(--ink-2); font-size: 16px; line-height: 1.55; }
+.signup-head h2 { font-size: 1.6rem; }
+.signup-head p { margin-top: 8px; color: var(--ink-3); font-size: 14.5px; }
 
-.signup-form { margin-top: 28px; display: grid; gap: 20px; }
+.signup-form { margin-top: 26px; display: grid; gap: 18px; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
 .field { display: grid; gap: 7px; }
-.field label { font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+.field label { font-size: 13.5px; font-weight: 700; letter-spacing: -.01em; }
 .field input,
 .field select {
-  font-family: inherit;
-  font-size: 16px;
-  font-weight: 500;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  padding: 12px 14px;
-  width: 100%;
+  font-family: inherit; font-size: 16px; font-weight: 500; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  padding: 12px 14px; width: 100%;
   transition: border-color .16s ease, box-shadow .16s ease;
 }
-.field select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%235F7468' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M4 6.5l4 4 4-4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 16px; padding-right: 40px; }
-.field input:focus,
-.field select:focus {
-  outline: none;
-  border-color: var(--green);
-  box-shadow: 0 0 0 3px rgba(17, 122, 92, .14);
+.field select {
+  appearance: none; padding-right: 40px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%235F7468' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M4 6.5l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 13px center; background-size: 16px;
 }
-.field input:user-invalid,
-.field select:user-invalid { border-color: #b4543f; }
+.field input:focus,
+.field select:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px rgba(17, 122, 92, .15); }
 
-.hint { font-size: 13px; color: var(--ink-3); }
+.hint { font-size: 12.5px; color: var(--ink-3); }
 
 .form-error {
-  background: #fdf3f0;
-  border: 1px solid #f0d3ca;
-  color: #8c3a24;
-  border-radius: var(--radius-sm);
-  padding: 12px 14px;
-  font-size: 14.5px;
-  font-weight: 600;
+  background: #fff1ef; border: 1px solid #f2cfc8; color: #8c3a24;
+  border-radius: var(--radius-sm); padding: 12px 14px; font-size: 14.5px; font-weight: 600;
 }
 
-.signup-form .btn-block { margin-top: 4px; }
 .center { text-align: center; }
 
-.signup-done { text-align: center; display: grid; justify-items: center; gap: 14px; }
-.signup-done .lede-sm { max-width: 40ch; }
+/* ---- success ---- */
+
+.signup-done { text-align: center; }
 .tick {
-  width: 52px; height: 52px; border-radius: 50%;
+  width: 54px; height: 54px; border-radius: 50%; margin: 0 auto 18px;
   background: rgba(17, 122, 92, .12) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230B5C45' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l5 5L19 7.5'/%3E%3C/svg%3E") center / 26px no-repeat;
 }
-.signup-done .btn-block { max-width: 320px; }
+.signup-done h2 { font-size: 1.6rem; }
+.signup-done .lede-sm { margin-top: 10px; color: var(--ink-2); font-size: 16px; }
 
-.signup-foot { margin-top: 24px; text-align: center; font-size: 14.5px; color: var(--ink-2); }
+.done-list { list-style: none; margin: 24px 0; padding: 18px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); display: grid; gap: 12px; text-align: left; }
+.done-list li { position: relative; padding-left: 28px; font-size: 14.5px; color: var(--ink-2); }
+.done-list li::before {
+  content: ""; position: absolute; left: 0; top: 4px; width: 17px; height: 17px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23117A5C' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 8.5l3.5 3.5L13 4.5'/%3E%3C/svg%3E") center / 17px no-repeat;
+}
+.signup-done .micro { margin-top: 12px; }
+.signup-done strong { color: var(--ink); }
 
-@media (max-width: 620px) {
-  .signup-card { padding: 26px 20px; }
+.signup-foot { margin-top: 22px; text-align: center; font-size: 14.5px; color: var(--ink-2); }
+
+@media (max-width: 940px) {
+  .signup-shell { grid-template-columns: 1fr; }
+  .signup-aside { padding: 28px 24px 36px; }
+  .signup-aside h1 { margin-top: 28px; }
+  .aside-steps { margin-top: 28px; gap: 18px; }
+  .aside-foot { margin-top: 32px; padding-top: 24px; }
+  .signup-main { padding: 32px 24px 56px; }
+  .signup-card { padding: 26px 22px; max-width: none; }
+}
+
+@media (max-width: 560px) {
+  .row { grid-template-columns: 1fr; }
 }

@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { after, before, test } from 'node:test';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { requireIsolatedTestDatabaseUrl } from '../src/testing/isolated-test-database.js';
 
 const enabled = process.env.RUN_DB_TESTS === 'true';
@@ -37,6 +37,7 @@ let closeServer: (() => Promise<void>) | undefined;
 let baseUrl = '';
 const createdBusinessIds: string[] = [];
 const createdUserIds: string[] = [];
+const createdPlanIds: string[] = [];
 
 interface ApiResult { status: number; body: Record<string, unknown>; }
 
@@ -107,6 +108,9 @@ after(async () => {
     await prisma.membership.deleteMany({ where: { businessId: { in: businessIds } } });
     await prisma.role.deleteMany({ where: { businessId: { in: businessIds } } });
     await prisma.business.deleteMany({ where: { id: { in: businessIds } } });
+  }
+  if (createdPlanIds.length > 0) {
+    await prisma.subscriptionPlan.deleteMany({ where: { id: { in: createdPlanIds } } });
   }
   if (createdUserIds.length > 0) {
     await prisma.auditEvent.deleteMany({ where: { actorId: { in: createdUserIds } } });
@@ -242,6 +246,71 @@ test('signup rejects a second business for the same email', async (t) => {
   const second = await api('/api/v1/public/signup', { method: 'POST', body: payload });
   assert.equal(second.status, 409);
   assert.equal((second.body.error as { code: string }).code, 'DUPLICATE_USER');
+});
+
+test('signup starts the trial on the plan the buyer picked, not the default', async (t) => {
+  if (skipIfDisabled(t)) return;
+  await setSelfSignup(true);
+
+  // The migration seeds a single active plan, so the test brings its own
+  // rather than depending on how many tiers happen to exist.
+  const chosen = await prisma.subscriptionPlan.create({
+    data: {
+      name: 'Signup Test Tier ' + randomUUID(),
+      monthlyPrice: new Prisma.Decimal('9999'),
+      yearlyPrice: new Prisma.Decimal('99999'),
+      currency: 'PKR',
+      trialDays: 14,
+      features: { customers: true, orders: true },
+      limits: { customers: 10, staff: 2, ordersPerMonth: 5 },
+      active: true,
+      isDefault: false,
+    },
+    select: { id: true, name: true },
+  });
+  createdPlanIds.push(chosen.id);
+
+  const created = await api('/api/v1/public/signup', {
+    method: 'POST',
+    body: {
+      businessName: 'Chosen Plan Traders',
+      templateKey: 'tailor',
+      planId: chosen.id,
+      ownerName: 'Test Owner',
+      email: `self-signup-plan-${randomUUID()}@example.test`,
+      password: 'correct-horse-battery',
+    },
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+
+  const data = created.body.data as { business: { id: string }; owner: { id: string }; trial: { plan: string } | null };
+  createdBusinessIds.push(data.business.id);
+  createdUserIds.push(data.owner.id);
+
+  const subscription = await prisma.subscription.findFirstOrThrow({
+    where: { businessId: data.business.id },
+  });
+  assert.equal(subscription.planId, chosen.id);
+  assert.equal(data.trial?.plan, chosen.name);
+});
+
+test('signup refuses a plan that is not offered', async (t) => {
+  if (skipIfDisabled(t)) return;
+  await setSelfSignup(true);
+
+  const response = await api('/api/v1/public/signup', {
+    method: 'POST',
+    body: {
+      businessName: 'Unknown Plan Traders',
+      templateKey: 'tailor',
+      planId: '3f1b7b9e-2f4a-4e0d-9c2a-1d5f0a7b3c11',
+      ownerName: 'Test Owner',
+      email: `self-signup-badplan-${randomUUID()}@example.test`,
+      password: 'correct-horse-battery',
+    },
+  });
+  assert.equal(response.status, 400);
+  assert.equal((response.body.error as { code: string }).code, 'PLAN_NOT_FOUND');
 });
 
 test('signup refuses an unknown template and a short password', async (t) => {

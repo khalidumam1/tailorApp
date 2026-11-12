@@ -3,17 +3,17 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Bizora — Run your business in one organised workspace</title>
-<meta name="description" content="Bizora is a business management platform: one workspace for customers, orders, jobs, payments and accounts, configured around the way your trade already works. Web and Android. 14-day free trial, no card required." />
+<title>Bizora — Software that already speaks your trade</title>
+<meta name="description" content="Bizora sets up your workspace in the words, stages and fields your business already uses — customers, orders, jobs, payments and accounts in one place. Web and Android. 14-day free trial, no card." />
 <meta name="theme-color" content="#117A5C" />
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
 <meta property="og:type" content="website" />
 <meta property="og:title" content="Bizora — One platform. Every business." />
-<meta property="og:description" content="Customers, orders, jobs, payments and accounts in one workspace, configured around your trade. Web and Android." />
+<meta property="og:description" content="Your trade's words, stages and fields — already set up. Web and Android." />
 <meta property="og:image" content="assets/logo.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -23,7 +23,7 @@
 <header class="site-header" id="header">
   <div class="wrap header-inner">
     <a class="brand" href="#top" aria-label="Bizora home">
-      <img src="assets/logo.svg" alt="" width="36" height="36" />
+      <img src="assets/logo.svg" alt="" width="34" height="34" />
       <span class="brand-name">Bizora</span>
     </a>
     <nav class="nav" aria-label="Main">
@@ -33,8 +33,8 @@
       <a href="#faq">FAQ</a>
     </nav>
     <div class="header-cta">
-      <a class="btn btn-ghost" data-signin href="#pricing">Sign in</a>
-      <a class="btn btn-primary" data-signup href="#pricing">Start free trial</a>
+      <a class="btn btn-ghost" data-signin href="#">Sign in</a>
+      <a class="btn btn-primary" data-signup href="signup.html">Start free trial</a>
     </div>
     <button class="nav-toggle" id="navToggle" aria-expanded="false" aria-controls="mobileNav" aria-label="Menu">
       <span></span><span></span><span></span>
@@ -45,198 +45,295 @@
     <a href="#templates">Templates</a>
     <a href="#pricing">Pricing</a>
     <a href="#faq">FAQ</a>
-    <a class="btn btn-primary" data-signup href="#pricing">Start free trial</a>
+    <a class="btn btn-primary" data-signup href="signup.html">Start free trial</a>
   </div>
 </header>
 
 <main id="main">
+
+<!-- ============================ hero ============================ -->
 <section class="hero" id="top">
-  <div class="wrap hero-inner">
+  <div class="hero-glow" aria-hidden="true"></div>
+  <div class="wrap">
     <div class="hero-copy">
       <p class="kicker">One platform. Every business.</p>
-      <h1>Run the whole business from one organised workspace</h1>
+      <h1>Software that already<br />speaks your trade</h1>
       <p class="lede">
-        Customers, orders, jobs, payments and accounts — configured around the way
-        your trade already works, in your words. On the web, and on Android.
+        Bizora opens in the words your business uses — your customers, your jobs,
+        your stages. Pick the trade and the workspace arrives set up, instead of
+        blank and waiting to be configured.
       </p>
       <div class="cta-row">
-        <a class="btn btn-primary btn-lg" data-signup href="#pricing">Start your 14-day free trial</a>
+        <a class="btn btn-primary btn-lg" data-signup href="signup.html">Start your 14-day free trial</a>
         <a class="btn btn-quiet btn-lg" href="#pricing">See pricing</a>
       </div>
-      <p class="micro">No card required · Your data stays yours · Set up in minutes</p>
+      <p class="micro">No card · No call · No salesperson</p>
     </div>
 
-    <!-- A recreation of the workspace, built from the shipped design system with
-         neutral, multi-industry sample data. Not a screenshot of a real account. -->
-    <div class="hero-shot" aria-hidden="true">
-      <div class="mock">
-        <div class="mock-bar">
-          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-          <span class="mock-title">Al-Noor Furniture</span>
+    <div class="hero-shot">
+      <div class="tabs" role="tablist" aria-label="Choose a trade to see the workspace">
+        <button type="button" role="tab" class="tab is-active" aria-selected="true"  data-template-tab="tailor">Tailor</button>
+        <button type="button" role="tab" class="tab" aria-selected="false" data-template-tab="furniture">Furniture</button>
+        <button type="button" role="tab" class="tab" aria-selected="false" data-template-tab="auto-workshop">Auto Workshop</button>
+        <button type="button" role="tab" class="tab" aria-selected="false" data-template-tab="printing">Printing</button>
+        <button type="button" role="tab" class="tab" aria-selected="false" data-template-tab="carpenter">Carpenter</button>
+        <button type="button" role="tab" class="tab" aria-selected="false" data-template-tab="generic">Generic</button>
+      </div>
+
+      <!-- A recreation of the workspace built from the shipped design system.
+           Terminology and stage names are the platform's own template data;
+           the figures are sample data. -->
+      <div class="app" id="appMock">
+        <div class="app-bar">
+          <span class="app-dot"></span><span class="app-dot"></span><span class="app-dot"></span>
+          <div class="app-title">
+            <strong id="mockBusiness">Sana Stitch Studio</strong>
+            <span id="mockTrade">Tailor · Service</span>
+          </div>
         </div>
-        <div class="mock-body">
-          <div class="mock-kpis">
-            <div class="mock-kpi"><span class="mock-label">Open jobs</span><strong>24</strong></div>
-            <div class="mock-kpi"><span class="mock-label">Due this week</span><strong>6</strong></div>
-            <div class="mock-kpi"><span class="mock-label">Received today</span><strong>Rs 48,500</strong></div>
-          </div>
-          <div class="mock-table">
-            <div class="mock-row mock-head"><span>Job</span><span>Stage</span><span>Balance</span></div>
-            <div class="mock-row"><span>3-seater sofa — Rehman</span><span class="chip chip-green">In production</span><span>Rs 12,000</span></div>
-            <div class="mock-row"><span>Dining set — Zahid Auto</span><span class="chip chip-gold">Awaiting payment</span><span>Rs 31,500</span></div>
-            <div class="mock-row"><span>Office cabinets — Print House</span><span class="chip">Ready</span><span>Rs 5,000</span></div>
-          </div>
-          <div class="mock-foot">
-            <span class="mock-tag">customers</span><span class="mock-tag">orders</span>
-            <span class="mock-tag">payments</span><span class="mock-tag">inventory</span>
+        <div class="app-body">
+          <aside class="app-side">
+            <ul id="mockModules">
+              <li>Customers</li>
+              <li class="is-active">Orders</li>
+              <li>Catalog</li>
+              <li>Measurements</li>
+              <li>Payments</li>
+              <li>Notifications</li>
+              <li>Reports</li>
+              <li>Inventory</li>
+            </ul>
+          </aside>
+          <div class="app-main">
+            <div class="app-widgets" id="mockWidgets">
+              <div class="w"><span>New orders</span><strong>7</strong></div>
+              <div class="w"><span>Due today</span><strong>3</strong></div>
+              <div class="w w-warn"><span>Overdue</span><strong>1</strong></div>
+              <div class="w"><span>In progress</span><strong>12</strong></div>
+              <div class="w"><span>Outstanding</span><strong>Rs 84,500</strong></div>
+              <div class="w w-ok"><span>Collected today</span><strong>Rs 31,000</strong></div>
+            </div>
+
+            <ol class="pipe" id="mockStages">
+              <li class="pipe-step is-done"><span>New</span></li>
+              <li class="pipe-step is-done"><span>Measurement</span></li>
+              <li class="pipe-step is-done"><span>Cutting</span></li>
+              <li class="pipe-step is-active"><span>Stitching</span></li>
+              <li class="pipe-step"><span>Finishing</span></li>
+              <li class="pipe-step"><span>Ready for pickup</span></li>
+            </ol>
+
+            <div class="table">
+              <div class="thead" id="mockHead"><span>Order</span><span>Customer</span><span>Stage</span><span>Balance</span></div>
+              <div id="mockRows">
+                <div class="tr"><span class="c-ref">#1042<em>3-piece suit</em></span><span>Rehman</span><span><i class="chip chip-active">Stitching</i></span><span class="c-money">Rs 12,000</span></div>
+                <div class="tr"><span class="c-ref">#1043<em>Winter coat</em></span><span>Ayesha</span><span><i class="chip chip-active">Cutting</i></span><span class="c-money">Rs 8,500</span></div>
+                <div class="tr"><span class="c-ref">#1044<em>Kurta set</em></span><span>Bilal</span><span><i class="chip">Measurement</i></span><span class="c-money">Rs 4,200</span></div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
-      <p class="mock-note">Workspace shown with sample data.</p>
+      <p class="mock-note">The workspace above is a recreation using the platform's own template data, shown with sample figures. Switch trades and the words, stages and labels change — that is the product, not a mock-up trick.</p>
     </div>
   </div>
 </section>
 
+<!-- ============================ facts ============================ -->
 <section class="facts">
   <div class="wrap facts-inner">
     <div class="fact"><strong>6</strong><span>business templates</span></div>
     <div class="fact"><strong>12</strong><span>modules you switch on</span></div>
-    <div class="fact"><strong>2</strong><span>consoles: business and platform</span></div>
     <div class="fact"><strong>Web + Android</strong><span>one account, both</span></div>
+    <div class="fact"><strong>14 days</strong><span>free, no card</span></div>
   </div>
 </section>
 
+<!-- ============================ product ============================ -->
 <section class="section" id="product">
   <div class="wrap">
-    <p class="kicker">The product</p>
-    <h2>Every part of the job, in one place</h2>
-    <p class="section-lede">
-      Twelve modules. Switch on the ones your business uses today and add the rest
-      when you need them. Names, stages and fields follow your trade, not ours.
-    </p>
+    <div class="section-head" data-reveal>
+      <p class="kicker">The product</p>
+      <h2>Twelve modules. Switch on what you use today.</h2>
+      <p class="section-lede">
+        Every module is written in plain words and named for the way your trade
+        says it. Add the rest when you need them — nothing has to be built.
+      </p>
+    </div>
 
-    <div class="grid grid-3 modules">
-      <article class="card"><h3>Customers</h3><p>Every customer record, contact detail and note in one searchable place.</p></article>
-      <article class="card"><h3>Orders</h3><p>One record per job, moving through the stages you define, with full status history.</p></article>
-      <article class="card"><h3>Catalog</h3><p>The items or services you sell, with your own names and types.</p></article>
-      <article class="card"><h3>Measurements</h3><p>Measurements, dimensions, inspections or specifications — named the way your trade says it.</p></article>
-      <article class="card"><h3>Payments</h3><p>Cash, bank and digital payments against every order, with invoice PDFs and CSV exports.</p></article>
-      <article class="card"><h3>Reports</h3><p>Reporting in your business timezone.</p></article>
-      <article class="card"><h3>Notifications</h3><p>Reusable message templates for the updates customers wait for.</p></article>
-      <article class="card"><h3>Inventory</h3><p>Stock items and variants, locations, balances and every movement recorded.</p></article>
-      <article class="card"><h3>Suppliers</h3><p>Who you buy from and what you owe, with settlements as you pay them.</p></article>
-      <article class="card"><h3>Purchasing</h3><p>Purchase orders and goods receipts that update stock when they land.</p></article>
-      <article class="card"><h3>Cashbook</h3><p>Day-to-day cash in and out, with opening balances.</p></article>
-      <article class="card"><h3>Accounting</h3><p>Financial accounts, journal entries and bank reconciliation.</p></article>
+    <div class="grid modules" data-reveal>
+      <article class="mcard"><h3>Customers</h3><p>Every customer record, contact detail and note in one searchable place.</p></article>
+      <article class="mcard"><h3>Orders</h3><p>One record per job, moving through the stages you define, with full status history.</p></article>
+      <article class="mcard"><h3>Catalog</h3><p>The items or services you sell, with your own names and types.</p></article>
+      <article class="mcard"><h3>Measurements</h3><p>Measurements, dimensions, inspections or specifications — named the way your trade says it.</p></article>
+      <article class="mcard"><h3>Payments</h3><p>Cash, bank and digital payments against every order, with invoice PDFs and CSV exports.</p></article>
+      <article class="mcard"><h3>Reports</h3><p>Reporting in your business timezone.</p></article>
+      <article class="mcard"><h3>Notifications</h3><p>Reusable message templates for the updates customers wait for.</p></article>
+      <article class="mcard"><h3>Inventory</h3><p>Stock items and variants, locations, balances and every movement recorded.</p></article>
+      <article class="mcard"><h3>Suppliers</h3><p>Who you buy from and what you owe, with settlements as you pay them.</p></article>
+      <article class="mcard"><h3>Purchasing</h3><p>Purchase orders and goods receipts that update stock when they land.</p></article>
+      <article class="mcard"><h3>Cashbook</h3><p>Day-to-day cash in and out, with opening balances.</p></article>
+      <article class="mcard"><h3>Accounting</h3><p>Financial accounts, journal entries and bank reconciliation.</p></article>
     </div>
   </div>
 </section>
 
+<!-- ============================ one place (dark) ============================ -->
+<section class="section-dark">
+  <div class="wrap split">
+    <div data-reveal>
+      <p class="kicker kicker-gold">One place</p>
+      <h2>The order, the money and the stock — the same record</h2>
+      <p class="section-lede section-lede-dark">
+        A job moves through your stages, the payment lands against it, the stock
+        moves when it is used, and the accounts pick it up. One record from the
+        first enquiry to the last rupee, not four spreadsheets that disagree.
+      </p>
+      <ul class="ticks ticks-dark">
+        <li>Every stage change is recorded, with who did it and when</li>
+        <li>Payments attach to the order, with an invoice PDF you can send as it is</li>
+        <li>Stock moves when a purchase order is received, not when someone remembers</li>
+        <li>Reports read in your own timezone, not the server's</li>
+      </ul>
+    </div>
+    <div class="split-visual" data-reveal aria-hidden="true">
+      <div class="flow">
+        <div class="flow-row"><span class="flow-tag">Order #1042</span><span class="flow-line"></span><span class="flow-state">Stitching</span></div>
+        <div class="flow-card">
+          <p class="flow-h">Payment received</p>
+          <p class="flow-v">Rs 12,000 · Bank transfer</p>
+          <div class="flow-meter"><i style="width:60%"></i></div>
+          <p class="flow-f">60% of Rs 20,000</p>
+        </div>
+        <div class="flow-row"><span class="flow-tag">Stock</span><span class="flow-line"></span><span class="flow-state">− 2.5 m fabric</span></div>
+        <div class="flow-row"><span class="flow-tag">Accounts</span><span class="flow-line"></span><span class="flow-state">Journal #J-SANA-000118</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ templates ============================ -->
 <section class="section section-tint" id="templates">
   <div class="wrap">
-    <p class="kicker">Templates</p>
-    <h2>Start from a workspace built for your trade</h2>
-    <p class="section-lede">
-      Each template sets the terminology, the modules, the item types, the workflow
-      stages, the payment methods and the dashboard widgets — so the software talks
-      the way your business already does.
-    </p>
+    <div class="section-head" data-reveal>
+      <p class="kicker">Templates</p>
+      <h2>Six trades, ready on day one</h2>
+      <p class="section-lede">
+        Each template sets the terminology, the modules, the item types, the
+        workflow stages, the payment methods and the dashboard widgets — so the
+        software talks the way your business already does.
+      </p>
+    </div>
 
-    <div class="grid grid-3 templates">
-      <article class="card tpl"><span class="tag">Service</span><h3>Tailor</h3><p>Garment orders, measurements and fittings.</p></article>
-      <article class="card tpl"><span class="tag">Product</span><h3>Furniture</h3><p>Custom furniture production and delivery preparation.</p></article>
-      <article class="card tpl"><span class="tag">Service</span><h3>Carpenter</h3><p>Carpentry jobs, materials and dimensions.</p></article>
-      <article class="card tpl"><span class="tag">Service</span><h3>Auto Workshop</h3><p>Vehicle inspection, estimates and repair jobs.</p></article>
-      <article class="card tpl"><span class="tag">Product</span><h3>Printing</h3><p>Print jobs, specifications and production stages.</p></article>
-      <article class="card tpl"><span class="tag">General</span><h3>Generic</h3><p>A configurable customer, order and payment workspace.</p></article>
+    <div class="grid grid-3 templates" data-reveal>
+      <article class="tcard"><span class="tag">Service</span><h3>Tailor</h3><p>Garment orders, measurements and fittings.</p><p class="tmeta">Stages: Measurement → Cutting → Stitching → Finishing</p></article>
+      <article class="tcard"><span class="tag">Product</span><h3>Furniture</h3><p>Custom furniture production and delivery preparation.</p><p class="tmeta">Stages: Design → Material Confirmation → Production</p></article>
+      <article class="tcard"><span class="tag">Service</span><h3>Carpenter</h3><p>Carpentry jobs, materials and dimensions.</p><p class="tmeta">Stages: Design → Material Confirmation → Production</p></article>
+      <article class="tcard"><span class="tag">Service</span><h3>Auto Workshop</h3><p>Vehicle inspection, estimates and repair jobs.</p><p class="tmeta">Stages: Inspection → Estimate → Repair → Quality Check</p></article>
+      <article class="tcard"><span class="tag">Product</span><h3>Printing</h3><p>Print jobs, specifications and production stages.</p><p class="tmeta">Stages: Design → Production → Finishing</p></article>
+      <article class="tcard"><span class="tag">General</span><h3>Generic</h3><p>A configurable customer, order and payment workspace.</p><p class="tmeta">Stages: New → In progress → Ready</p></article>
     </div>
     <p class="fineprint">New business types are configured on the platform rather than built from scratch.</p>
   </div>
 </section>
 
-<section class="section" id="how">
-  <div class="wrap">
-    <p class="kicker">How it works</p>
-    <h2>Three steps and you are running</h2>
-    <div class="grid grid-3 steps">
-      <article class="card step"><span class="step-no">1</span><h3>Tell us the trade</h3><p>Pick the template that matches the business. The workspace arrives with the right words, stages and fields already in place.</p></article>
-      <article class="card step"><span class="step-no">2</span><h3>Add your people</h3><p>Owners and staff get their own sign-in, and you decide what each role can see and change.</p></article>
-      <article class="card step"><span class="step-no">3</span><h3>Run the work</h3><p>Take the order, move it through your stages, record the payment. Send the customer a tracking link instead of an update call.</p></article>
+<!-- ============================ tracking ============================ -->
+<section class="section" id="customers">
+  <div class="wrap split split-reverse">
+    <div data-reveal>
+      <p class="kicker">For your customers</p>
+      <h2>Stop answering the same phone call</h2>
+      <p class="section-lede">
+        Every order can carry its own tracking link. The customer opens it on any
+        phone and sees where the job stands — no call, no message, no waiting for
+        you to reply.
+      </p>
+      <ul class="ticks">
+        <li>A link per order your customer can open without an account</li>
+        <li>Invoice PDFs you can send as they are</li>
+        <li>CSV exports when you need the numbers in a spreadsheet</li>
+        <li>Light and dark themes, with a timezone of your own</li>
+      </ul>
+    </div>
+    <div class="split-visual" data-reveal aria-hidden="true">
+      <div class="phone">
+        <div class="phone-bar"><span>Order #1042</span></div>
+        <div class="phone-body">
+          <p class="phone-h">3-piece suit</p>
+          <p class="phone-s">Sana Stitch Studio</p>
+          <ol class="track">
+            <li class="done">Order placed<em>Mon, 10:24</em></li>
+            <li class="done">Measurement<em>Tue, 12:05</em></li>
+            <li class="active">Stitching<em>In progress</em></li>
+            <li>Ready for pickup</li>
+          </ol>
+          <p class="phone-f">This link only shows this order.</p>
+        </div>
+      </div>
     </div>
   </div>
 </section>
 
-<section class="section section-tint" id="customers">
-  <div class="wrap split">
-    <div>
-      <p class="kicker">For your customers</p>
-      <h2>Stop answering the same phone call</h2>
-      <p class="section-lede">
-        Every order can carry its own tracking link. The customer opens it and sees
-        where the job stands — no call, no message, no waiting for you to reply.
-      </p>
-      <ul class="ticks">
-        <li>Order tracking links your customer can open on any phone</li>
-        <li>Invoice PDFs you can send as they are</li>
-        <li>CSV exports when you need the numbers in a spreadsheet</li>
-        <li>Light and dark themes, and a business timezone of your own</li>
-      </ul>
+<!-- ============================ how ============================ -->
+<section class="section section-tint" id="how">
+  <div class="wrap">
+    <div class="section-head" data-reveal>
+      <p class="kicker">How it works</p>
+      <h2>Three steps and the work is running</h2>
     </div>
-    <div class="split-shot" aria-hidden="true">
-      <div class="phone">
-        <div class="phone-bar"><span class="mock-title">Order #1042</span></div>
-        <div class="phone-body">
-          <p class="phone-h">3-seater sofa</p>
-          <ol class="track">
-            <li class="done">Order placed</li>
-            <li class="done">Measurements taken</li>
-            <li class="active">In production</li>
-            <li>Ready for delivery</li>
-          </ol>
-          <p class="phone-f">Al-Noor Furniture</p>
-        </div>
-      </div>
+    <div class="grid grid-3 steps" data-reveal>
+      <article class="scard"><span class="step-no">1</span><h3>Tell us the trade</h3><p>Pick the template that matches your business. The workspace arrives with the right words, stages and fields already in place.</p></article>
+      <article class="scard"><span class="step-no">2</span><h3>Add your people</h3><p>Owners and staff get their own sign-in, and you decide what each role can see and change.</p></article>
+      <article class="scard"><span class="step-no">3</span><h3>Run the work</h3><p>Take the order, move it through your stages, record the payment, send the customer their link.</p></article>
     </div>
   </div>
 </section>
 
 <!--
   PRICING
-  Numbers below are the proposed figures from docs/business/SELF_SERVE_SAAS.md.
-  They are not publishable until the owner approves them (docs/marketing/FACT_SHEET.md
-  forbids printing a price that has not been agreed). Once approved, change them
-  here in both the monthly and yearly spans, and add them to the fact sheet.
+  Figures are the proposal from docs/business/SELF_SERVE_SAAS.md. They become
+  publishable once approved (docs/marketing/FACT_SHEET.md forbids printing a
+  price that has not been agreed). All four values sit on each price node so
+  the toggles only switch which one is visible.
 -->
 <section class="section" id="pricing">
   <div class="wrap">
-    <p class="kicker">Pricing</p>
-    <h2>One price, no negotiation</h2>
-    <p class="section-lede">
-      The price on this page is the price everyone pays. There is no quote to
-      request and no discount to ask for — which is why it stays this low, and why
-      support can answer in hours instead of days.
-    </p>
-
-    <div class="toggle" role="group" aria-label="Billing period">
-      <button type="button" data-cycle="monthly" class="is-active" aria-pressed="true">Monthly</button>
-      <button type="button" data-cycle="yearly" aria-pressed="false">Yearly <span class="pill">2 months free</span></button>
+    <div class="section-head" data-reveal>
+      <p class="kicker">Pricing</p>
+      <h2>One price. No negotiation.</h2>
+      <p class="section-lede">
+        The price on this page is the price everyone pays. There is no quote to
+        request and no discount to ask for — which is why it stays this low, and
+        why support answers in hours instead of days.
+      </p>
     </div>
 
-    <div class="grid grid-3 plans">
+    <div class="toggles" data-reveal>
+      <div class="toggle" role="group" aria-label="Billing period">
+        <button type="button" data-cycle="monthly" class="is-active" aria-pressed="true">Monthly</button>
+        <button type="button" data-cycle="yearly" aria-pressed="false">Yearly <span class="pill">2 months free</span></button>
+      </div>
+      <div class="toggle" role="group" aria-label="Currency">
+        <button type="button" data-currency="PKR" class="is-active" aria-pressed="true">PKR</button>
+        <button type="button" data-currency="USD" aria-pressed="false">USD</button>
+      </div>
+    </div>
 
+    <div class="grid grid-3 plans" data-reveal>
       <article class="plan">
         <header class="plan-head">
           <h3>Starter</h3>
-          <p class="plan-note">For one owner and a small team</p>
+          <p class="plan-note">One owner and a small team</p>
           <p class="price">
-            <span class="cur">Rs</span>
-            <span class="amount"><span data-monthly>2,500</span><span data-yearly hidden>25,000</span></span>
+            <span class="cur" data-cur>PKR</span>
+            <span class="amount">
+              <span data-pkr-m>2,500</span><span data-pkr-y hidden>25,000</span>
+              <span data-usd-m hidden>12</span><span data-usd-y hidden>120</span>
+            </span>
           </p>
           <p class="price-sub">
-            <span data-monthly>per month</span>
-            <span data-yearly hidden>per year</span>
-            <span class="usd" data-monthly>≈ $12 / month</span>
-            <span class="usd" data-yearly hidden>≈ $120 / year</span>
+            <span data-cycle-label="monthly">per month</span>
+            <span data-cycle-label="yearly" hidden>per year</span>
           </p>
         </header>
         <ul class="plan-limits">
@@ -250,23 +347,24 @@
           <li>Order tracking links</li>
           <li>Web and Android</li>
         </ul>
-        <a class="btn btn-quiet btn-block" data-checkout="starter" href="#pricing">Start free trial</a>
+        <a class="btn btn-quiet btn-block" data-checkout="starter" href="signup.html">Start free trial</a>
       </article>
 
       <article class="plan plan-featured">
         <span class="plan-flag">Most businesses start here</span>
         <header class="plan-head">
           <h3>Growth</h3>
-          <p class="plan-note">For a shop with staff and stock</p>
+          <p class="plan-note">A shop with staff and stock</p>
           <p class="price">
-            <span class="cur">Rs</span>
-            <span class="amount"><span data-monthly>6,000</span><span data-yearly hidden>60,000</span></span>
+            <span class="cur" data-cur>PKR</span>
+            <span class="amount">
+              <span data-pkr-m>6,000</span><span data-pkr-y hidden>60,000</span>
+              <span data-usd-m hidden>29</span><span data-usd-y hidden>290</span>
+            </span>
           </p>
           <p class="price-sub">
-            <span data-monthly>per month</span>
-            <span data-yearly hidden>per year</span>
-            <span class="usd" data-monthly>≈ $29 / month</span>
-            <span class="usd" data-yearly hidden>≈ $290 / year</span>
+            <span data-cycle-label="monthly">per month</span>
+            <span data-cycle-label="yearly" hidden>per year</span>
           </p>
         </header>
         <ul class="plan-limits">
@@ -280,22 +378,23 @@
           <li>Inventory</li>
           <li>Order tracking links</li>
         </ul>
-        <a class="btn btn-primary btn-block" data-checkout="growth" href="#pricing">Start free trial</a>
+        <a class="btn btn-primary btn-block" data-checkout="growth" href="signup.html">Start free trial</a>
       </article>
 
       <article class="plan">
         <header class="plan-head">
           <h3>Scale</h3>
-          <p class="plan-note">For a business that buys, sells and keeps books</p>
+          <p class="plan-note">Buys, sells and keeps books</p>
           <p class="price">
-            <span class="cur">Rs</span>
-            <span class="amount"><span data-monthly>15,000</span><span data-yearly hidden>150,000</span></span>
+            <span class="cur" data-cur>PKR</span>
+            <span class="amount">
+              <span data-pkr-m>15,000</span><span data-pkr-y hidden>150,000</span>
+              <span data-usd-m hidden>79</span><span data-usd-y hidden>790</span>
+            </span>
           </p>
           <p class="price-sub">
-            <span data-monthly>per month</span>
-            <span data-yearly hidden>per year</span>
-            <span class="usd" data-monthly>≈ $79 / month</span>
-            <span class="usd" data-yearly hidden>≈ $790 / year</span>
+            <span data-cycle-label="monthly">per month</span>
+            <span data-cycle-label="yearly" hidden>per year</span>
           </p>
         </header>
         <ul class="plan-limits">
@@ -309,49 +408,54 @@
           <li>Cashbook and Accounting</li>
           <li>Order tracking links</li>
         </ul>
-        <a class="btn btn-quiet btn-block" data-checkout="scale" href="#pricing">Start free trial</a>
+        <a class="btn btn-quiet btn-block" data-checkout="scale" href="signup.html">Start free trial</a>
       </article>
-
     </div>
 
-    <div class="pricing-notes">
+    <div class="pricing-notes" data-reveal>
       <p><strong>Every plan starts with the same 14-day free trial. No card, no commitment.</strong></p>
-      <p>Registered NGOs and educational institutions get 50% off, applied automatically at signup on a verified institutional email. That is the only exception, and it is the same one for everybody.</p>
-      <p>Prices are in Pakistani rupees. International customers are charged the USD equivalent. Your card or bank statement will show our payment provider's name<span data-descriptor></span>.</p>
+      <p>Registered NGOs and educational institutions get 50% off, applied at signup on a verified institutional email. That is the only exception, and it is the same one for everybody.</p>
+      <p>Your card or bank statement will show our payment provider's name<span data-descriptor></span>.</p>
     </div>
   </div>
 </section>
 
+<!-- ============================ faq ============================ -->
 <section class="section section-tint" id="faq">
   <div class="wrap wrap-narrow">
-    <p class="kicker">Questions</p>
-    <h2>Before you start</h2>
-
-    <details class="faq"><summary>What happens when the trial ends?</summary><p>Nothing disappears. If you do not subscribe, the workspace becomes read-only: you can still sign in, read your records and export them, and subscribe at any point to start writing again.</p></details>
-    <details class="faq"><summary>Do you offer a discount?</summary><p>No. The price is the same for everyone, which is why we can keep it low and answer support in hours rather than days. The one exception is the 50% rate for registered NGOs and educational institutions.</p></details>
-    <details class="faq"><summary>Can I get my data out?</summary><p>Yes. Reports export to CSV, and you can ask us for a full export of your records at any time. It is your data.</p></details>
-    <details class="faq"><summary>Do I need to install anything?</summary><p>No. Bizora runs in a browser. Staff who prefer a phone can install the Android app and use the same account.</p></details>
-    <details class="faq"><summary>Can my staff use it at the same time as me?</summary><p>Yes. Every member gets a sign-in, and you choose what each role can see and change.</p></details>
-    <details class="faq"><summary>Which trade is it for?</summary><p>Six templates ship today: Tailor, Furniture, Carpenter, Auto Workshop, Printing and Generic. Each one sets the words, stages and fields for that trade. Other business types are configured on the platform.</p></details>
-    <details class="faq"><summary>How do I cancel?</summary><p>Write to us and we will close the account and confirm it in writing.</p></details>
-    <details class="faq"><summary>How do I reach a human?</summary><p>Email <a data-support-email href="#">us</a>. We answer within one working day. Support is written and asynchronous — we do not run a phone line, and that is part of how the price stays low.</p></details>
+    <div class="section-head" data-reveal>
+      <p class="kicker">Questions</p>
+      <h2>Before you start</h2>
+    </div>
+    <div data-reveal>
+      <details class="faq"><summary>What happens when the trial ends?</summary><p>Nothing disappears. If you do not subscribe, the workspace becomes read-only: you can still sign in, read your records and export them, and subscribe at any point to start writing again.</p></details>
+      <details class="faq"><summary>Do you offer a discount?</summary><p>No. The price is the same for everyone, which is why we can keep it low and answer support in hours rather than days. The one exception is the 50% rate for registered NGOs and educational institutions.</p></details>
+      <details class="faq"><summary>How does the workspace get set up?</summary><p>You pick your trade at signup and the workspace is created from that template — your words, your stages, your fields — before you first sign in. There is nothing to configure to get started, and everything can be changed later.</p></details>
+      <details class="faq"><summary>Can I get my data out?</summary><p>Yes. Reports export to CSV, and you can ask us for a full export of your records at any time. It is your data.</p></details>
+      <details class="faq"><summary>Do I need to install anything?</summary><p>No. Bizora runs in a browser. Staff who prefer a phone can install the Android app and use the same account.</p></details>
+      <details class="faq"><summary>Can my staff use it at the same time as me?</summary><p>Yes. Every member gets a sign-in, and you choose what each role can see and change.</p></details>
+      <details class="faq"><summary>How do I cancel?</summary><p>Write to us and we will close the account and confirm it in writing.</p></details>
+      <details class="faq"><summary>How do I reach a human?</summary><p>Email <a data-support-email href="#">us</a>. We answer within one working day. Support is written and asynchronous — we do not run a phone line, and that is part of how the price stays low.</p></details>
+    </div>
   </div>
 </section>
 
+<!-- ============================ final ============================ -->
 <section class="final">
   <div class="wrap final-inner">
-    <img src="assets/logo-white.svg" alt="" width="44" height="44" />
-    <h2>Try it for fourteen days. Decide after that.</h2>
-    <p>No card, no call, no salesperson. Pick your trade and the workspace is ready.</p>
-    <a class="btn btn-onDark btn-lg" data-signup href="#pricing">Start your free trial</a>
+    <img src="assets/logo-white.svg" alt="" width="42" height="42" />
+    <h2>Pick your trade. The workspace is ready in a minute.</h2>
+    <p>Fourteen days, no card, and nobody to convince.</p>
+    <a class="btn btn-onDark btn-lg" data-signup href="signup.html">Start your free trial</a>
   </div>
 </section>
+
 </main>
 
 <footer class="site-footer">
   <div class="wrap footer-inner">
     <div class="footer-brand">
-      <img src="assets/logo.svg" alt="" width="32" height="32" />
+      <img src="assets/logo.svg" alt="" width="30" height="30" />
       <span class="brand-name">Bizora</span>
       <p class="footer-tag">One platform. Every business.</p>
     </div>
@@ -361,6 +465,7 @@
         <a href="#product">Modules</a>
         <a href="#templates">Templates</a>
         <a href="#pricing">Pricing</a>
+        <a href="signup.html">Start free trial</a>
       </div>
       <div>
         <h4>Company</h4>
@@ -379,11 +484,12 @@
   </div>
   <div class="wrap footer-base">
     <p>&copy; <span data-year>2026</span> Bizora. All rights reserved.</p>
-    <p class="muted">Prices in PKR unless stated. Card and bank statements show our payment provider.</p>
+    <p class="muted">Card and bank statements show our payment provider.</p>
   </div>
 </footer>
 
 <script src="config.js"></script>
+<script src="mockups.js"></script>
 <script src="main.js"></script>
 </body>
 </html>
